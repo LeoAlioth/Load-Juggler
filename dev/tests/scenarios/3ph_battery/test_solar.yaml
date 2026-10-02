@@ -261,8 +261,6 @@ scenarios:
 
   - name: "3ph-1c-solar-prio-with-bat-oscillation"
     description: "Oscillation test: 3-phase solar with feedback simulation"
-    iterations: 5
-    max_variation: 0.3
     human_verified: false
     site:
       voltage: 230
@@ -295,8 +293,6 @@ scenarios:
 
   - name: "1ph-1c-solar-prio-with-bat-oscillation"
     description: "Oscillation test: Single-phase charger on 3-phase site"
-    iterations: 5
-    max_variation: 0.3
     human_verified: false
     site:
       voltage: 230
@@ -745,8 +741,6 @@ scenarios:
 
   - name: "3ph-2c-solar-morning-ramp-up"
     description: "Solar increasing during charge (multi-iteration)"
-    iterations: 3
-    max_variation: 1.0
     human_verified: false
     site:
       voltage: 230
@@ -787,8 +781,6 @@ scenarios:
 
   - name: "3ph-1c-solar-cloud-passing"
     description: "Solar dropping suddenly (oscillation test)"
-    iterations: 3
-    max_variation: 0.5
     human_verified: false
     site:
       voltage: 230

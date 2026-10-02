@@ -21,26 +21,19 @@ Assistant, and the same figures to the watt).
 And to the rig's station ring (8151a69): a station with no AC output sensor,
 booked by production's builder at its command, its register written behind
 the command gate, on the rig's 5 s instrument clock (dynamics.Sim).
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_dynamics_harness.py   (standalone, no pytest needed)
-  pytest dev/tests/test_dynamics_harness.py    (CI tier)
 """
 
-import sys
 from collections import Counter
 from contextlib import contextmanager
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-import dynamics  # noqa: E402 - loads the pure modules on import
-
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     STATION_CHARGE_POWER_STEP as STEP_W,
 )
-from custom_components.dynamic_ocpp_evse.engine import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.engine import (
     hub_calculation,
 )
+
+from . import dynamics
 
 V = dynamics.V
 # One step of the permit's own 0.1 A rounding (entities/load.py).
@@ -208,21 +201,3 @@ def test_neither_the_booked_command_nor_the_rigs_clock_rings_alone():
     for kw in (dict(station_metered=True), dict(tick_s=None, phases=(0.0,))):
         rings = _late_rings(1.0, **kw)
         assert max(rings) < STEP_W, f"{kw}: {rings}"
-
-
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

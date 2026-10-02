@@ -159,10 +159,6 @@ CONF_SOC_LIMIT_SEMANTICS = "inverter_soc_limit_semantics"
 SOC_LIMIT_SEMANTICS_CEILING = "ceiling"   # writes mean "stop charging at"
 SOC_LIMIT_SEMANTICS_FLOOR = "floor"       # writes mean "grid-defend this level"
 DEFAULT_SOC_LIMIT_SEMANTICS = SOC_LIMIT_SEMANTICS_CEILING
-SOC_LIMIT_SEMANTICS_OPTIONS = (
-    SOC_LIMIT_SEMANTICS_CEILING,
-    SOC_LIMIT_SEMANTICS_FLOOR,
-)
 
 # Deadband for the SOC fan-out, in SOC points, applied PER TARGET. Fixed rather
 # than configurable: a percentage-of-a-percentage would be a confusing setting,

@@ -23,9 +23,8 @@ The clock is simulated (every module's ``time.monotonic``), so twenty minutes
 of site cycles run in well under a second.
 """
 
-import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -68,15 +67,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     EVSE_RT_READOUT_WATCH,
 )
 from custom_components.dynamic_ocpp_evse.engine import (
-    auto_detect,
     hub_calculation,
-    hub_result,
-    load_builders,
-    readers,
     readout_watch,
 )
-from custom_components.dynamic_ocpp_evse.control import compliance, status
-from custom_components.dynamic_ocpp_evse.entities import load as load_entity
+
+from .closed_loop import clocked
 
 V = 230.0
 HOUSE_W = 1000.0
@@ -86,26 +81,6 @@ CYCLE_S = float(DEFAULT_SITE_UPDATE_FREQUENCY)
 # How far over the allowance a settled charger may sit: the permit's Schmitt
 # trigger deliberately holds a command within DEAD_BAND of its target.
 SETTLED_W = ALLOWANCE_W + DEAD_BAND * V
-_CLOCKED = (
-    load_builders, hub_calculation, readers, hub_result, auto_detect,
-    load_entity, status, compliance,
-)
-
-
-class _Clock:
-    """``time`` as the modules above see it: monotonic() is ours to advance,
-    everything else is the real module."""
-
-    def __init__(self, start):
-        self.now = start
-
-    def monotonic(self):
-        return self.now
-
-    def __getattr__(self, name):
-        return getattr(time, name)
-
-
 class World:
     """The site the integration is controlling, and the charger's readout."""
 
@@ -298,7 +273,6 @@ async def _session(hass, site, *, lockstep_enabled, frozen_minutes=20, car_draws
     leaves, a second car arrives - and this time the readout is pinned at 0.
     Returns (log of the second session, the load's watch state)."""
     world = World(hass, off_grid=site.off_grid)
-    clock = _Clock(10_000.0)
     evse_sensor = sensor_platform.LoadJugglerDeviceSensor(
         hass, site.evse, site.hub, "evse", "evse"
     )
@@ -306,18 +280,10 @@ async def _session(hass, site, *, lockstep_enabled, frozen_minutes=20, car_draws
         site.hub.entry_id, {}
     )[site.evse.entry_id] = evse_sensor
 
-    patches = [patch.object(module, "time", clock) for module in _CLOCKED]
-    patches.append(patch(
-        "homeassistant.core.ServiceRegistry.async_call",
-        new_callable=AsyncMock, side_effect=world.accept,
-    ))
-    if not lockstep_enabled:
-        patches.append(patch.object(
-            hub_calculation, "_watch_readouts_against_household", lambda *a, **k: None
-        ))
-    for p in patches:
-        p.start()
-    try:
+    patches = [] if lockstep_enabled else [patch.object(
+        hub_calculation, "_watch_readouts_against_household", lambda *a, **k: None
+    )]
+    with clocked(world.accept, *patches) as clock:
         first = []
         cycle = await _run(hass, site, world, 90, clock, first)           # 3 min healthy
         world.plugged = False
@@ -330,9 +296,6 @@ async def _session(hass, site, *, lockstep_enabled, frozen_minutes=20, car_draws
             script(world)
         second = []
         await _run(hass, site, world, int(frozen_minutes * 60 / CYCLE_S), clock, second, cycle)
-    finally:
-        for p in reversed(patches):
-            p.stop()
     watch = hass.data[DOMAIN]["loads"][site.evse.entry_id][EVSE_RT_READOUT_WATCH]
     return first, second, watch
 

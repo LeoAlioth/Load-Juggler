@@ -77,16 +77,19 @@ def observe_gain(
     """
     store = hub_runtime.setdefault(_RT_GAIN, {})
     day_key = day.isoformat() if hasattr(day, "isoformat") else str(day)
-    state = store.setdefault(entry_id, {})
-    state.setdefault("day", day_key)
-    state.setdefault("acc", {})
-    state.setdefault("gain", 1.0)
-    state.setdefault("days", 0)
-    state.setdefault("last_ratio", None)
-    state.setdefault("block", None)
-    state.setdefault("block_acc", {})
-    state.setdefault("series", [])
-    state.setdefault("hourly", {})
+    # Every key a state carries - the same set restore_gain_state writes, so a
+    # state from either never lacks one.
+    state = store.setdefault(entry_id, {
+        "day": day_key,
+        "acc": {},
+        "gain": 1.0,
+        "days": 0,
+        "last_ratio": None,
+        "block": None,
+        "block_acc": {},
+        "series": [],
+        "hourly": {},
+    })
 
     if state["day"] != day_key:
         ratio = day_ratio(state["acc"])

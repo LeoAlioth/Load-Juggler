@@ -9,34 +9,22 @@ temperature alone. Two met in the field (2026-09-25): a Vaillant with
 TARGET_TEMPERATURE | OPERATION_MODE, no ON_OFF, operation modes heating /
 hot_water_only / stand_by; and a MELCloud heat pump with ON_OFF too, whose
 turn_off powers down the whole unit.
-
-Runnable two ways:
-  python3 dev/tests/test_water_heater_tank.py   (standalone, no pytest needed)
-  pytest dev/tests/test_water_heater_tank.py    (Docker / CI tier)
 """
 
 import asyncio
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules  # noqa: E402
-
-load_pure_modules(
-    engine_modules=("hub_calculation",), control_modules=("hot_water_tank",)
-)
-
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     CONF_CLIMATE_ENTITY_ID,
     CONF_CONNECTED_TO_PHASE,
     CONF_HEATING_ELEMENT_POWER,
     CONF_TANK_POWER_ENTITY_ID,
 )
-from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (
     send_hot_water_tank_command,
 )
-from custom_components.dynamic_ocpp_evse.engine.load_builders import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.entities.mixins import LoadEntityMixin
+from custom_components.dynamic_ocpp_evse.engine.load_builders import (
     _build_hot_water_tank_load,
 )
 
@@ -85,6 +73,7 @@ class FakeEntry:
 
 class FakeSensor:
     _attr_name = "Tank"
+    _runtime = LoadEntityMixin._runtime
 
     def __init__(self, hass, entry):
         self.hass = hass
@@ -226,19 +215,3 @@ def test_the_setpoint_is_clamped_to_the_water_heaters_range():
     assert calls[-1] == (
         "water_heater", "set_temperature", {"entity_id": WH, "temperature": 40.0},
     )
-
-
-if __name__ == "__main__":
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

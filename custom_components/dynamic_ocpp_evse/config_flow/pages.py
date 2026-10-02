@@ -289,29 +289,16 @@ def _entry_sensor_value(hass, entry, unique_id_suffix: str):
     try:
         registry = async_get_entity_registry(hass)
         for ent in er_async_entries_for_config_entry(registry, entry.entry_id):
-            if not (ent.unique_id or "").endswith(unique_id_suffix):
-                continue
-            state = hass.states.get(ent.entity_id)
-            if units.is_unavailable(state):
-                return None
-            try:
-                value = float(state.state)
-            except (TypeError, ValueError):
-                return state.state  # a status string is a legitimate answer here
-            return None if units.is_unusable_number(value) else value
+            if (ent.unique_id or "").endswith(unique_id_suffix):
+                return units.read_number(hass, ent.entity_id)
     except Exception:  # pragma: no cover - a display path must never raise
         _LOGGER.debug("Could not read %s for %s", unique_id_suffix, entry.entry_id)
     return None
 
 
-def _groups_for_hub(hass, hub_entry_id: str) -> list:
-    """Circuit group entries linked to a hub (one implementation, in registry.py)."""
-    return get_groups_for_hub(hass, hub_entry_id)
-
-
 def _group_cap_for(hass, hub_entry_id: str, load_entry_id: str) -> str | None:
     """"20 A shared with 2 loads" for a load in a circuit group, else None."""
-    for group in _groups_for_hub(hass, hub_entry_id):
+    for group in get_groups_for_hub(hass, hub_entry_id):
         members = get_entry_value(group, CONF_CIRCUIT_GROUP_MEMBERS, []) or []
         if load_entry_id not in members:
             continue
@@ -732,7 +719,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
         lines.append(f"- {_load_line(hass, entry.entry_id, load, hub_data)}")
 
     group_data = hub_data.get("group_data") or {}
-    groups = _groups_for_hub(hass, entry.entry_id)
+    groups = get_groups_for_hub(hass, entry.entry_id)
     if groups:
         lines += ["", "**⛓ Circuit groups**"]
         for group in groups:
@@ -820,7 +807,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
     lines.append("**🔆 Output**")
     phase_lines: list[str] = []
     try:
-        from ..engine.readers import _read_inverter_output
+        from ..engine.readers import _read_signed_amps
 
         for label, key in (
             ("A", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
@@ -830,7 +817,7 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
             entity_id = get_entry_value(entry, key, None)
             if not entity_id:
                 continue
-            value = _read_inverter_output(hass, entity_id, voltage)
+            value = _read_signed_amps(hass, entity_id, voltage)
             if not isinstance(value, (int, float)) or isinstance(value, bool):
                 value = None
             if isinstance(value, (int, float)) and value < 0:
@@ -1079,7 +1066,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
         lines.append(f"- {' · '.join(bits)}")
 
     # 5 - post-distribution capping
-    groups = _groups_for_hub(hass, hub_entry_id)
+    groups = get_groups_for_hub(hass, hub_entry_id)
     if groups:
         lines += ["", "**⛓ Circuit groups (applied last)**"]
         for group in groups:

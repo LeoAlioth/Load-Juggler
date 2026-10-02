@@ -20,18 +20,14 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 
 **Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
-**Bug tracking**: Open issues live in `dev/ISSUES.md`. Claude picks them up automatically at the start of each session.
-
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 
-**TODOs** Keep track of TODOs as an ordered numbered list with checkmarks in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Mark steps completed as soon as they are done. Split TODOs into 4 parts:
+**TODOs** Keep track of TODOs as a checkbox list in `dev/TODO.md`. Before and after making code changes, make sure that the TODO is up to date. Completed items are removed - history lives in `git log` and `RELEASE_NOTES.md`. Two parts:
 
-- **Completed**: Short one-liners (title only, no implementation details). Periodically consolidate related items and remove entries that are no longer useful context.
-- **In Progress**: Clearly defined tasks to finish before reaching out to the developer. Include enough detail to implement without ambiguity.
-- **Backlog**: Upcoming work. More general - make more detailed when transitioning to In Progress.
+- **Backlog**: Upcoming work.
 - **Other**: Non-code tasks (e.g., icon submissions, external PRs).
 
-Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bugs are prioritized over features.
+Each Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bugs are prioritized over features.
 
 ## Architecture
 
@@ -41,7 +37,7 @@ Each In Progress and Backlog TODO must be tagged **[BUG]** or **[FEATURE]**. Bug
 custom_components/dynamic_ocpp_evse/
 ├── __init__.py                    # HA setup/unload, services (re-exports the registry helpers)
 ├── registry.py                    # Entry-relationship lookups (get_hub_for_load, get_*_for_hub) -
-│                                  #   HA-import-free, so pure tooling can load it without Home Assistant
+│                                  #   HA-import-free, so it sits outside the package root without an import cycle
 ├── manifest.json                  # Component metadata
 ├── config_flow/                   # HA configuration flow (initial setup + options "Configure" flow - the single
 │   │                              #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
@@ -77,7 +73,7 @@ custom_components/dynamic_ocpp_evse/
 │   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints, PhaseValues)
 │   ├── target_calculator.py       # Main calculation engine
 │   ├── forecast.py                # Forecast-based charging advice
-│   ├── context.py                 # Unused (no callers) - candidate for deletion
+│   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
 │   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
 ├── control/                       # Actuation layer (imports only const/helpers/units - never entities or engine)
 │   ├── ocpp.py                    # OCPP charging-profile service calls
@@ -95,9 +91,16 @@ custom_components/dynamic_ocpp_evse/
 │   ├── freshness.py               # Pure producer-freshness predicate behind every sensor's `available`
 │   └── mixins.py                  # LoadJugglerEntity base + device mixins + SiteFreshnessMixin /
 │                                  #   SiteCycleConsumerMixin (push readers) / SiteCycleWorkerMixin (async per-cycle actuators)
-├── detection_patterns/            # Per-brand entity-naming patterns for auto-detection (fronius, sma, victron, …)
+├── detection_patterns.py          # Per-brand entity-naming patterns for grid CT auto-detection (GRID_CT, brand
+│                                  #   priority order, watts first) and plug power monitors
 ├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
 ├── units.py                       # Unit conversion helpers
+├── phases.py                      # Pure, stdlib only: which of a device's sensors are its per-phase
+│                                  #   readings (match_meter_entities, beside) and which phase each line
+│                                  #   carries (phase_mapping, support - engine/auto_detect.py). A VERBATIM
+│                                  #   copy: canonical in Load Insights (insights/phases.py), synced by hand -
+│                                  #   never edit it here; LI's tests/test_phases.py checks this copy
+│                                  #   byte-for-byte when both repos sit side by side
 ├── helpers.py                     # get_entry_value() and misc helpers
 ├── ocpp_discovery.py              # The ONE OCPP registry derivation, at the package root so BOTH the
 │                                  #   flows and engine/ can reach it (engine must not import config_flow).
@@ -267,40 +270,38 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 3. **Battery priority**: Battery charges BEFORE EVs when SOC < target (Standard mode being the exception)
 4. **Minimum current**: Loads need >= min_current or get 0 (can't run below minimum)
 5. **Phase assignment defaults**: Don't default to "A" - only set when explicitly specified
-6. **Legacy code**: This is version 2.0.0 - legacy compatibility should be removed as users are expected to reconfigure the integration
+6. **Legacy code**: legacy compatibility should be removed as users are expected to reconfigure the integration
 7. **Grid CT consumption includes load draws**: Grid current sensors measure TOTAL site import, which includes managed-load power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each load's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts load power as both "consumption" and "load demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
 
 ## Testing and Debugging
 
 **Test procedure**: Do not combine multiple shell commands to one line. Always run one test at a time.
 
-### Calculation Scenario Tests (Pure Python)
-
-YAML-driven tests that validate the calculation engine directly. **Run natively on any platform** - no Home Assistant dependencies.
+Every test - unit, HA integration and each YAML scenario - runs under plain pytest from the
+project root (`pip install -r requirements_dev.txt`; `pytest.ini` puts the root on the path):
 
 ```bash
-# Run all scenarios (from project root)
-python3 dev/tests/run_tests.py dev/tests/scenarios
+# Everything (what CI runs)
+pytest dev/tests/ -v
 
-# Run only verified or unverified
-python3 dev/tests/run_tests.py --verified dev/tests/scenarios
-python3 dev/tests/run_tests.py --unverified dev/tests/scenarios
+# Only the YAML scenarios; only the human-verified ones; only the unverified ones
+pytest dev/tests/test_scenarios.py
+pytest dev/tests/ -m verified
+pytest dev/tests/test_scenarios.py -m "not verified"
 
-# Run a single scenario by name
-python3 dev/tests/run_tests.py "scenario-name"
+# One scenario (or any test) by name
+pytest dev/tests/ -k "scenario-name"
 
-# Run a single test with a detailed output
-python3 dev/tests/run_tests.py "scenario-name" --trace
-
+# ... with its cycle-by-cycle trace printed live, plus the engine's debug log
+pytest dev/tests/ -k "scenario-name" -s --log-cli-level=DEBUG
 ```
 
-Test results are written to `dev/tests/test_results.log`.
+### Calculation Scenario Tests
 
-Several pure-tier test files also run natively without Docker or pytest, via the
-shared `dev/tests/standalone_loader.py` (e.g. `python3 dev/tests/test_availability_contract.py`;
-same pattern for test_freshness, test_household_hold, test_excess_stayon,
-test_inverter_gate, test_inverter_output, test_inverter_control, test_auto_detect).
-Under the Docker/pytest tier the loader is a structural no-op.
+YAML-driven tests that validate the calculation engine directly: `dev/tests/test_scenarios.py` runs
+every scenario in `dev/tests/scenarios/` through the 30-cycle simulation in `dev/tests/run_tests.py`,
+one test per scenario, named after it. A failing scenario's assertion message lists its validation
+lines, and its captured output is the cycle-by-cycle trace.
 
 **IMPORTANT**: When creating new or modifying existing test scenarios, always set `human_verified: false`. Only the developer marks scenarios as verified after manual review.
 
@@ -336,26 +337,11 @@ Scenario files in `dev/tests/scenarios/` (organized by site type × charging mod
 features/       - Cross-cutting tests (test_available, test_plugs, test_phase_mapping, test_circuit_groups)
 ```
 
-### HA Integration Tests (Docker)
+### HA Integration Tests
 
-Integration tests use `pytest-homeassistant-custom-component` and run in Docker for platform independence and system isolation. This ensures tests don't affect the developer's system and work consistently across macOS, Windows, and Linux.
-
-```bash
-# Build the test image (first time only, or after requirements_dev.txt changes)
-docker build -t dynamic-ocpp-evse-test -f dev/Dockerfile.test .
-
-# Run all integration tests
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test
-
-# Run a specific test file
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/test_init.py -v
-
-# Run with specific test pattern
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python -m pytest dev/tests/ -v -k "test_async_setup"
-
-# Run only scenario tests (pure Python, no HA dependencies)
-docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests.py
-```
+Integration tests use `pytest-homeassistant-custom-component` and are collected by the same plain
+pytest run as everything else. The one local way to run it is the uv venv in `dev/tests/README.md`
+(Python 3.14, what CI runs); there is no Docker test image.
 
 **Integration test files:**
 
@@ -367,21 +353,11 @@ docker run --rm -v $(pwd):/app dynamic-ocpp-evse-test python dev/tests/run_tests
   connector-status resolution
 - `test_sensor_update.py` - Sensor initialization, update cycle, OCPP calls, charge pause, profile formats
 
-### Linting and Type Checking
-
-```bash
-pip install -r requirements_dev.txt
-black custom_components/dynamic_ocpp_evse
-flake8 custom_components/dynamic_ocpp_evse
-pylint custom_components/dynamic_ocpp_evse
-mypy custom_components/dynamic_ocpp_evse
-```
-
 ### Debugging
 
 1. **Enable verbose logging** in HA: `custom_components.dynamic_ocpp_evse: debug`
-2. **Run specific test**: `python3 dev/tests/run_tests.py "test-name"`
-3. **Debug a single scenario**: `python3 dev/debug_scenario.py "scenario-name" --verbose`
+2. **Run specific test**: `pytest dev/tests/ -k "test-name"`
+3. **Debug a single scenario**: `pytest dev/tests/ -k "scenario-name" -s --log-cli-level=DEBUG` (cycle trace + engine debug log)
 4. **Check calculation steps**: Each step logs its output (site_limit, solar_available, target_power, etc.)
 5. **Per-phase values**: Log phase_a/b/c_export, consumption, available
 

@@ -21,8 +21,8 @@ from .models import (
     LoadContext,
     PhaseConstraints,
     PhaseValues,
-    CircuitGroup,
 )
+from .utils import managed_phase_draws
 from ..const import (
     BEHAVIOR_FULL_POWER,
     BEHAVIOR_SOLAR_PRIORITY,
@@ -121,7 +121,7 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     # allocated, published a permit, deducted from every pool and - the part
     # that bit - charging its full rating to the Excess start ledger while
     # switched off and drawing nothing, starving loads on other phases. Its
-    # draw is household (see engine/hub_calculation._managed_phase_draws).
+    # draw is household (see calculations/utils.managed_phase_draws).
     managed = [c for c in all_loads if c.dynamic_control]
     unmanaged = [c for c in all_loads if not c.dynamic_control]
     active_loads = [
@@ -199,7 +199,7 @@ def calculate_all_load_targets(site: SiteContext) -> None:
 
     # Step 5: Calculate available current for the loads we actually manage.
     _set_available_current_for_loads(
-        managed, active_loads, inactive_loads,
+        active_loads, inactive_loads,
         physical_pool, solar_pool, excess_pool, site,
     )
 
@@ -214,11 +214,6 @@ def calculate_all_load_targets(site: SiteContext) -> None:
             load.allocated_current = round(
                 _pool_deduction(load, load.allocated_current), 1
             )
-    # The unmanaged loads' 0s must survive step 5, which only walks `managed`.
-    for load in unmanaged:
-        load.allocated_current = 0
-        load.available_current = 0
-
     for load in all_loads:
         _draw = load.l1_current + load.l2_current + load.l3_current
         _LOGGER.debug(
@@ -279,7 +274,6 @@ def _pool_snapshot(
 
 
 def _set_available_current_for_loads(
-    all_loads: list,
     active_loads: list,
     inactive_loads: list,
     physical_pool: PhaseConstraints,
@@ -301,11 +295,10 @@ def _set_available_current_for_loads(
     - Inactive load: what it could get from the leftover capacity.
 
     Pools are reduced by each active load's footprint (real draw), per the
-    allocated-current premise.
+    allocated-current premise. (A pool is never changed in place - deduct()
+    returns a new one - so the pools handed in are the ones walked.)
     """
-    remaining = physical_pool.copy()
-    solar_rem = solar_pool.copy()
-    excess_rem = excess_pool.copy()
+    remaining, solar_rem, excess_rem = physical_pool, solar_pool, excess_pool
 
     # Active loads, in distribution order.
     for load in _sort_loads(active_loads):
@@ -378,11 +371,9 @@ def _enforce_circuit_groups(site: SiteContext) -> None:
         for m in members:
             if m.active_phases_mask:
                 group_phases.update(m.active_phases_mask)
-        limit = group.current_limit
-        a = limit if "A" in group_phases else 0
-        b = limit if "B" in group_phases else 0
-        c = limit if "C" in group_phases else 0
-        group_pool = PhaseConstraints.from_per_phase(a, b, c)
+        group_pool = PhaseConstraints.from_per_phase(
+            *(group.current_limit if p in group_phases else 0 for p in "ABC")
+        )
 
         # Walk members in priority order (highest urgency+priority first → keeps allocation)
         sorted_members = _sort_loads(members)
@@ -435,9 +426,10 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
         buffer_per_phase = (site.power_buffer / site.voltage) / (site.num_phases or 1)
 
     # Calculate per-phase limits (only for phases that physically exist)
-    phase_a_limit = max(0, site.main_breaker_rating - site.consumption.a - buffer_per_phase) if site.consumption.a is not None else 0
-    phase_b_limit = max(0, site.main_breaker_rating - site.consumption.b - buffer_per_phase) if site.consumption.b is not None else 0
-    phase_c_limit = max(0, site.main_breaker_rating - site.consumption.c - buffer_per_phase) if site.consumption.c is not None else 0
+    limits = [
+        max(0, site.main_breaker_rating - cons - buffer_per_phase) if cons is not None else 0
+        for cons in (site.consumption.a, site.consumption.b, site.consumption.c)
+    ]
 
     # Grid charging not allowed (and has battery): no import at all. This used
     # to cap each phase at its export - but the export is inverter output, and
@@ -446,9 +438,9 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     # a car 7.36 kW and it imported 1.36 kW with grid charging off
     # (dev/tests/scenarios/features/test_grid_inverter_split.yaml).
     if not site.allow_grid_charging and site.battery_soc is not None:
-        phase_a_limit = phase_b_limit = phase_c_limit = 0
+        limits = [0, 0, 0]
 
-    constraints = PhaseConstraints.from_per_phase(phase_a_limit, phase_b_limit, phase_c_limit)
+    constraints = PhaseConstraints.from_per_phase(*limits)
 
     # Apply max grid import power limit (if configured)
     # This is a total (all-phase) constraint from the grid operator / smart meter.
@@ -495,23 +487,13 @@ def _get_household_per_phase(site: SiteContext) -> tuple[float, float, float]:
     3. consumption from grid CT - visible only when site is importing, 0 when self-consuming
     """
     if site.household_consumption is not None:
-        return (
-            site.household_consumption.a or 0,
-            site.household_consumption.b or 0,
-            site.household_consumption.c or 0,
-        )
+        hh = site.household_consumption
+        return tuple(v or 0 for v in (hh.a, hh.b, hh.c))
+    phases = (site.consumption.a, site.consumption.b, site.consumption.c)
     if site.household_consumption_total is not None:
         uniform = (site.household_consumption_total / site.voltage) / (site.num_phases or 1)
-        return (
-            uniform if site.consumption.a is not None else 0,
-            uniform if site.consumption.b is not None else 0,
-            uniform if site.consumption.c is not None else 0,
-        )
-    return (
-        site.consumption.a or 0,
-        site.consumption.b or 0,
-        site.consumption.c or 0,
-    )
+        return tuple(uniform if p is not None else 0 for p in phases)
+    return tuple(p or 0 for p in phases)
 
 
 def _off_grid_held_supply(site: SiteContext) -> Optional[tuple[float, float, float]]:
@@ -568,13 +550,7 @@ def _held_draws(site: SiteContext) -> tuple[float, float, float]:
     of the loads' own draws."""
     if site.managed_phase_draws is not None:
         return tuple(site.managed_phase_draws)
-    draws = [0.0, 0.0, 0.0]
-    for load in site.loads:
-        if not load.dynamic_control:
-            continue  # household, not ours to hand back
-        for i, draw in enumerate(load.get_site_phase_draw()):
-            draws[i] += draw
-    return tuple(draws)
+    return tuple(managed_phase_draws(site))
 
 
 def _off_grid_unused_sun(site: SiteContext) -> Optional[float]:
@@ -756,28 +732,31 @@ def _build_inverter_constraints(
     (dev/tests/scenarios/features/test_off_grid_3ph_symmetric.yaml).
     """
     max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
-    hh_a, hh_b, hh_c = _get_household_per_phase(site)
-    if site.inverter_supports_asymmetric or site.is_off_grid:
+    pooled = site.inverter_supports_asymmetric or site.is_off_grid
+    if pooled:
         if (
             not site.inverter_supports_asymmetric
             and not site.inverter_max_power_per_phase
             and site.inverter_max_power
         ):
             max_per_phase = site.inverter_max_power / (site.num_phases or 1) / site.voltage
-        phase_a = min(total_pool, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
-        phase_b = min(total_pool, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
-        phase_c = min(total_pool, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
-        return PhaseConstraints.from_pool(phase_a, phase_b, phase_c, total_pool)
+        pools = (total_pool, total_pool, total_pool)
     else:
-        # Same per-phase capacity rule as the asymmetric branch: the inverter
-        # phase already serving the household can only hand the remainder to
-        # loads.
         even = total_pool / site.num_phases
-        pool_a, pool_b, pool_c = per_phase_pool or (even, even, even)
-        phase_a = min(pool_a, max(0, max_per_phase - hh_a)) if site.consumption.a is not None else 0
-        phase_b = min(pool_b, max(0, max_per_phase - hh_b)) if site.consumption.b is not None else 0
-        phase_c = min(pool_c, max(0, max_per_phase - hh_c)) if site.consumption.c is not None else 0
-        return PhaseConstraints.from_per_phase(phase_a, phase_b, phase_c)
+        pools = per_phase_pool or (even, even, even)
+    # Either way the inverter phase already serving the household can only
+    # hand the remainder to loads.
+    phases = [
+        min(pool, max(0, max_per_phase - hh)) if cons is not None else 0
+        for pool, hh, cons in zip(
+            pools,
+            _get_household_per_phase(site),
+            (site.consumption.a, site.consumption.b, site.consumption.c),
+        )
+    ]
+    if pooled:
+        return PhaseConstraints.from_pool(*phases, total_pool)
+    return PhaseConstraints.from_per_phase(*phases)
 
 
 def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
@@ -1058,28 +1037,23 @@ def _calculate_solar_surplus(
         discharge_potential = min(discharge_potential, inverter_headroom)
 
     def build(battery_adjustment_total: float) -> PhaseConstraints:
-        battery_adjustment_per_phase = battery_adjustment_total / (
-            site.export_current.active_count or site.consumption.active_count or 1
-        ) if battery_adjustment_total else 0
-
-        max_per_phase = site.inverter_max_power_per_phase / site.voltage if site.inverter_max_power_per_phase else float('inf')
-
         # Off-grid a symmetric inverter pools as well - see _build_inverter_constraints.
-        if site.inverter_supports_asymmetric or site.is_off_grid:
-            total_pool = (export.total if export else 0) + battery_adjustment_total
-            constraints = _build_inverter_constraints(site, total_pool)
-        else:
-            # Symmetric: per-phase export + battery adjustment = per-phase surplus,
-            # capped by the per-phase inverter capacity left after the household
-            # (mirrors _build_inverter_constraints).
-            hh_a, hh_b, hh_c = _get_household_per_phase(site)
-            cap_a = max(0, max_per_phase - hh_a)
-            cap_b = max(0, max_per_phase - hh_b)
-            cap_c = max(0, max_per_phase - hh_c)
-            phase_a_available = min((export.a or 0) + battery_adjustment_per_phase, cap_a) if export.a is not None else 0
-            phase_b_available = min((export.b or 0) + battery_adjustment_per_phase, cap_b) if export.b is not None else 0
-            phase_c_available = min((export.c or 0) + battery_adjustment_per_phase, cap_c) if export.c is not None else 0
-            constraints = PhaseConstraints.from_per_phase(phase_a_available, phase_b_available, phase_c_available)
+        per_phase = None
+        if not (site.inverter_supports_asymmetric or site.is_off_grid):
+            # Symmetric: per-phase export + battery adjustment = per-phase
+            # surplus, which _build_inverter_constraints caps by the per-phase
+            # inverter capacity left after the household. (Grid-tied, so export
+            # is the site's own, None on exactly the phases consumption is.)
+            battery_adjustment_per_phase = battery_adjustment_total / (
+                site.export_current.active_count or site.consumption.active_count or 1
+            ) if battery_adjustment_total else 0
+            per_phase = tuple(
+                0 if e is None else (e or 0) + battery_adjustment_per_phase
+                for e in (export.a, export.b, export.c)
+            )
+        constraints = _build_inverter_constraints(
+            site, (export.total if export else 0) + battery_adjustment_total, per_phase
+        )
 
         # Apply total inverter limit if configured, accounting for household.
         # Cap combination fields (not per-phase) - same principle as grid limit.
@@ -1550,7 +1524,6 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
         # be exporting now, and measuring it would under-allocate. Two arms,
         # two different physics; do not unify them.
         constraints = PhaseConstraints.from_pool(total, total, total, total)
-        constraints.netting = True
     else:
         # Symmetric: each phase is bounded by its OWN export flow, and the site
         # total is bounded by the allowance. Two bounds, both physical, neither
@@ -1581,19 +1554,12 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
         # ``total`` is deliberately not clamped: inside the verdict's release
         # band the margin can be negative, every phase then reads negative, and
         # ``_excess_permits`` is what keeps a running load alive on the verdict.
-        flows = [
-            None if exp is None else (exp or 0.0) - (cons or 0.0)
-            for exp, cons in (
-                (site.export_current.a, site.consumption.a),
-                (site.export_current.b, site.consumption.b),
-                (site.export_current.c, site.consumption.c),
-            )
-        ]
         phases = [
-            0.0 if f is None else min(total, max(0.0, f)) for f in flows
+            0.0 if f is None else min(total, max(0.0, f))
+            for f in _reconstruct_signed_per_phase(site, 0.0)
         ]
         constraints = PhaseConstraints.from_pool(*phases, total)
-        constraints.netting = True
+    constraints.netting = True
     _LOGGER.debug(
         f"Excess constraints ({'asymmetric' if site.inverter_supports_asymmetric else 'symmetric'}, net): {constraints}"
     )
@@ -1722,16 +1688,10 @@ def _excess_phase_is_importing(load: LoadContext, site: SiteContext) -> bool:
     out: this asks what the phase is doing WITHOUT the load in question.
     """
     mask = load.active_phases_mask or ""
-    for letter, exp, cons in zip(
-        "ABC",
-        (site.export_current.a, site.export_current.b, site.export_current.c),
-        (site.consumption.a, site.consumption.b, site.consumption.c),
-    ):
-        if letter not in mask or cons is None:
-            continue
-        if (exp or 0.0) - (cons or 0.0) < 0:
-            return True
-    return False
+    return any(
+        letter in mask and flow is not None and flow < 0
+        for letter, flow in zip("ABC", _reconstruct_signed_per_phase(site, 0.0))
+    )
 
 
 def _excess_permits(load: LoadContext, site: SiteContext, pool: float) -> bool:
@@ -1938,10 +1898,7 @@ def _deduct_from_sources(
 
 def _sort_loads(loads: list[LoadContext]) -> list[LoadContext]:
     """Sort loads by (mode urgency tier, per-load priority) for distribution."""
-    return sorted(
-        loads,
-        key=lambda c: (c.mode_priority, c.priority),
-    )
+    return sorted(loads, key=_rank)
 
 
 def _distribute_power(
@@ -2033,7 +1990,7 @@ def _allocate_minimums(
     # of it and starts only while that is positive - or on the verdict alone
     # when nothing ahead has claimed anything (the saturated single-load site,
     # where the pool is 0 and yet Excess is on).
-    excess_start = excess.copy()
+    excess_start = excess  # never changed in place: deduct() returns a new pool
     claims = {"A": 0.0, "B": 0.0, "C": 0.0}
     # Inactive loads the verdict is about to start (site.excess_potential_claims),
     # folded into the ledger at their rank so a lower-ranked Excess load sees
@@ -2193,11 +2150,8 @@ def _distribute_per_phase_priority(
     sorted_loads = _sort_loads(site.loads)
 
     # Pass 1: Reserve minimums (source-aware)
-    remaining = physical_pool.copy()
-    solar_rem = solar_pool.copy()
-    excess_rem = excess_pool.copy()
     allocated, footprints, remaining, solar_rem, excess_rem, ahead = _allocate_minimums(
-        sorted_loads, site, remaining, solar_rem, excess_rem
+        sorted_loads, site, physical_pool, solar_pool, excess_pool
     )
 
     for cid, alloc in allocated.items():
@@ -2298,11 +2252,8 @@ def _distribute_per_phase_shared(
     sorted_loads = _sort_loads(site.loads)
 
     # Pass 1: Reserve minimums (source-aware)
-    remaining = physical_pool.copy()
-    solar_rem = solar_pool.copy()
-    excess_rem = excess_pool.copy()
     allocated, footprints, remaining, solar_rem, excess_rem, ahead = _allocate_minimums(
-        sorted_loads, site, remaining, solar_rem, excess_rem
+        sorted_loads, site, physical_pool, solar_pool, excess_pool
     )
 
     charging_loads = [c for c in sorted_loads if allocated.get(c.entity_id, 0) > 0]
@@ -2415,9 +2366,7 @@ def _distribute_per_phase_strict(
     STRICT mode: Give first load up to max (or source limit), then next, etc.
     Sorted by (urgency, priority). No minimum reservation - sequential greedy.
     """
-    remaining = physical_pool.copy()
-    solar_rem = solar_pool.copy()
-    excess_rem = excess_pool.copy()
+    remaining, solar_rem, excess_rem = physical_pool, solar_pool, excess_pool
     sorted_loads = _sort_loads(site.loads)
 
     for load in sorted_loads:
@@ -2454,9 +2403,7 @@ def _distribute_per_phase_optimized(
     OPTIMIZED mode: Reduce higher priority loads to allow lower priority
     to charge at minimum. Sorted by (urgency, priority). Source-aware.
     """
-    remaining = physical_pool.copy()
-    solar_rem = solar_pool.copy()
-    excess_rem = excess_pool.copy()
+    remaining, solar_rem, excess_rem = physical_pool, solar_pool, excess_pool
     sorted_loads = _sort_loads(site.loads)
 
     for i, load in enumerate(sorted_loads):

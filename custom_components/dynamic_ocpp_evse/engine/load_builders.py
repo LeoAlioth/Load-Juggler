@@ -11,20 +11,15 @@ Split out of hub_calculation.py, which now consumes these builders rather than
 defining them.
 """
 
-# PEP 604 unions (``float | None``) appear in this module's signatures. Nothing
-# here evaluates annotations at runtime (no dataclasses, NamedTuple/TypedDict or
-# get_type_hints calls), so deferring them keeps the module importable on the
-# Python 3.9 interpreters the standalone test runners use (same arrangement as
-# engine/auto_detect.py).
-from __future__ import annotations
-
 import logging
 import math
 import time
 from datetime import datetime, timezone
+from functools import partial
 
 from ..calculations import LoadContext, CircuitGroup
 from ..calculations.models import INACTIVE_STATUSES
+from ..calculations.utils import managed_phase_draws
 from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -68,10 +63,6 @@ from ..const import (
     DEFAULT_HEATING_ELEMENT_POWER,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
-    DEFAULT_OPERATING_MODE_EVSE,
-    DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
-    DEFAULT_OPERATING_MODE_PLUG,
-    DEFAULT_OPERATING_MODE_POWER_STATION,
     DEFAULT_PLUG_MAX_CURRENT,
     DEFAULT_PLUG_POWER_RATING,
     DEFAULT_STATION_CHARGE_LIMIT,
@@ -93,10 +84,9 @@ from ..const import (
     SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
     SETTLE_PERMIT_MARGIN,
-    STATION_MODE_STANDARD,
+    EVSE_MODE_STANDARD,
     SUSPENDED_EV_IDLE_TIMEOUT,
     WATTS_PROFILE_TOLERANCE,
-    behavior_for,
     resolve_operating_mode,
     resolve_tank_mode_priority,
     tank_boost_is_opportunistic,
@@ -139,7 +129,7 @@ def _offered_reading(hass, entry):
     for key in (CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, CONF_EVSE_POWER_OFFERED_ENTITY_ID):
         entity_id = get_entry_value(entry, key, None)
         if entity_id:
-            return _coerce(_read_entity(hass, entity_id, None), None)
+            return units.read_number(hass, entity_id)
     return None
 
 
@@ -344,11 +334,7 @@ def _watch_readouts_against_household(hass, site, supply_phases, unusable,
     A load judged stuck here goes blind on this very cycle; from the next one
     its builder does it, ahead of the settle and SuspendedEV logic.
     """
-    draws = [0.0, 0.0, 0.0]
-    for load in site.loads:
-        if load.dynamic_control:
-            for i, amps in enumerate(load.get_site_phase_draw()):
-                draws[i] += amps
+    draws = managed_phase_draws(site)
     household = {
         phase: (
             None
@@ -424,10 +410,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
 
     # Resolve the per-load operating mode from runtime data.
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_EVSE,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_EVSE.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_EVSE, load_rt.get("operating_mode"))
 
     load = LoadContext(
         load_id=entry.entry_id,
@@ -440,12 +423,12 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         # "Hands off" reaches the calculation too - see LoadContext.
         dynamic_control=load_rt.get("dynamic_control", True),
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode.behavior,
         mode_priority=mode.priority,
         rated_current=max_current,
         excess_claim_current=(
             min_current
-            if behavior_for(mode) == BEHAVIOR_EXCESS
+            if mode.behavior == BEHAVIOR_EXCESS
             and connector_status not in INACTIVE_STATUSES
             else 0.0
         ),
@@ -522,12 +505,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
                     # A single total-ish reading copied onto every active phase
                     # needs the same clamp: if the entity really carries the
                     # site total, replicating it would triple-book the draw.
-                    current_import = float(evse_state.state)
-                    load.l1_current = current_import
-                    if phases >= 2:
-                        load.l2_current = current_import
-                    if phases >= 3:
-                        load.l3_current = current_import
+                    _on_phases(load, phases, float(evse_state.state))
                     _clamp_reported_phase_draw(
                         load, entry, load_entity_id, max_current
                     )
@@ -552,11 +530,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
                     # Convert W → A (total power across all phases)
                     power_per_phase = power_w / phases
                     current_per_phase = power_per_phase / voltage
-                    load.l1_current = current_per_phase
-                    if phases >= 2:
-                        load.l2_current = current_per_phase
-                    if phases >= 3:
-                        load.l3_current = current_per_phase
+                    _on_phases(load, phases, current_per_phase)
                     current_draw = "power_import"
                     _LOGGER.debug(
                         "EVSE %s: Using Power Active Import fallback: %.1fW → %.1fA per phase",
@@ -716,6 +690,13 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     return load
 
 
+def _on_phases(load, phases, amps):
+    """The same current on each of the load's first ``phases`` legs (L1..Ln);
+    the others keep theirs."""
+    for leg in ("l1_current", "l2_current", "l3_current")[:phases]:
+        setattr(load, leg, amps)
+
+
 def _phase_draw(draw_w, connected_to_phase, voltage):
     """Distribute a binary load's total draw (W) across its connected phases.
 
@@ -754,7 +735,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
     phases = len(connected_to_phase)
 
-    plug_switch_entity = entry.data.get(CONF_PLUG_SWITCH_ENTITY_ID)
+    plug_switch_entity = get_entry_value(entry, CONF_PLUG_SWITCH_ENTITY_ID)
     plug_switch_state = (
         hass.states.get(plug_switch_entity) if plug_switch_entity else None
     )
@@ -827,10 +808,7 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         actual_draw_w = power_rating if on else 0
 
     # Resolve the per-load operating mode from runtime data.
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_PLUG,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_PLUG.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_PLUG, load_rt.get("operating_mode"))
 
     load = LoadContext(
         load_id=entry.entry_id,
@@ -845,11 +823,11 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
         dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_PLUG,
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode.behavior,
         mode_priority=mode.priority,
         rated_current=plug_max_current,
         excess_claim_current=(
-            equivalent_current if behavior_for(mode) == BEHAVIOR_BINARY_EXCESS else 0.0
+            equivalent_current if mode.behavior == BEHAVIOR_BINARY_EXCESS else 0.0
         ),
         draw_assumed=monitor_unreadable,
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
@@ -867,6 +845,11 @@ def _build_plug_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
+def _read_opt(hass, entry, key):
+    """The number an optional entity of ``entry`` reads, or None (unset or unusable)."""
+    return units.read_number(hass, get_entry_value(entry, key, None))
+
+
 def _station_at_its_reserve(hass, entry, load_rt, soc) -> bool:
     """Whether the station's SOC has reached the backup reserve it is holding -
     the point where it stops drawing from the wall regardless of the commanded
@@ -874,12 +857,7 @@ def _station_at_its_reserve(hass, entry, load_rt, soc) -> bool:
     the control last wrote. Unknown SOC or reserve → not at it (the old behaviour)."""
     if soc is None:
         return False
-    reserve = _coerce(
-        _read_entity(
-            hass, get_entry_value(entry, CONF_STATION_RESERVE_ENTITY_ID, None), None
-        ),
-        None,
-    )
+    reserve = _read_opt(hass, entry, CONF_STATION_RESERVE_ENTITY_ID)
     written = load_rt.get("station_reserve")
     candidates = [r for r in (reserve, written) if r is not None]
     if not candidates:
@@ -929,18 +907,8 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     max_current = max_power / denom if denom > 0 else 0
 
     speed_entity = entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID)
-    soc = _coerce(
-        _read_entity(
-            hass, get_entry_value(entry, CONF_STATION_BATTERY_LEVEL_ENTITY_ID, None), None
-        ),
-        None,
-    )
-    charge_limit = _coerce(
-        _read_entity(
-            hass, get_entry_value(entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID, None), None
-        ),
-        None,
-    )
+    soc = _read_opt(hass, entry, CONF_STATION_BATTERY_LEVEL_ENTITY_ID)
+    charge_limit = _read_opt(hass, entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID)
     if charge_limit is None:
         charge_limit = DEFAULT_STATION_CHARGE_LIMIT
 
@@ -982,9 +950,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
     elif load_rt.get("station_charging") and not _station_at_its_reserve(
         hass, entry, load_rt, soc
     ):
-        # _read_entity parses and unit-converts; _coerce only maps the
-        # unavailable sentinel, so the raw state string must not go through it.
-        actual_draw_w = _coerce(_read_entity(hass, speed_entity, 0, unit="W"), 0) or 0
+        actual_draw_w = units.read_number(hass, speed_entity, units.DOMAIN_WATTS) or 0
     else:
         # Idle - or commanded to charge but already at the reserve, where the
         # station's own gate stops the wall draw whatever speed we wrote. Adding
@@ -992,14 +958,11 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         # does not have (a full station kept the Excess verdict on, 2026-09-03).
         actual_draw_w = 0
 
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_POWER_STATION,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_POWER_STATION.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_POWER_STATION, load_rt.get("operating_mode"))
     # Storm reserve overrides the mode: filling a backup reserve only from
     # surplus is not a reserve, so it competes as a must-run load.
     if load_rt.get("station_storm_reserve"):
-        mode = STATION_MODE_STANDARD
+        mode = EVSE_MODE_STANDARD
 
     load = LoadContext(
         load_id=entry.entry_id,
@@ -1014,12 +977,12 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         dynamic_control=load_rt.get("dynamic_control", True),
         device_type=DEVICE_TYPE_POWER_STATION,
         operating_mode=mode.key,
-        mode_behavior=behavior_for(mode),
+        mode_behavior=mode.behavior,
         mode_priority=mode.priority,
         rated_current=max_current,
         excess_claim_current=(
             min_current
-            if behavior_for(mode) == BEHAVIOR_EXCESS
+            if mode.behavior == BEHAVIOR_EXCESS
             and connector_status not in INACTIVE_STATUSES
             else 0.0
         ),
@@ -1130,14 +1093,11 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         actual_draw_w = power_rating if hvac_action == "heating" else 0
 
     # Resolve the tank's operating mode. Its behavior (Freeze Protection /
-    # Normal are must-run Full Power; Solar Priority follows the sun) is mapped
-    # centrally in const/modes.py. resolve_tank_setpoint() independently picks
+    # Normal are must-run Full Power; Solar Priority follows the sun) is part
+    # of the mode (const/hot_water_tank.py). resolve_tank_setpoint() picks
     # *which* setpoint (away/normal/boost) to aim at - the mode behavior only
     # decides how the tank competes for power, not whether it runs.
-    mode = resolve_operating_mode(
-        DEVICE_TYPE_HOT_WATER_TANK,
-        load_rt.get("operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key),
-    )
+    mode = resolve_operating_mode(DEVICE_TYPE_HOT_WATER_TANK, load_rt.get("operating_mode"))
 
     # Cold-tank promotion: a Solar Priority tank below its normal temperature is
     # bumped to the Normal urgency tier so it beats other solar-priority loads
@@ -1197,7 +1157,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         current_temp,
         away_temp if mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
     )
-    mode_behavior = BEHAVIOR_BINARY_EXCESS if opportunistic else behavior_for(mode)
+    mode_behavior = BEHAVIOR_BINARY_EXCESS if opportunistic else mode.behavior
 
     load = LoadContext(
         load_id=entry.entry_id,
@@ -1256,30 +1216,22 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
     else:
         loads = load_entries
 
+    builders = {
+        DEVICE_TYPE_PLUG: _build_plug_load,
+        DEVICE_TYPE_HOT_WATER_TANK: _build_hot_water_tank_load,
+        DEVICE_TYPE_POWER_STATION: _build_power_station_load,
+    }
+    # Any other type is an EVSE, the integration's original device.
+    build_evse = partial(_build_evse_load, settle_seconds=settle_seconds)
     for entry in loads:
         device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         load_entity_id = entry.data.get(CONF_ENTITY_ID, f"load_{entry.entry_id}")
         priority = get_entry_value(
             entry, CONF_LOAD_PRIORITY, DEFAULT_LOAD_PRIORITY
         )
-
-        if device_type == DEVICE_TYPE_PLUG:
-            load = _build_plug_load(
-                hass, entry, site.voltage, load_entity_id, priority
-            )
-        elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-            load = _build_hot_water_tank_load(
-                hass, entry, site.voltage, load_entity_id, priority
-            )
-        elif device_type == DEVICE_TYPE_POWER_STATION:
-            load = _build_power_station_load(
-                hass, entry, site.voltage, load_entity_id, priority
-            )
-        else:
-            load = _build_evse_load(
-                hass, entry, site.voltage, load_entity_id, priority,
-                settle_seconds=settle_seconds,
-            )
+        load = builders.get(device_type, build_evse)(
+            hass, entry, site.voltage, load_entity_id, priority
+        )
 
         # Clamp active_phases_mask to only include phases that exist on the site
         site_phases = {
@@ -1321,8 +1273,6 @@ def _build_circuit_groups(hass, hub_entry_id):
     }
     groups = []
     for entry in group_entries:
-        if entry is None:
-            continue
         options = {**entry.data, **entry.options}
         current_limit = options.get(
             CONF_CIRCUIT_GROUP_CURRENT_LIMIT, DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT

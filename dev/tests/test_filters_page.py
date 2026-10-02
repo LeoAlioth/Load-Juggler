@@ -1,23 +1,14 @@
 """The Filters page's dials reach the control pipeline, and an entry without
 them IS the pre-page pipeline - not approximately, byte for byte.
 
-Pure tier: real apply_smoothing and real readers, a hub entry faked as the
-(options, data) pair get_entry_value reads, no Home Assistant.
+Real apply_smoothing and real readers, a hub entry faked as the (options,
+data) pair get_entry_value reads, no Home Assistant fixtures.
 """
 
 import math
-import sys
-from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules(
-    engine_modules=("hub_calculation",), control_modules=("smoothing",)
-)
-
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     CONF_FILTER_CTRL_FAST_TAU_S,
     CONF_FILTER_DEAD_BAND,
     CONF_FILTER_INPUT_TAU_S,
@@ -37,10 +28,10 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     SETTLE_DRAW_SECONDS,
     ema_alpha_for,
 )
-from custom_components.dynamic_ocpp_evse.control.smoothing import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.control.smoothing import (
     apply_smoothing,
 )
-from custom_components.dynamic_ocpp_evse.engine.readers import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.engine.readers import (
     _ALPHA_KEY,
     _FAST_TAU_KEY,
     _smooth,
@@ -139,18 +130,3 @@ def test_a_hub_without_dials_gives_the_readers_the_constants():
     set_ema_interval(ema, DT)
     assert ema[_ALPHA_KEY] == ema_alpha_for(DT, EMA_TAU_S)
     assert ema[_FAST_TAU_KEY] == CTRL_FAST_TAU_S
-
-
-if __name__ == "__main__":
-    failed = []
-    for _name, _fn in sorted(globals().items()):
-        if _name.startswith("test_") and callable(_fn):
-            try:
-                _fn()
-                print(f"PASS {_name}")
-            except Exception as exc:  # noqa: BLE001
-                failed.append(_name)
-                print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-    print()
-    print(f"FAILED - {len(failed)} failure(s)" if failed else "OK - 0 failure(s)")
-    sys.exit(1 if failed else 0)

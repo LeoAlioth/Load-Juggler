@@ -71,12 +71,17 @@ class LoadContext:
         connected_to_phase in config and this default is skipped.
         """
         if self.active_phases_mask is None:
-            if self.phases == 3:
-                self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase, self.l3_phase}))
-            elif self.phases == 2:
-                self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase}))
-            elif self.phases == 1:
-                self.active_phases_mask = self.l1_phase
+            self.mask_from_mapping()
+
+    def mask_from_mapping(self) -> None:
+        """Set ``active_phases_mask`` to the site phases L1..L(phases) map to
+        (left as it is for a phase count other than 1-3)."""
+        if self.phases == 3:
+            self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase, self.l3_phase}))
+        elif self.phases == 2:
+            self.active_phases_mask = "".join(sorted({self.l1_phase, self.l2_phase}))
+        elif self.phases == 1:
+            self.active_phases_mask = self.l1_phase
     
     # L1/L2/L3 → site phase mapping (configurable, default L1=A, L2=B, L3=C)
     l1_phase: str = "A"
@@ -154,11 +159,6 @@ class LoadContext:
     #   draw, up to its rated/max. Drives the device command.
     allocated_current: float = 0
     available_current: float = 0
-
-    # OCPP settings
-    ocpp_device_id: str = None
-    stack_level: int = 2
-    charge_rate_unit: str = "auto"  # "amps", "watts", or "auto"
 
     @property
     def reports_idle(self) -> bool:
@@ -251,7 +251,6 @@ class SiteContext:
     battery_soc_target: float | None = None
     battery_soc_min: float | None = None
     battery_soc_full: float | None = None  # SOC at/above which the battery counts as "full"
-    battery_soc_hysteresis: float = 5
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
     # The most the battery is taken to discharge (W), below its rating: set
@@ -442,20 +441,6 @@ class PhaseConstraints:
             netting=self.netting,
         )
 
-    def _element_op(self, other: PhaseConstraints, op) -> PhaseConstraints:
-        return PhaseConstraints(
-            A=op(self.A, other.A), B=op(self.B, other.B), C=op(self.C, other.C),
-            AB=op(self.AB, other.AB), AC=op(self.AC, other.AC), BC=op(self.BC, other.BC),
-            ABC=op(self.ABC, other.ABC),
-            netting=self.netting,
-        )
-
-    def element_min(self, other: PhaseConstraints) -> PhaseConstraints:
-        return self._element_op(other, min)
-
-    def element_max(self, other: PhaseConstraints) -> PhaseConstraints:
-        return self._element_op(other, max)
-
     def get_available(self, mask: str) -> float:
         """Get per-phase current available for a load with given phase mask.
 
@@ -499,9 +484,6 @@ class PhaseConstraints:
                 self.AB / 2, self.AC / 2, self.BC / 2,
                 self.ABC / 3,
             )
-
-        _LOGGER.warning("Unknown phase mask '%s', returning 0", mask)
-        return 0
 
     def deduct(self, current: float, mask: str) -> PhaseConstraints:
         """Deduct current from all affected phase combinations. Returns new instance."""
@@ -611,13 +593,8 @@ class PhaseConstraints:
             r.C = min(r.C, r.AC, r.BC, r.ABC)
 
         # Clamp non-negative
-        r.A = max(0, r.A)
-        r.B = max(0, r.B)
-        r.C = max(0, r.C)
-        r.AB = max(0, r.AB)
-        r.AC = max(0, r.AC)
-        r.BC = max(0, r.BC)
-        r.ABC = max(0, r.ABC)
+        for name in ("A", "B", "C", "AB", "AC", "BC", "ABC"):
+            setattr(r, name, max(0, getattr(r, name)))
 
         return r
 

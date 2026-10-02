@@ -14,7 +14,6 @@ from ..const import (
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
-    CONF_ENTITY_ID,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_HUB_ENTRY_ID,
@@ -160,7 +159,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             f"{entity_id}_available_current",
         )
         self.hub_entry = hub_entry
-        load_entity_id = config_entry.data.get(CONF_ENTITY_ID)
         # Classified out of the registries, shared with the engine (same cache),
         # so a renamed status entity and a multi-connector charger both resolve.
         self._connector_status_entity = ocpp_connector_status_entity(
@@ -174,7 +172,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # encode Watts-mode OCPP limits (control/ocpp.py, control/compliance.py).
         self._car_active_phases = None
         self._operating_mode = None
-        self._calc_used = None
         self._allocated_current = None
         self._available_current = None
         # UTC timestamp of the last cycle this load was processed without error.
@@ -210,11 +207,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._last_auto_reset_at = None
         self._profile_reset_count = 0
         self._last_hard_reset_at = None
-        self._target_evse = None
-        self._target_evse_standard = None
-        self._target_evse_eco = None
-        self._target_evse_solar = None
-        self._target_evse_excess = None
         self._charging_status = "Unknown"
 
     async def async_added_to_hass(self):
@@ -300,7 +292,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             "profile_reset_count": self._profile_reset_count,
             "last_hard_reset": self._last_hard_reset_at,
             # Any load type the off-grid sun probe may try (entities/sun_probe.py).
-            **sun_probe_attributes(self._load_runtime().get(LOAD_RT_SUN_PROBE)),
+            **sun_probe_attributes(self._runtime().get(LOAD_RT_SUN_PROBE)),
         }
         if (
             self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
@@ -308,7 +300,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         ):
             attrs.update(
                 readout_attributes(
-                    self._load_runtime().get(EVSE_RT_READOUT_WATCH)
+                    self._runtime().get(EVSE_RT_READOUT_WATCH)
                 )
             )
         return attrs
@@ -395,7 +387,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode
 
-        self._calc_used = hub_data.get("calc_used")
 
         # The site-level republish into hass.data is the hub coordinator's job
         # (one writer per cycle) - see publish_hub_data in entities/hub.py.
@@ -461,7 +452,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # measured it against the static one and paused anyway (issue #37).
         # Both branches therefore read the live runtime slider first and fall
         # back to the config value exactly as engine/hub_calculation.py does.
-        load_rt = self._load_runtime()
+        load_rt = self._runtime()
         if device_type == DEVICE_TYPE_POWER_STATION:
             # The station's floor is its minimum charge POWER, not a current -
             # see _build_power_station_load().
@@ -708,7 +699,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             DEFAULT_MAX_CHARGE_CURRENT,
         )
 
-        load_rt = self._load_runtime()
+        load_rt = self._runtime()
         dynamic_control_on = load_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:
@@ -739,14 +730,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 limit,
             )
         elif self._available_current < min_charge_current:
-            pause_duration_s = (
-                get_entry_value(
-                    self.config_entry,
-                    CONF_CHARGE_PAUSE_DURATION,
-                    DEFAULT_CHARGE_PAUSE_DURATION,
-                )
-                * 60
-            )
             # The pause bounds cycle FREQUENCY (see the minimum-off-time
             # comment below for why that is the quantity that matters), and a
             # cycle needs a previous ON: a load that has never held a runnable
@@ -809,7 +792,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # Dynamic Control off → hands off: leave the plug in whatever
             # state the user set, like an un-managed switch.
             if dynamic_control_on:
-                await send_plug_command(self, limit, hub_data, now_mono)
+                await send_plug_command(self, limit, now_mono)
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             # Dynamic Control off → Load Juggler does not touch the climate
             # entity at all. The tank then behaves as a normal, un-managed
@@ -831,7 +814,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self,
                 limit,
                 hub_entry,
-                dynamic_control_on,
                 now_mono,
                 # The engine's verdict on this connector, which is what makes
                 # the load inactive - see send_ocpp_command for why re-reading

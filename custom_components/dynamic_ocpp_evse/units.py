@@ -157,6 +157,35 @@ def is_unusable_number(value) -> bool:
     return not math.isfinite(value)
 
 
+def read_number(hass, entity_id, unit=None, voltage: float = 0.0):
+    """``entity_id``'s state as a finite float, or None when it is not usable.
+
+    None for an empty ``entity_id`` as well, so an optional config value can be
+    handed over as it is. ``unit`` is the canonical domain wanted - DOMAIN_AMPS,
+    DOMAIN_WATTS (``voltage`` for the A↔W step) or DOMAIN_VOLTS; None reads the
+    raw number. Duck-typed like the rest of this module: only
+    ``hass.states.get`` and the state's ``.state`` / ``.attributes`` are used.
+    """
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if is_unavailable(state):
+        return None
+    try:
+        value = float(state.state)
+    except (TypeError, ValueError):
+        return None
+    if unit is not None:
+        entity_unit = state.attributes.get("unit_of_measurement")
+        if unit == DOMAIN_AMPS:
+            value = to_amps(value, entity_unit, voltage)
+        elif unit == DOMAIN_WATTS:
+            value = to_watts(value, entity_unit, voltage)
+        elif unit == DOMAIN_VOLTS:
+            value = to_volts(value, entity_unit)
+    return None if is_unusable_number(value) else value
+
+
 def normalize(unit) -> str:
     """Upper-cased unit string; '' for a missing or non-string unit."""
     if not unit or not isinstance(unit, str):

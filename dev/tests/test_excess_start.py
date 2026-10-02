@@ -29,35 +29,20 @@ load that cannot be given its minimum. The last three tests are that boundary.
 
 Release is not this file's subject - the latch's hysteresis on the reconstructed
 margin owns it (see test_excess_stayon.py).
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_excess_start.py     (standalone, no pytest needed)
-  pytest dev/tests/test_excess_start.py      (Docker / CI tier)
 """
 
-import sys
-from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Module loading - shared stub loader (avoids the HA-importing package root)
-# ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules()
-
-from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.models import (
     CircuitGroup,
     LoadContext,
     PhaseConstraints,
     PhaseValues,
     SiteContext,
 )
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     calculate_all_load_targets,
     excess_margin,
 )
-from custom_components.dynamic_ocpp_evse.calculations.utils import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.utils import (
     grid_without_managed_draws,
 )
 
@@ -773,8 +758,6 @@ def test_the_netting_flag_survives_every_pool_operation():
     for name, obj in (
         ("copy", base.copy()),
         ("add", base + other),
-        ("element_min", base.element_min(other)),
-        ("element_max", base.element_max(other)),
         ("deduct", base.deduct(0.5, "A")),
         ("normalize", base.normalize()),
         ("zeros", PhaseConstraints.zeros(netting=True)),
@@ -967,24 +950,3 @@ def test_a_phase_the_site_does_not_have_still_stops_the_load():
     margin = _prepare(_site(THRESHOLD, loads=[load]))
     assert _close(margin, 0.0)
     assert _close(load.allocated_current, 0.0)
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

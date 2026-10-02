@@ -49,7 +49,21 @@ def apply_smoothing(
         sensor._schmitt_current = sensor._rate_limited_current
         sensor._schmitt_state = "rising"
 
-    if mode_changed or sensor._ema_current is None:
+    # A mode change and the first cycle reset the pipeline; so does resuming
+    # from 0 - an intentional fast-start (design decision, 2026-08-17) that
+    # seeds the whole pipeline at the raw permit instead of ramping up from
+    # the minimum. The permit was computed inside every site constraint, so
+    # the step is safe by construction, and crawling up would waste surplus.
+    # The ramp exists to damp oscillation, not to protect anything; the
+    # compliance checker's "ramping" skip tolerates the step. Every
+    # modulating load type goes through this identically - the power
+    # station used to resume at its minimum instead, which only delayed
+    # its absorption of a surplus it had already been granted.
+    if (
+        mode_changed
+        or sensor._ema_current is None
+        or sensor._rate_limited_current == 0
+    ):
         sensor._ema_current = raw_allocated
         sensor._schmitt_current = raw_allocated
         sensor._schmitt_state = "rising"
@@ -60,20 +74,6 @@ def apply_smoothing(
                 sensor._attr_name,
                 raw_allocated,
             )
-    elif sensor._rate_limited_current == 0:
-        # Intentional fast-start (design decision, 2026-08-17): resuming from 0
-        # seeds the whole pipeline at the raw permit instead of ramping up from
-        # the minimum. The permit was computed inside every site constraint, so
-        # the step is safe by construction, and crawling up would waste surplus.
-        # The ramp exists to damp oscillation, not to protect anything; the
-        # compliance checker's "ramping" skip tolerates the step. Every
-        # modulating load type goes through this identically - the power
-        # station used to resume at its minimum instead, which only delayed
-        # its absorption of a surplus it had already been granted.
-        sensor._ema_current = raw_allocated
-        sensor._schmitt_current = raw_allocated
-        sensor._schmitt_state = "rising"
-        sensor._rate_limited_current = raw_allocated
     else:
         # PERMIT_TAU_S of smoothing at whatever cadence this site runs at,
         # through the readers' own conversion - shared rather than restated, so

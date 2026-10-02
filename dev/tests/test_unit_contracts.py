@@ -17,24 +17,12 @@ actually *reached*, which is where the real bugs were:
    allowlist below with a reason.
 
 Both work by reading the source, so they cover code no runtime test touches.
-
-Runnable two ways:
-  python3 dev/tests/test_unit_contracts.py   (standalone, no pytest needed)
-  pytest dev/tests/test_unit_contracts.py    (Docker / CI tier)
 """
 
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules  # noqa: E402
-
-# Only const/ and units.py are needed, and neither imports Home Assistant -
-# the config-flow half of the contract is checked by reading its source.
-load_pure_modules(calc_modules=(), root_modules=("units",))
-
-from custom_components.dynamic_ocpp_evse import const, units  # noqa: E402
+from custom_components.dynamic_ocpp_evse import const, units
 
 _COMPONENT = Path(__file__).parents[2] / "custom_components" / "dynamic_ocpp_evse"
 
@@ -129,41 +117,17 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
 # hub_calculation.py, which is exactly where the forgotten conversion lived.
 # Counts may only go DOWN without editing this table.
 _RAW_PARSE_BUDGET = {
-    # Our own min/max-current number entities, in our own amps.
-    "__init__.py": 1,
-    # One each since config_flow became a package (the total is unchanged).
-    # The battery discharge power hint in the hub_inverter form description -
-    # only this detected preview text is unit-naive and never stored; the value
-    # the user then types into the field is a real engine input, user-vetted.
-    # It moved from flow.py to helpers.py with _auto_detect_entity_value, when
-    # the two flow handlers stopped borrowing helpers off each other's class.
-    "config_flow/helpers.py": 1,
-    # And _entry_sensor_value on the Overview page, which reads back this
-    # integration's OWN sensors (our units by construction) for display only
-    # and is unit-agnostic on purpose (also passes through status strings).
-    "config_flow/pages.py": 1,
-    # The offered-current read (amps by OCPP definition) and the
-    # offered-power read, which converts through units.to_watts.
-    "control/compliance.py": 2,
-    # A shared reader: the charge-limit register read-back (same entity, same
-    # unit as what we write, by construction) and the battery-voltage read,
-    # which converts through units.to_volts right below the parse.
-    "control/inverter.py": 1,
-    # Same pattern for the station's charge-speed/reserve numbers.
-    "control/power_station.py": 1,
+    # units.read_number: the one "state -> finite float" reader, converting
+    # through to_amps/to_watts/to_volts when a unit is asked for. _read_entity
+    # (engine/readers.py), the inverter and power-station controls, the station
+    # status sensor, the min/max-current services and the Overview page's
+    # read-back of a load's own permit all read through it.
+    "units.py": 1,
+    # The offered-power read, which converts through units.to_watts.
+    "control/compliance.py": 1,
     # The EVSE current-import total and power fallbacks (the latter via
     # units.to_watts), which moved here with the LoadContext builders.
     "engine/load_builders.py": 2,
-    # _read_entity (the one converting reader), which moved here with the rest
-    # of the sensor-reading layer. Was 4 when engine/hub_calculation.py still
-    # held all three: the grid staleness check used to re-parse the raw state
-    # string itself, and now reads the sentinel _read_grid_phases already
-    # resolved (ISSUES.md #31).
-    "engine/readers.py": 1,
-    # The station status sensor reading the power station's external battery
-    # SOC and charge-limit entities - both percentages, so no unit conversion
-    # applies.
-    "entities/load_sensors.py": 1,
     # RestoreEntity state restoration of values we published ourselves. Was 2
     # (one copy per mixin); the hub and load mixins now share the single
     # _apply_restored_number() reader, so the ratchet drops to 1.
@@ -195,24 +159,3 @@ def test_no_new_hand_rolled_state_parsing():
         f"(to_amps/to_watts/to_volts) so the sensor's unit is honoured, or "
         f"update _RAW_PARSE_BUDGET with the reason it is safe"
     )
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

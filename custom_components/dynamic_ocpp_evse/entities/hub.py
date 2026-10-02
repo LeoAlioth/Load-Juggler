@@ -1,12 +1,13 @@
 import logging
+from dataclasses import dataclass
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
+    SensorEntityDescription,
     SensorStateClass,
 )
 from datetime import datetime, timezone
 from ..const import DOMAIN
-from ..helpers import get_entry_value
 from .mixins import HubEntityMixin, SiteCycleConsumerMixin
 from .readout import hub_estimate_attributes
 
@@ -111,164 +112,188 @@ class LoadJugglerHubStatusSensor(
         )
 
 
+@dataclass(frozen=True, kw_only=True)
+class DataSensorDescription(SensorEntityDescription):
+    """A numeric sensor showing one figure of its hub's published site result.
+
+    ``key`` is the unique_id suffix (and an inverter sensor's translation key),
+    ``name`` a hub sensor's name suffix, ``data_key`` the figure's key in the
+    published dict - hub_data, or the inverter's own section of it - rounded to
+    ``decimals``. A reading is MEASUREMENT unless the description says
+    otherwise. The requires_* flags gate creation (sensor.py); a
+    ``nets_managed_draw`` figure reports when it is an estimate, and the
+    ``restores_gain`` one carries the forecast gain series (entities/inverter.py).
+    """
+
+    data_key: str
+    decimals: int
+    state_class: SensorStateClass | str | None = SensorStateClass.MEASUREMENT
+    requires_battery: bool = False
+    requires_phase: str | None = None
+    requires_forecast: bool = False
+    requires_forecast_device: bool = False
+    nets_managed_draw: bool = False
+    restores_gain: bool = False
+
+
 HUB_SENSOR_DEFINITIONS = [
-    {
-        "name_suffix": "Battery SOC",
-        "unique_id_suffix": "battery_soc",
-        "hub_data_key": "battery_soc",
-        "unit": "%",
-        "device_class": SensorDeviceClass.BATTERY,
-        "icon": "mdi:battery-80",
-        "decimals": 1,
-        "requires_battery": True,
-    },
-    {
-        "name_suffix": "Current Grid Power",
-        "unique_id_suffix": "net_site_consumption",
-        "hub_data_key": "grid_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:home-lightning-bolt-outline",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Current Solar Power",
-        "unique_id_suffix": "solar_power",
-        "hub_data_key": "solar_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:solar-power-variant",
-        "decimals": 0,
-    },
-    {
+    DataSensorDescription(
+        name="Battery SOC",
+        key="battery_soc",
+        data_key="battery_soc",
+        native_unit_of_measurement="%",
+        device_class=SensorDeviceClass.BATTERY,
+        icon="mdi:battery-80",
+        decimals=1,
+        requires_battery=True,
+    ),
+    DataSensorDescription(
+        name="Current Grid Power",
+        key="net_site_consumption",
+        data_key="grid_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:home-lightning-bolt-outline",
+        decimals=0,
+    ),
+    DataSensorDescription(
+        name="Current Solar Power",
+        key="solar_power",
+        data_key="solar_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:solar-power-variant",
+        decimals=0,
+    ),
+    DataSensorDescription(
         # What the site draws that Load Juggler does NOT control - the whole
         # site less every managed load. The figure has always been computed
         # and published in hub_data; this exposes it so it can be graphed and
         # automated on rather than read off the Overview page.
-        "name_suffix": "Household Power",
-        "unique_id_suffix": "household_power",
-        "hub_data_key": "household_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:home-lightning-bolt",
-        "decimals": 0,
+        name="Household Power",
+        key="household_power",
+        data_key="household_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:home-lightning-bolt",
+        decimals=0,
         # Nets out every managed draw, so a charger's assumed draw is in it.
-        "nets_managed_draw": True,
-    },
-    {
-        "name_suffix": "Current Battery Power",
-        "unique_id_suffix": "battery_power",
-        "hub_data_key": "battery_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:battery-charging",
-        "decimals": 0,
-        "requires_battery": True,
-    },
-    {
-        "name_suffix": "Remaining Current A",
-        "unique_id_suffix": "site_available_current_phase_a",
-        "hub_data_key": "available_current_a",
-        "unit": "A",
-        "device_class": SensorDeviceClass.CURRENT,
-        "icon": "mdi:current-ac",
-        "decimals": 1,
-    },
-    {
-        "name_suffix": "Remaining Current B",
-        "unique_id_suffix": "site_available_current_phase_b",
-        "hub_data_key": "available_current_b",
-        "unit": "A",
-        "device_class": SensorDeviceClass.CURRENT,
-        "icon": "mdi:current-ac",
-        "decimals": 1,
-        "requires_phase": "B",
-    },
-    {
-        "name_suffix": "Remaining Current C",
-        "unique_id_suffix": "site_available_current_phase_c",
-        "hub_data_key": "available_current_c",
-        "unit": "A",
-        "device_class": SensorDeviceClass.CURRENT,
-        "icon": "mdi:current-ac",
-        "decimals": 1,
-        "requires_phase": "C",
-    },
-    {
-        "name_suffix": "Grid Remaining Current",
-        "unique_id_suffix": "site_grid_available_current",
-        "hub_data_key": "available_grid_current",
-        "unit": "A",
-        "device_class": SensorDeviceClass.CURRENT,
-        "icon": "mdi:transmission-tower",
-        "decimals": 1,
-    },
-    {
-        "name_suffix": "Solar Remaining Current",
-        "unique_id_suffix": "site_solar_available_current",
-        "hub_data_key": "available_solar_current",
-        "unit": "A",
-        "device_class": SensorDeviceClass.CURRENT,
-        "icon": "mdi:solar-power",
-        "decimals": 1,
-    },
-    {
-        "name_suffix": "Battery Remaining Current",
-        "unique_id_suffix": "site_battery_available_current",
-        "hub_data_key": "available_battery_current",
-        "unit": "A",
-        "device_class": SensorDeviceClass.CURRENT,
-        "icon": "mdi:battery-arrow-up",
-        "decimals": 1,
-        "requires_battery": True,
-    },
-    {
-        "name_suffix": "Inverter Remaining Current",
-        "unique_id_suffix": "site_inverter_available_current",
-        "hub_data_key": "available_inverter_current",
-        "unit": "A",
-        "device_class": SensorDeviceClass.CURRENT,
-        "icon": "mdi:flash",
-        "decimals": 1,
-    },
-    {
-        "name_suffix": "Grid Remaining Power",
-        "unique_id_suffix": "site_grid_available_power",
-        "hub_data_key": "available_grid_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:transmission-tower",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Solar Remaining Power",
-        "unique_id_suffix": "solar_available_power",
-        "hub_data_key": "available_solar_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:solar-power",
-        "decimals": 0,
-    },
-    {
-        "name_suffix": "Battery Remaining Power",
-        "unique_id_suffix": "battery_available_power",
-        "hub_data_key": "available_battery_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:battery-arrow-up",
-        "decimals": 0,
-        "requires_battery": True,
-    },
-    {
-        "name_suffix": "Current Managed Power",
-        "unique_id_suffix": "total_evse_power",
-        "hub_data_key": "total_evse_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:ev-station",
-        "decimals": 0,
-        "nets_managed_draw": True,
-    },
+        nets_managed_draw=True,
+    ),
+    DataSensorDescription(
+        name="Current Battery Power",
+        key="battery_power",
+        data_key="battery_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:battery-charging",
+        decimals=0,
+        requires_battery=True,
+    ),
+    DataSensorDescription(
+        name="Remaining Current A",
+        key="site_available_current_phase_a",
+        data_key="available_current_a",
+        native_unit_of_measurement="A",
+        device_class=SensorDeviceClass.CURRENT,
+        icon="mdi:current-ac",
+        decimals=1,
+    ),
+    DataSensorDescription(
+        name="Remaining Current B",
+        key="site_available_current_phase_b",
+        data_key="available_current_b",
+        native_unit_of_measurement="A",
+        device_class=SensorDeviceClass.CURRENT,
+        icon="mdi:current-ac",
+        decimals=1,
+        requires_phase="B",
+    ),
+    DataSensorDescription(
+        name="Remaining Current C",
+        key="site_available_current_phase_c",
+        data_key="available_current_c",
+        native_unit_of_measurement="A",
+        device_class=SensorDeviceClass.CURRENT,
+        icon="mdi:current-ac",
+        decimals=1,
+        requires_phase="C",
+    ),
+    DataSensorDescription(
+        name="Grid Remaining Current",
+        key="site_grid_available_current",
+        data_key="available_grid_current",
+        native_unit_of_measurement="A",
+        device_class=SensorDeviceClass.CURRENT,
+        icon="mdi:transmission-tower",
+        decimals=1,
+    ),
+    DataSensorDescription(
+        name="Solar Remaining Current",
+        key="site_solar_available_current",
+        data_key="available_solar_current",
+        native_unit_of_measurement="A",
+        device_class=SensorDeviceClass.CURRENT,
+        icon="mdi:solar-power",
+        decimals=1,
+    ),
+    DataSensorDescription(
+        name="Battery Remaining Current",
+        key="site_battery_available_current",
+        data_key="available_battery_current",
+        native_unit_of_measurement="A",
+        device_class=SensorDeviceClass.CURRENT,
+        icon="mdi:battery-arrow-up",
+        decimals=1,
+        requires_battery=True,
+    ),
+    DataSensorDescription(
+        name="Inverter Remaining Current",
+        key="site_inverter_available_current",
+        data_key="available_inverter_current",
+        native_unit_of_measurement="A",
+        device_class=SensorDeviceClass.CURRENT,
+        icon="mdi:flash",
+        decimals=1,
+    ),
+    DataSensorDescription(
+        name="Grid Remaining Power",
+        key="site_grid_available_power",
+        data_key="available_grid_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:transmission-tower",
+        decimals=0,
+    ),
+    DataSensorDescription(
+        name="Solar Remaining Power",
+        key="solar_available_power",
+        data_key="available_solar_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:solar-power",
+        decimals=0,
+    ),
+    DataSensorDescription(
+        name="Battery Remaining Power",
+        key="battery_available_power",
+        data_key="available_battery_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:battery-arrow-up",
+        decimals=0,
+        requires_battery=True,
+    ),
+    DataSensorDescription(
+        name="Current Managed Power",
+        key="total_evse_power",
+        data_key="total_evse_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:ev-station",
+        decimals=0,
+        nets_managed_draw=True,
+    ),
     # PV clipping forecast - advisory battery headroom. The kWh sensors carry
     # device_class ENERGY with state_class TOTAL (developer decision,
     # 2026-08-17): HA rejects ENERGY + MEASUREMENT, and TOTAL is the class for
@@ -282,39 +307,39 @@ HUB_SENSOR_DEFINITIONS = [
     # to zero at dusk and sit there - they roll over to what the site is about
     # to face, which is the figure the overnight SOC reservation is made from.
     # A day with no clip today and none tomorrow reads 0.00 on all three.
-    {
-        "name_suffix": "Forecast Clippable Energy",
-        "unique_id_suffix": "forecast_clippable_energy",
-        "hub_data_key": "forecast_clipped_kwh",
-        "unit": "kWh",
-        "device_class": SensorDeviceClass.ENERGY,
-        "state_class": SensorStateClass.TOTAL,
-        "icon": "mdi:content-cut",
-        "decimals": 2,
-        "requires_forecast": True,
-    },
-    {
-        "name_suffix": "Forecast Storable Energy",
-        "unique_id_suffix": "forecast_storable_energy",
-        "hub_data_key": "forecast_absorbable_kwh",
-        "unit": "kWh",
-        "device_class": SensorDeviceClass.ENERGY,
-        "state_class": SensorStateClass.TOTAL,
-        "icon": "mdi:battery-plus-variant",
-        "decimals": 2,
-        "requires_forecast": True,
-    },
-    {
-        "name_suffix": "Battery Headroom Deficit",
-        "unique_id_suffix": "forecast_headroom_deficit",
-        "hub_data_key": "forecast_headroom_deficit_kwh",
-        "unit": "kWh",
-        "device_class": SensorDeviceClass.ENERGY,
-        "state_class": SensorStateClass.TOTAL,
-        "icon": "mdi:battery-alert",
-        "decimals": 2,
-        "requires_forecast": True,
-    },
+    DataSensorDescription(
+        name="Forecast Clippable Energy",
+        key="forecast_clippable_energy",
+        data_key="forecast_clipped_kwh",
+        native_unit_of_measurement="kWh",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:content-cut",
+        decimals=2,
+        requires_forecast=True,
+    ),
+    DataSensorDescription(
+        name="Forecast Storable Energy",
+        key="forecast_storable_energy",
+        data_key="forecast_absorbable_kwh",
+        native_unit_of_measurement="kWh",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:battery-plus-variant",
+        decimals=2,
+        requires_forecast=True,
+    ),
+    DataSensorDescription(
+        name="Battery Headroom Deficit",
+        key="forecast_headroom_deficit",
+        data_key="forecast_headroom_deficit_kwh",
+        native_unit_of_measurement="kWh",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL,
+        icon="mdi:battery-alert",
+        decimals=2,
+        requires_forecast=True,
+    ),
     # OBSERVE-ONLY: how much the site ACTUALLY clipped today against what a
     # 15-minute average predicted it would. 100% means the block average told
     # the whole truth; above it is the Jensen gap - clipping is convex and
@@ -328,30 +353,30 @@ HUB_SENSOR_DEFINITIONS = [
     # estimated as the forecast's excess over measured production, because
     # curtailed energy cannot be metered: the inverter never makes it. Bounded
     # by the forecast's own accuracy, and in the same direction.
-    {
-        "name_suffix": "Clipped Energy Today",
-        "unique_id_suffix": "forecast_clipped_actual",
-        "hub_data_key": "forecast_clipped_actual_kwh",
-        "unit": "kWh",
-        "device_class": SensorDeviceClass.ENERGY,
+    DataSensorDescription(
+        name="Clipped Energy Today",
+        key="forecast_clipped_actual",
+        data_key="forecast_clipped_actual_kwh",
+        native_unit_of_measurement="kWh",
+        device_class=SensorDeviceClass.ENERGY,
         # Rises through the day and resets at local midnight - the state class
         # HA documents for a daily-resetting energy counter. The advisory
         # forecast kWh sensors above are TOTAL instead because they rise AND
         # fall as the remaining day shrinks.
-        "state_class": SensorStateClass.TOTAL_INCREASING,
-        "icon": "mdi:content-cut",
-        "decimals": 2,
-        "requires_forecast": True,
-    },
-    {
-        "name_suffix": "Forecast Peakiness",
-        "unique_id_suffix": "forecast_peakiness",
-        "hub_data_key": "forecast_peakiness_pct",
-        "unit": "%",
-        "icon": "mdi:chart-bell-curve",
-        "decimals": 1,
-        "requires_forecast": True,
-    },
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        icon="mdi:content-cut",
+        decimals=2,
+        requires_forecast=True,
+    ),
+    DataSensorDescription(
+        name="Forecast Peakiness",
+        key="forecast_peakiness",
+        data_key="forecast_peakiness_pct",
+        native_unit_of_measurement="%",
+        icon="mdi:chart-bell-curve",
+        decimals=1,
+        requires_forecast=True,
+    ),
     # The recommended max-SOC and charge-limit sensors live on the inverter
     # entries (entities/inverter.py) - the advice is per battery, and that is
     # where the future write-control will act. The fleet values remain in
@@ -365,7 +390,7 @@ HUB_SENSOR_DEFINITIONS = [
 # a new hub sensor republishes automatically, plus keys read by non-sensor
 # consumers.
 _HUB_REPUBLISH_KEYS = frozenset(
-    d["hub_data_key"] for d in HUB_SENSOR_DEFINITIONS
+    d.data_key for d in HUB_SENSOR_DEFINITIONS
 ) | {
     "battery_soc_min",
     "battery_soc_target",
@@ -431,30 +456,24 @@ def publish_hub_data(hass, hub_entry_id, hub_data):
 class LoadJugglerHubDataSensor(
     SiteCycleConsumerMixin, HubEntityMixin, SensorEntity
 ):
-    """Generic hub data sensor driven by a definition dict.
+    """Generic hub data sensor driven by a DataSensorDescription.
 
     Every one of these is a numeric reading. W/A/% sensors carry state_class
-    MEASUREMENT (the default here); the advisory kWh sensors override it to
-    ENERGY + TOTAL per their definitions - HA rejects ENERGY + MEASUREMENT,
-    and TOTAL is the class for an amount that rises and falls.
+    MEASUREMENT (the description's default); the advisory kWh sensors override
+    it to ENERGY + TOTAL - HA rejects ENERGY + MEASUREMENT, and TOTAL is the
+    class for an amount that rises and falls. device_class is optional: a ratio
+    in percent has no fitting HA device class, and borrowing one (BATTERY,
+    POWER_FACTOR) would mislabel it everywhere.
     """
 
-    def __init__(self, hass, config_entry, name, entity_id, defn):
+    def __init__(self, hass, config_entry, name, entity_id, description):
         self._init_entity(
             hass,
             config_entry,
-            f"{name} {defn['name_suffix']}",
-            f"{entity_id}_{defn['unique_id_suffix']}",
+            f"{name} {description.name}",
+            f"{entity_id}_{description.key}",
         )
-        self._defn = defn
-        self._attr_native_unit_of_measurement = defn["unit"]
-        # Optional: a ratio in percent has no fitting HA device class, and
-        # borrowing one (BATTERY, POWER_FACTOR) would mislabel it everywhere.
-        self._attr_device_class = defn.get("device_class")
-        self._attr_state_class = defn.get(
-            "state_class", SensorStateClass.MEASUREMENT
-        )
-        self._attr_icon = defn["icon"]
+        self.entity_description = description
         self._attr_native_value = None
         self._estimate = None
 
@@ -464,7 +483,7 @@ class LoadJugglerHubDataSensor(
         ESTIMATE this cycle - a charger's readout is stuck and its assumed draw
         is in the figure - with which chargers, on what evidence, since when
         (entities/readout.py). Nothing for every other hub figure."""
-        if not self._defn.get("nets_managed_draw"):
+        if not self.entity_description.nets_managed_draw:
             return None
         return hub_estimate_attributes(self._estimate)
 
@@ -487,7 +506,7 @@ class LoadJugglerHubDataSensor(
         if not hub_data:
             return
         self._estimate = hub_data.get("draw_estimated")
-        value = hub_data.get(self._defn["hub_data_key"])
+        value = hub_data.get(self.entity_description.data_key)
         self._attr_native_value = (
-            None if value is None else round(float(value), self._defn["decimals"])
+            None if value is None else round(float(value), self.entity_description.decimals)
         )

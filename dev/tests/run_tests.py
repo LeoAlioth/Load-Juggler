@@ -1,6 +1,5 @@
-#!/usr/bin/env python3
 """
-Multi-cycle simulation test runner for EVSE distribution.
+Multi-cycle simulation of the YAML scenarios, driven by test_scenarios.py.
 Uses ACTUAL production code - no duplicates!
 
 Every scenario runs a 30-cycle simulation:
@@ -9,19 +8,8 @@ Every scenario runs a 30-cycle simulation:
   - Cycles 25-29: Stability check (verify convergence)
 """
 
-import sys
 import yaml
-from pathlib import Path
-from datetime import datetime
 
-# Load the pure calculation modules directly from their files (the component's
-# package __init__.py imports 'homeassistant') via the shared stub loader.
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules()
-
-# Convenience aliases for the rest of this file
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     calculate_all_load_targets,
@@ -31,9 +19,8 @@ from custom_components.dynamic_ocpp_evse.calculations.utils import (
     compute_household_per_phase,
     grid_without_managed_draws,
 )
-from custom_components.dynamic_ocpp_evse.const.modes import (
+from custom_components.dynamic_ocpp_evse.const import (
     resolve_operating_mode,
-    behavior_for,
     BEHAVIOR_EXCESS,
     BEHAVIOR_BINARY_EXCESS,
 )
@@ -45,15 +32,6 @@ from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     DEFAULT_TANK_NORMAL_TEMPERATURE,
 )
 from custom_components.dynamic_ocpp_evse.const import DEFAULT_BATTERY_SOC_FULL, DEFAULT_PLUG_MAX_CURRENT
-
-# ---------------------------------------------------------------------------
-# Mode name migration (old YAML → new operating modes)
-# ---------------------------------------------------------------------------
-_MIGRATE_MODE_NAMES = {
-    "Eco": "Solar Priority",
-    "Solar": "Solar Only",
-    # Standard and Excess are unchanged
-}
 
 # ---------------------------------------------------------------------------
 # Simulation constants
@@ -544,9 +522,6 @@ def build_site_from_scenario(scenario, excess_on=False):
     site.solar_is_metered = solar_is_derived and site.inverter_output_per_phase is None
 
     # Build loads
-    # Per-load operating_mode; fallback to site-level charging_mode for migration
-    site_mode = site_data.get('charging_mode')
-
     for idx, load_data in enumerate(scenario['loads']):
         device_type = load_data.get("device_type", "evse")
         phases = load_data.get("phases", 1)
@@ -572,22 +547,15 @@ def build_site_from_scenario(scenario, excess_on=False):
             max_current = load_data.get("max_current", 16)
             rated_current = max_current
 
-        # Resolve operating mode: per-load > site-level fallback > device default
-        operating_mode = load_data.get("operating_mode")
-        if operating_mode is None and site_mode is not None:
-            operating_mode = site_mode
-        if operating_mode is None:
-            operating_mode = "Continuous" if device_type == "plug" else "Standard"
-        # Migrate old mode names
-        operating_mode = _MIGRATE_MODE_NAMES.get(operating_mode, operating_mode)
-        # Resolve to the device type's OperatingMode → engine behavior + urgency
-        _mode = resolve_operating_mode(device_type, operating_mode)
+        # The device type's OperatingMode (its default when the YAML names
+        # none) → engine behavior + urgency
+        _mode = resolve_operating_mode(device_type, load_data.get("operating_mode"))
 
         # Cold-tank promotion: a Solar Priority tank below its normal temperature
         # is bumped to the Normal urgency tier (behavior unchanged). Mirrors the
         # production builder in engine/hub_calculation.py.
         mode_priority = _mode.priority
-        mode_behavior = behavior_for(_mode)
+        mode_behavior = _mode.behavior
         if device_type == "hot_water_tank":
             # The setpoint label, as control/hot_water_tank.py resolves it:
             # Freeze Protection and Normal both ride surplus up to the boost
@@ -673,115 +641,46 @@ def build_site_from_scenario(scenario, excess_on=False):
 # ---------------------------------------------------------------------------
 
 def print_scenario_params(scenario):
-    """Print scenario parameters for trace/verbose output."""
-    site_data = scenario['site']
-    loads = scenario['loads']
+    """Print the site and loads build_site_from_scenario makes of a scenario,
+    for trace/verbose output."""
+    site = build_site_from_scenario(scenario)
+    cons = [(ph, val) for ph, val in zip("ABC", (
+        site.consumption.a, site.consumption.b, site.consumption.c)) if val is not None]
+    cons_str = '/'.join(f"{ph}={val}A" for ph, val in cons) or 'none'
 
-    # Site basics
-    voltage = site_data.get('voltage', 230)
-    breaker = site_data.get('main_breaker_rating', 63)
-    dist = site_data.get('distribution_mode', 'priority')
-    solar = site_data.get('solar_production', 0)
-    max_import = site_data.get('max_import_power')
-
-    # Phases from consumption
-    cons_parts = []
-    for ph, key in [('A', 'phase_a_consumption'), ('B', 'phase_b_consumption'), ('C', 'phase_c_consumption')]:
-        val = site_data.get(key)
-        if val is not None:
-            cons_parts.append(f"{ph}={val}A")
-    cons_str = '/'.join(cons_parts) if cons_parts else 'none'
-    num_phases = len(cons_parts) or 1
-
-    has_battery = site_data.get('battery_soc') is not None
-
-    print(f"  Site: {voltage}V {breaker}A breaker {num_phases}ph | Solar {solar}W | Dist: {dist}")
-    if max_import:
-        print(f"        Max import: {max_import}W")
+    print(f"  Site: {site.voltage}V {site.main_breaker_rating}A breaker {len(cons) or 1}ph"
+          f" | Solar {site.solar_production_total}W | Dist: {site.distribution_mode}")
+    if site.max_grid_import_power:
+        print(f"        Max import: {site.max_grid_import_power}W")
     print(f"  Consumption: {cons_str}")
-
-    # Battery
-    if has_battery:
-        soc = site_data.get('battery_soc')
-        soc_min = site_data.get('battery_soc_min', 20)
-        soc_target = site_data.get('battery_soc_target', 80)
-        charge = site_data.get('battery_max_charge_power', 5000)
-        discharge = site_data.get('battery_max_discharge_power', 5000)
-        print(f"  Battery: soc={soc}% min={soc_min}% target={soc_target}% | charge={charge}W discharge={discharge}W")
-
-    # Inverter
-    inv_max = site_data.get('inverter_max_power')
-    inv_pp = site_data.get('inverter_max_power_per_phase')
-    inv_asym = site_data.get('inverter_supports_asymmetric', False)
-    if inv_max or inv_pp or inv_asym:
+    if site.battery_soc is not None:
+        print(f"  Battery: soc={site.battery_soc}% min={site.battery_soc_min}% "
+              f"target={site.battery_soc_target}% | charge={site.battery_max_charge_power}W "
+              f"discharge={site.battery_max_discharge_power}W")
+    if site.inverter_max_power or site.inverter_max_power_per_phase or site.inverter_supports_asymmetric:
         parts = []
-        if inv_max:
-            parts.append(f"max={inv_max}W")
-        if inv_pp:
-            parts.append(f"per_phase={inv_pp}W")
-        parts.append(f"asymmetric={inv_asym}")
+        if site.inverter_max_power:
+            parts.append(f"max={site.inverter_max_power}W")
+        if site.inverter_max_power_per_phase:
+            parts.append(f"per_phase={site.inverter_max_power_per_phase}W")
+        parts.append(f"asymmetric={site.inverter_supports_asymmetric}")
         print(f"  Inverter: {' '.join(parts)}")
+    print(f"  Excess threshold: {site.excess_export_threshold}W")
 
-    # Excess threshold
-    excess_thresh = site_data.get('excess_export_threshold')
-    if excess_thresh:
-        print(f"  Excess threshold: {excess_thresh}W")
-
-    # Loads
-    site_mode = site_data.get('charging_mode')
-    for ch in loads:
-        eid = ch.get('entity_id', '?')
-        dev_type = ch.get('device_type', 'evse')
-        phases = ch.get('phases', 1)
-        priority = ch.get('priority', 0)
-        status = ch.get('connector_status', 'Charging' if ch.get('active') is not False else 'Available')
-        op_mode = ch.get('operating_mode', site_mode or ("Continuous" if dev_type == "plug" else "Standard"))
-        # Phase mapping
-        l1p = ch.get('l1_phase', 'A')
-        l2p = ch.get('l2_phase', 'B')
-        l3p = ch.get('l3_phase', 'C')
-
-        # Derive mask the same way LoadContext.__post_init__ does
-        if ch.get('active_phases_mask'):
-            mask = ch['active_phases_mask']
-        elif ch.get('connected_to_phase'):
-            mask = ch['connected_to_phase']
-        elif phases == 3:
-            mask = "".join(sorted({l1p, l2p, l3p}))
-        elif phases == 2:
-            mask = "".join(sorted({l1p, l2p}))
-        else:
-            mask = l1p
+    for ch, load in zip(scenario['loads'], site.loads):
         phase_map_str = ""
-        if l1p != 'A' or l2p != 'B' or l3p != 'C':
-            phase_map_str = f" map=L1→{l1p}/L2→{l2p}/L3→{l3p}"
-
-        if dev_type == 'plug':
-            power = ch.get('power_rating', 2000)
-            print(f"  Load {eid}: plug {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
-        elif dev_type == 'hot_water_tank':
-            power = ch.get('power_rating', 2000)
-            ctemp = ch.get('current_temperature')
-            ntemp = ch.get('normal_temperature', DEFAULT_TANK_NORMAL_TEMPERATURE)
-            # Mirror resolve_tank_mode_priority: a cold Solar Priority tank is
-            # promoted to the Normal urgency tier (1) for the distribution sort.
-            promoted = (
-                ch.get('prioritize_below_normal', True)
-                and op_mode == 'Solar Priority'
-                and ctemp is not None
-                and ctemp < ntemp
-            )
-            if ctemp is None:
-                temp_str = ""
-            elif promoted:
-                temp_str = f" temp={ctemp}<{ntemp}°C→PROMOTED(tier 1)"
-            else:
-                temp_str = f" temp={ctemp}°C"
-            print(f"  Load {eid}: tank {power}W {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str}{temp_str} [{status}]")
-        else:
-            min_c = ch.get('min_current', 6)
-            max_c = ch.get('max_current', 16)
-            print(f"  Load {eid}: evse {min_c}-{max_c}A {phases}ph mask={mask} prio={priority} mode={op_mode}{phase_map_str} [{status}]")
+        if (load.l1_phase, load.l2_phase, load.l3_phase) != ("A", "B", "C"):
+            phase_map_str = f" map=L1→{load.l1_phase}/L2→{load.l2_phase}/L3→{load.l3_phase}"
+        kind = {'hot_water_tank': 'tank'}.get(load.device_type, load.device_type)
+        what = f"{kind} {load.min_current}-{load.max_current}A"
+        if kind in ('plug', 'tank'):
+            what = f"{kind} {ch.get('power_rating', 2000)}W"
+        temp_str = ""
+        if ch.get('current_temperature') is not None:
+            temp_str = f" temp={ch['current_temperature']}°C tier={load.mode_priority}"
+        print(f"  Load {load.entity_id}: {what} {load.phases}ph mask={load.active_phases_mask} "
+              f"prio={load.priority} mode={load.operating_mode}{phase_map_str}{temp_str} "
+              f"[{load.connector_status}]")
 
     # Expected
     expected = scenario.get('expected', {})
@@ -1283,288 +1182,3 @@ def validate_results(scenario, site):
                     )
 
     return passed, errors
-
-
-# ---------------------------------------------------------------------------
-# Test runner
-# ---------------------------------------------------------------------------
-
-def run_tests(yaml_file, verbose=False, trace=False, filter_verified=None):
-    """Run all test scenarios with 30-cycle simulation."""
-    all_scenarios = load_scenarios(yaml_file)
-
-    if filter_verified == 'verified':
-        scenarios = [s for s in all_scenarios if s.get('human_verified', False)]
-    elif filter_verified == 'unverified':
-        scenarios = [s for s in all_scenarios if not s.get('human_verified', False)]
-    else:
-        scenarios = all_scenarios
-
-    print(f"\n{'='*70}")
-    print(f"TEST RUNNER: RUNNING {len(scenarios)} SCENARIOS ({TOTAL_CYCLES}-cycle simulation)")
-    print(f"{'='*70}\n")
-
-    passed_count = 0
-    failed_count = 0
-    verified_passed = 0
-    verified_failed = 0
-    unverified_passed = 0
-    unverified_failed = 0
-    results = []
-
-    for scenario in scenarios:
-        name = scenario['name']
-        description = scenario['description']
-        is_verified = scenario.get('human_verified', False)
-        source_file = scenario.get('_source_file', '')
-
-        if verbose:
-            print(f"\n{'='*70}")
-            if source_file:
-                print(f"Running: [{source_file}] {name}")
-            else:
-                print(f"Running: {name}")
-            print(f"Description: {description}")
-            print(f"{'='*70}")
-
-        passed, errors, history = run_scenario_simulation(scenario, verbose=verbose, trace=trace)
-
-        if passed:
-            passed_count += 1
-            status = "PASS"
-            if is_verified:
-                verified_passed += 1
-            else:
-                unverified_passed += 1
-        else:
-            failed_count += 1
-            status = "FAIL"
-            if is_verified:
-                verified_failed += 1
-            else:
-                unverified_failed += 1
-
-        results.append({
-            'name': name,
-            'description': description,
-            'status': status,
-            'passed': passed,
-            'errors': errors,
-            'history': history,
-        })
-
-        prefix = "UNVERIFIED " if not is_verified else ""
-        source_tag = f"[{source_file}] " if source_file else ""
-        if verbose or not passed:
-            print(f"{prefix}{status} {source_tag}{name}")
-            for error in errors:
-                print(f"  {error}")
-            print()
-
-    # Summary
-    verified_total = verified_passed + verified_failed
-    unverified_total = unverified_passed + unverified_failed
-
-    print(f"\n{'='*70}")
-    print(f"TEST SUMMARY")
-    print(f"{'='*70}")
-    print(f"Total:  {len(scenarios)}")
-    print()
-    print(f"Verified Scenarios:")
-    print(f"  Passed: {verified_passed}")
-    print(f"  Failed: {verified_failed}")
-    print(f"  Total:  {verified_total}")
-    print()
-    print(f"Unverified Scenarios:")
-    print(f"  Passed: {unverified_passed}")
-    print(f"  Failed: {unverified_failed}")
-    print(f"  Total:  {unverified_total}")
-    print()
-    print(f"Overall:")
-    print(f"  Passed: {passed_count}")
-    print(f"  Failed: {failed_count}")
-    print(f"{'='*70}\n")
-
-    if failed_count > 0:
-        print("Failed scenarios:")
-        for result in results:
-            if not result['passed']:
-                print(f"  - {result['name']}")
-        print()
-
-    return failed_count == 0
-
-
-def run_single_scenario(scenario_name, yaml_file, trace=False, source_file=''):
-    """Run a single scenario by name with verbose simulation output."""
-    scenarios = load_scenarios(yaml_file)
-
-    for scenario in scenarios:
-        if scenario['name'] == scenario_name:
-            sf = scenario.get('_source_file', source_file)
-            source_tag = f"[{sf}] " if sf else ""
-            print(f"\n{'='*70}")
-            print(f"Running: {source_tag}{scenario['name']}")
-            print(f"Description: {scenario['description']}")
-            print(f"{'='*70}\n")
-
-            passed, errors, history = run_scenario_simulation(scenario, verbose=True, trace=trace)
-
-            # Print final state summary
-            last = history[-1]
-            print(f"\nFinal state (cycle {last['cycle']}):")
-            for eid in last['engine_targets']:
-                print(f"  {eid}: engine={last['engine_targets'][eid]:.1f}A, "
-                      f"commanded={last['commanded'][eid]:.1f}A")
-            print()
-
-            print("Validation:")
-            for error in errors:
-                print(f"  {error}")
-            print()
-
-            return passed
-
-    print(f"Scenario '{scenario_name}' not found")
-    return False
-
-
-class TeeOutput:
-    """Write to both console and log file."""
-    def __init__(self, log_file):
-        self.terminal = sys.stdout
-        self.log = open(log_file, 'w', encoding='utf-8')
-        # Reconfigure terminal for UTF-8 if possible (Windows cp1252 fix)
-        if hasattr(self.terminal, 'reconfigure'):
-            try:
-                self.terminal.reconfigure(encoding='utf-8')
-            except Exception:
-                pass
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
-
-    def flush(self):
-        self.terminal.flush()
-        self.log.flush()
-
-    def close(self):
-        self.log.close()
-
-
-if __name__ == "__main__":
-    import sys
-    from pathlib import Path
-
-    # Redirect output to both console and log file
-    log_file = Path(__file__).parent / "test_results.log"
-    tee = TeeOutput(log_file)
-    sys.stdout = tee
-
-    # Print start timestamp
-    start_time = datetime.now()
-    print(f"Test run started: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-
-    def _merge_scenarios_from_dir(dir_path):
-        """Merge all yaml scenarios from a directory into a single list."""
-        combined = []
-        p = Path(dir_path)
-        files = sorted(p.rglob("*.yaml")) + sorted(p.rglob("*.yml"))
-        for f in files:
-            rel = f.relative_to(p)
-            with open(f, "r", encoding="utf-8") as fh:
-                data = yaml.safe_load(fh) or {}
-            for sc in data.get("scenarios", []):
-                sc.setdefault("_source_file", str(rel))
-                combined.append(sc)
-        return combined
-
-    # Parse flags from command line
-    filter_verified = None
-    trace = False
-    args = sys.argv[1:]
-
-    if '--verified' in args:
-        filter_verified = 'verified'
-        args.remove('--verified')
-    elif '--unverified' in args:
-        filter_verified = 'unverified'
-        args.remove('--unverified')
-    elif '--all' in args:
-        filter_verified = None
-        args.remove('--all')
-
-    if '--trace' in args:
-        trace = True
-        args.remove('--trace')
-
-    if len(args) > 0:
-        arg = args[0]
-        p = Path(arg)
-        if p.exists():
-            if p.is_dir():
-                combined = _merge_scenarios_from_dir(p)
-                tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
-                with open(tmp, "w", encoding="utf-8") as fh:
-                    yaml.safe_dump({"scenarios": combined}, fh)
-                success = run_tests(yaml_file=str(tmp), verbose=True, trace=trace, filter_verified=filter_verified)
-                try:
-                    tmp.unlink()
-                except Exception:
-                    pass
-            elif p.is_file():
-                success = run_tests(yaml_file=str(p), verbose=True, trace=trace, filter_verified=filter_verified)
-            else:
-                print(f"Path '{arg}' is not a file or directory")
-                success = False
-        else:
-            scenarios_dir = Path(__file__).parent / "scenarios"
-            search_paths = []
-            if scenarios_dir.exists():
-                search_paths = list(sorted(scenarios_dir.rglob("*.yaml"))) + list(sorted(scenarios_dir.rglob("*.yml")))
-
-            found = False
-            for f in search_paths:
-                rel = f.relative_to(scenarios_dir)
-                with open(f, "r", encoding="utf-8") as fh:
-                    data = yaml.safe_load(fh) or {}
-                for sc in data.get("scenarios", []):
-                    if sc.get("name") == arg:
-                        found = True
-                        success = run_single_scenario(arg, yaml_file=str(f), trace=trace, source_file=str(rel))
-                        break
-                if found:
-                    break
-            if not found:
-                print(f"Scenario '{arg}' not found in scenarios directory or files")
-                success = False
-    else:
-        # No path/name argument: default to the scenarios directory next to
-        # this file (same as `python3 dev/tests/run_tests.py dev/tests/scenarios`).
-        scenarios_dir = Path(__file__).parent / "scenarios"
-        if scenarios_dir.exists():
-            combined = _merge_scenarios_from_dir(scenarios_dir)
-            tmp = Path(__file__).parent / "scenarios_combined_temp.yaml"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                yaml.safe_dump({"scenarios": combined}, fh)
-            success = run_tests(yaml_file=str(tmp), verbose=True, trace=trace, filter_verified=filter_verified)
-            try:
-                tmp.unlink()
-            except Exception:
-                pass
-        else:
-            print(f"Scenarios directory '{scenarios_dir}' not found")
-            success = False
-
-    # Print end timestamp and duration
-    end_time = datetime.now()
-    duration = end_time - start_time
-    print(f"\nTest run finished: {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Duration: {duration.total_seconds():.2f} seconds")
-
-    # Close log file
-    tee.close()
-    sys.stdout = tee.terminal
-
-    sys.exit(0 if success else 1)

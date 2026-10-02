@@ -244,7 +244,7 @@ async def test_fleet_survives_a_hub_reload(
     missing inverters - silently taking their capacity out of the site limit -
     until the next Home Assistant restart.
     """
-    from custom_components.dynamic_ocpp_evse import get_inverters_for_hub
+    from custom_components.dynamic_ocpp_evse.registry import get_inverters_for_hub
     from custom_components.dynamic_ocpp_evse.const import (
         ENTRY_TYPE_INVERTER,
         DEVICE_TYPE_INVERTER,
@@ -299,7 +299,7 @@ async def test_chargers_are_readopted_after_a_hub_reload(
 ):
     """Same regression for chargers, which keep a runtime list because their
     allocation state lives beside it - the hub re-adopts them on setup."""
-    from custom_components.dynamic_ocpp_evse import get_loads_for_hub
+    from custom_components.dynamic_ocpp_evse.registry import get_loads_for_hub
 
     mock_hub_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
@@ -318,3 +318,80 @@ async def test_chargers_are_readopted_after_a_hub_reload(
     assert [e.entry_id for e in get_loads_for_hub(hass, mock_hub_entry.entry_id)] == [
         mock_charger_entry.entry_id
     ]
+
+
+async def test_every_entry_registers_its_entities_under_the_hub_device(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_charger_entry: MockConfigEntry,
+):
+    """A hub, an EVSE load, an inverter and a circuit group set up for real -
+    every platform, nothing patched - all reach the entity registry, and every
+    child's device hangs off the hub's.
+
+    Regression: device_info passed ``via_device_id``, which DeviceInfo only
+    knows from HA 2026.8. On an older core every load, group and inverter
+    entity failed to register with a TypeError, while the tests stayed green -
+    they patched platform setup or built entities by hand.
+    """
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+    from custom_components.dynamic_ocpp_evse.const import (
+        ENTRY_TYPE_GROUP,
+        ENTRY_TYPE_INVERTER,
+        DEVICE_TYPE_GROUP,
+        DEVICE_TYPE_INVERTER,
+        CONF_DEVICE_TYPE,
+        CONF_NAME,
+        CONF_INVERTER_MAX_POWER,
+        CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
+        CONF_CIRCUIT_GROUP_MEMBERS,
+    )
+
+    hub_id = mock_hub_entry.entry_id
+    inverter = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="SolarEdge",
+        data={
+            CONF_NAME: "SolarEdge",
+            CONF_ENTITY_ID: "lj_solaredge",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub_id,
+        },
+        options={CONF_INVERTER_MAX_POWER: 10000},
+    )
+    group = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=4,
+        title="Garage",
+        data={
+            CONF_NAME: "Garage",
+            CONF_ENTITY_ID: "lj_garage",
+            ENTRY_TYPE: ENTRY_TYPE_GROUP,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_GROUP,
+            CONF_HUB_ENTRY_ID: hub_id,
+        },
+        options={
+            CONF_CIRCUIT_GROUP_CURRENT_LIMIT: 16,
+            CONF_CIRCUIT_GROUP_MEMBERS: [mock_charger_entry.entry_id],
+        },
+    )
+    for entry in (mock_hub_entry, mock_charger_entry, inverter, group):
+        entry.add_to_hass(hass)
+        assert await hass.config_entries.async_setup(entry.entry_id), entry.title
+        await hass.async_block_till_done()
+
+    entities, devices = er.async_get(hass), dr.async_get(hass)
+
+    def device_ids_of(entry):
+        registered = er.async_entries_for_config_entry(entities, entry.entry_id)
+        assert registered, f"{entry.title} registered no entity"
+        return {e.device_id for e in registered}
+
+    [hub_device_id] = device_ids_of(mock_hub_entry)
+    for child in (mock_charger_entry, inverter, group):
+        via = {devices.async_get(i).via_device_id for i in device_ids_of(child)}
+        assert via == {hub_device_id}, child.title

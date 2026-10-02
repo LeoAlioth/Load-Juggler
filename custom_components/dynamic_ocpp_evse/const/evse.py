@@ -1,6 +1,12 @@
 """EVSE (OCPP charger) constants - entities, OCPP, charge limits, modes."""
 
-from .common import OperatingMode
+from .common import (
+    BEHAVIOR_EXCESS,
+    BEHAVIOR_FULL_POWER,
+    BEHAVIOR_SOLAR_ONLY,
+    BEHAVIOR_SOLAR_PRIORITY,
+    OperatingMode,
+)
 
 # EVSE configuration keys
 CONF_OCPP_DEVICE_ID = "ocpp_device_id"
@@ -43,11 +49,9 @@ OCPP_ENTITY_SUFFIX_CURRENT_IMPORT_L3 = "_current_import_l3"
 OCPP_ENTITY_SUFFIX_CURRENT_OFFERED = "_current_offered"
 OCPP_ENTITY_SUFFIX_POWER_OFFERED = "_power_offered"
 OCPP_ENTITY_SUFFIX_POWER_IMPORT = "_power_active_import"
-OCPP_ENTITY_SUFFIX_STATUS = "_status"
 # The connector status ("Status.Connector") - classified like the metrics above
 # but never stored on an entry: it is resolved from the registries at setup.
 OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR = "_status_connector"
-OCPP_ENTITY_SUFFIX_STOP_REASON = "_stop_reason"
 
 # Runtime keys in an EVSE's ``hass.data[DOMAIN]["loads"][entry_id]`` bucket.
 #
@@ -85,15 +89,19 @@ DEFAULT_PROFILE_VALIDITY_MODE = PROFILE_VALIDITY_MODE_ABSOLUTE
 # EVSE operating modes - priority is the distribution urgency tier (1-4).
 EVSE_MODE_STANDARD = OperatingMode(
     key="Standard", label="Standard", priority=1, icon="mdi:flash",
+    behavior=BEHAVIOR_FULL_POWER,
 )
 EVSE_MODE_SOLAR_PRIORITY = OperatingMode(
     key="Solar Priority", label="Solar Priority", priority=2, icon="mdi:leaf",
+    behavior=BEHAVIOR_SOLAR_PRIORITY,
 )
 EVSE_MODE_SOLAR_ONLY = OperatingMode(
     key="Solar Only", label="Solar Only", priority=3, icon="mdi:solar-power",
+    behavior=BEHAVIOR_SOLAR_ONLY,
 )
 EVSE_MODE_EXCESS = OperatingMode(
     key="Excess", label="Excess", priority=4, icon="mdi:solar-power-variant",
+    behavior=BEHAVIOR_EXCESS,
 )
 OPERATING_MODES_EVSE = [
     EVSE_MODE_STANDARD,

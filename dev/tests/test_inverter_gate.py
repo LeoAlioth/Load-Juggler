@@ -16,33 +16,18 @@ add-back honest is the grid term - a draw the site is IMPORTING for is not
 something the inverters are delivering, so shedding it frees no inverter
 capacity. That single term is the difference between a gate that sheds a
 grid-fed load and a one-way latch that can never shed anything once it is on.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_inverter_gate.py     (standalone, no pytest needed)
-  pytest dev/tests/test_inverter_gate.py      (Docker / CI tier)
 """
 
-import sys
-from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Module loading - shared stub loader (avoids the HA-importing package root)
-# ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules()
-
-from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
     PhaseConstraints,
     PhaseValues,
     SiteContext,
 )
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     _source_limit,
 )
-from custom_components.dynamic_ocpp_evse.const.common import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const.common import (
     BEHAVIOR_BINARY_ABOVE_MIN,
     BEHAVIOR_BINARY_ABOVE_TARGET,
     BEHAVIOR_BINARY_EXCESS,
@@ -295,24 +280,3 @@ def test_a_battery_free_site_keeps_the_live_surplus_rule():
     assert _close(
         _source_limit(plug, site, solar, NO_POOL, base=0), 20.0
     )
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

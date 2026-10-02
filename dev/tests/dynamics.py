@@ -86,8 +86,8 @@ stuck-readout watch). Every one of those has produced a real bug in this
 project, and none of them would show up here. Screen candidates with this;
 confirm the winner on the rig.
 
-    python3 dev/tests/dynamics.py                 # the standard comparison
-    python3 dev/tests/dynamics.py --plot out.html # and a chart to eyeball
+    python -m dev.tests.dynamics                 # the standard comparison
+    python -m dev.tests.dynamics --plot out.html # and a chart to eyeball
 """
 
 import math
@@ -95,24 +95,12 @@ import sys
 from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-# "hub_calculation" pulls the whole engine chain, which is what makes
-# readers importable - it reaches forecast_reader, which needs the
-# calculations package __init__ executed. Same combination the
-# availability-contract tests use.
-load_pure_modules(
-    engine_modules=("hub_calculation",),
-    control_modules=("smoothing", "power_station"),
-)
-
-from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
 )
-from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.const import (
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
     CONF_ENTITY_ID,
@@ -138,16 +126,17 @@ from custom_components.dynamic_ocpp_evse.const import (  # noqa: E402
     DEVICE_TYPE_POWER_STATION,
     DOMAIN,
 )
-from custom_components.dynamic_ocpp_evse.control.power_station import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.entities.mixins import LoadEntityMixin
+from custom_components.dynamic_ocpp_evse.control.power_station import (
     send_power_station_command,
 )
-from custom_components.dynamic_ocpp_evse.control.smoothing import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.control.smoothing import (
     apply_smoothing,
 )
-from custom_components.dynamic_ocpp_evse.engine import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.engine import (
     hub_calculation,
 )
-from custom_components.dynamic_ocpp_evse.helpers import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.helpers import (
     get_entry_value,
 )
 
@@ -426,6 +415,7 @@ class Sim:
         self.sensor = _permit_state("station")
         self.sensor.config_entry = self.station
         self.sensor.hass = self.engine.hass
+        self.sensor._runtime = MethodType(LoadEntityMixin._runtime, self.sensor)
         self.sensor._last_command_time = -math.inf
 
     def _register(self, entity):
@@ -666,59 +656,6 @@ def hold(value_w, seconds, dt=1.0):
         yield value_w
 
 
-def step(low_w=13600.0, high_w=15800.0, low_s=60.0, high_s=180.0, dt=1.0):
-    """A production step, which is what a cloud edge actually looks like.
-
-    The sinusoid measures tracking; this measures how fast the loop can move at
-    all, which is the quantity the rate limiter governs and the one a mean error
-    over a whole cycle hides.
-    """
-    for _ in range(int(low_s / dt)):
-        yield low_w
-    for _ in range(int(high_s / dt)):
-        yield high_w
-
-
-def rise_time_s(rows, key="reg", frac=0.9):
-    """Seconds from the step to ``frac`` of the eventual value.
-
-    Measured from where the input moves rather than from t=0, and against the
-    value the run actually reaches, so a run that never gets there reports None
-    instead of flattering itself.
-    """
-    solars = [r["solar"] for r in rows]
-    step_i = next((i for i in range(1, len(solars)) if solars[i] > solars[i - 1] + 1), None)
-    if step_i is None:
-        return None
-    after = rows[step_i:]
-    start = after[0][key]
-    final = max(r[key] for r in after)
-    if final <= start:
-        return None
-    want = start + (final - start) * frac
-    hit = next((r for r in after if r[key] >= want), None)
-    return None if hit is None else hit["t"] - after[0]["t"]
-
-
-def binding_share(rows, dt, ramp_up_rate=None):
-    """Share of RISING cycles whose step exceeded the fixed floor.
-
-    The floor is ``RAMP_UP_RATE * site_freq``; a step bigger than that can only
-    have come from the proportional term. This is the mechanism the 2026-09-08
-    finding was about, asserted directly rather than inferred from an average:
-    if the proportional term never binds, the adaptive rate is decoration.
-    """
-    from custom_components.dynamic_ocpp_evse.const import RAMP_UP_RATE
-
-    floor_w = (ramp_up_rate if ramp_up_rate is not None else RAMP_UP_RATE) * dt * V
-    rising = [
-        (b["permit"] - a["permit"])
-        for a, b in zip(rows, rows[1:])
-        if b["permit"] > a["permit"] + 1e-9
-    ]
-    if not rising:
-        return 0.0
-    return sum(1 for d in rising if d > floor_w + 1e-6) / len(rising)
 def run(sim, driver, warmup_s=120.0, warmup_w=14700.0):
     """Settle the loop, then record. The warmup is discarded, as on the rig."""
     for w in hold(warmup_w, warmup_s, sim.dt):
@@ -774,12 +711,10 @@ def ring(rows, window_s=30.0):
 
 
 # -- plotting -------------------------------------------------------------
-# Deliberately hand-rolled SVG. Nothing under dev/ has a third-party
-# dependency - the pure tier's whole premise is that it runs on a machine with
-# nothing installed - and a chart is not worth breaking that for. The palette
-# and dark ground match Home Assistant's history card so a run here can be held
-# up against "The last hour" on the rig dashboard without re-reading the
-# colours.
+# Deliberately hand-rolled SVG: a chart is not worth a plotting dependency.
+# The palette and dark ground match Home Assistant's history card so a run here
+# can be held up against "The last hour" on the rig dashboard without
+# re-reading the colours.
 SERIES = [
     ("solar", "#f5c518", "Solar"),
     ("managed", "#e8705a", "Managed load total"),

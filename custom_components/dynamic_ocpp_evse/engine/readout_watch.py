@@ -70,13 +70,10 @@ engine/load_builders.py for the rest of blind mode). The watch lets go once the
 reading produces RESUME_VALUES new values - moving, not moved once - or when
 the caller resets it (session over, monitor unreadable, Dynamic Control off).
 
-Pure Python with no package imports, so the pure test tier can load it straight
-from its path. The caller owns the state dict (the load's runtime bucket) and
-the clock (``now``, monotonic seconds).
+Pure Python with no package imports. The caller owns the state dict (the
+load's runtime bucket) and the clock (``now``, monotonic seconds).
 """
 
-# PEP 604 unions in signatures; nothing evaluates annotations at runtime, so
-# this keeps the module importable on the Python 3.9 standalone runners.
 from __future__ import annotations
 
 # OCPP 1.6 connector statuses in which a car may be connected but no energy is

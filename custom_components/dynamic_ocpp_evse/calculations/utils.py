@@ -56,6 +56,21 @@ def hold_per_phase_floor(
     )
 
 
+def managed_phase_draws(site: SiteContext) -> list[float]:
+    """Per site phase (A, ``[a, b, c]``), what the loads we manage draw.
+
+    A load whose Dynamic Control is OFF is left out: its draw is household
+    consumption, which is what an unmanaged load is (see
+    ``LoadContext.dynamic_control``).
+    """
+    draws = [0.0, 0.0, 0.0]
+    for load in site.loads:
+        if load.dynamic_control:
+            for i, draw in enumerate(load.get_site_phase_draw()):
+                draws[i] += draw
+    return draws
+
+
 def grid_without_managed_draws(
     consumption: PhaseValues,
     export: PhaseValues,
@@ -126,30 +141,29 @@ def compute_household_per_phase(
     if site.inverter_output_per_phase is None:
         return None
 
-    if draws is not None:
-        ch_a, ch_b, ch_c = draws
-    else:
-        # Accumulate load draws per site phase
-        ch_a = ch_b = ch_c = 0.0
+    if draws is None:
+        # Every load's own draw per site phase
+        draws = [0.0, 0.0, 0.0]
         for c in site.loads:
-            a_d, b_d, c_d = c.get_site_phase_draw()
-            ch_a += a_d
-            ch_b += b_d
-            ch_c += c_d
+            for i, d in enumerate(c.get_site_phase_draw()):
+                draws[i] += d
 
+    out = site.inverter_output_per_phase
+    per_phase = zip(
+        (out.a, out.b, out.c),
+        (site.consumption.a, site.consumption.b, site.consumption.c),
+        (site.export_current.a, site.export_current.b, site.export_current.c),
+        draws,
+    )
     if wiring_topology == "parallel" and not site.is_off_grid:
-        def _hh(inv_out, cons, exp):
-            if cons is None:
-                return None
-            return max(0, (cons or 0) + (inv_out or 0) - (exp or 0))
-
-        hh_a = _hh(site.inverter_output_per_phase.a, site.consumption.a, site.export_current.a)
-        hh_b = _hh(site.inverter_output_per_phase.b, site.consumption.b, site.export_current.b)
-        hh_c = _hh(site.inverter_output_per_phase.c, site.consumption.c, site.export_current.c)
+        household = [
+            None if cons is None else max(0, (cons or 0) + (inv or 0) - (exp or 0))
+            for inv, cons, exp, _ in per_phase
+        ]
     else:
         # Series, and off-grid either wiring: household = inverter_output - load_draws
-        hh_a = max(0, (site.inverter_output_per_phase.a or 0) - ch_a) if site.consumption.a is not None else None
-        hh_b = max(0, (site.inverter_output_per_phase.b or 0) - ch_b) if site.consumption.b is not None else None
-        hh_c = max(0, (site.inverter_output_per_phase.c or 0) - ch_c) if site.consumption.c is not None else None
-
-    return PhaseValues(hh_a, hh_b, hh_c)
+        household = [
+            None if cons is None else max(0, (inv or 0) - draw)
+            for inv, cons, _, draw in per_phase
+        ]
+    return PhaseValues(*household)

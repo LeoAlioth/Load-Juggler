@@ -7,6 +7,9 @@ from ..const import (
     AUTO_RESET_COOLDOWN_SECONDS,
     AUTO_RESET_MISMATCH_SECONDS,
     ESCALATION_PROFILE_RESET_LIMIT,
+    COMPLIANCE_IDLE_CONNECTOR_STATUSES,
+    FIRMWARE_BUSY_STATES,
+    FIRMWARE_BUSY_HOLD_SECONDS,
     DEFAULT_UPDATE_FREQUENCY,
     RAMP_DOWN_RATE,
     DEAD_BAND,
@@ -20,11 +23,38 @@ from ..const import (
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
     EVSE_RT_COMMANDED_LIMIT,
+    EVSE_RT_READOUT_WATCH,
 )
+from ..engine.readout_watch import normal_gap
 from ..helpers import get_entry_value
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _charger_id(sensor):
+    """The OCPP charge point id the charger's own entities are named after."""
+    return sensor.config_entry.data.get(CONF_CHARGER_ID) or sensor.config_entry.data.get(CONF_ENTITY_ID)
+
+
+def firmware_busy(sensor) -> bool:
+    """The charger said, within FIRMWARE_BUSY_HOLD_SECONDS, that it is
+    fetching or installing firmware - see FIRMWARE_BUSY_STATES."""
+    charger_id = _charger_id(sensor)
+    state = sensor.hass.states.get(f"sensor.{charger_id}_status_firmware") if charger_id else None
+    if state is None or state.state not in FIRMWARE_BUSY_STATES:
+        return False
+    changed = getattr(state, "last_changed", None)
+    return changed is not None and (datetime.now(timezone.utc) - changed).total_seconds() < FIRMWARE_BUSY_HOLD_SECONDS
+
+
+def _readout_gap(sensor):
+    """The longest recent gap between the charger's meter readings, in
+    seconds (engine/readout_watch.py) - None until the watch has learned it,
+    or on a load that has none."""
+    runtime = getattr(sensor, "_runtime", None)
+    state = runtime().get(EVSE_RT_READOUT_WATCH) if callable(runtime) else None
+    return normal_gap(state) if state else None
 
 
 def _clear_mismatch(sensor) -> None:
@@ -64,6 +94,11 @@ async def check_profile_compliance(
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
         _clear_mismatch(sensor)
         return
+    # The car is not drawing, or the charger is updating itself: nothing a
+    # reset could fix, and a reset mid-update is one that can hurt.
+    if connector_status in COMPLIANCE_IDLE_CONNECTOR_STATUSES or firmware_busy(sensor):
+        _clear_mismatch(sensor)
+        return
 
     # Options-first, like every other charger field: the options charger page
     # rewrites the whole OCPP sensor set when the charger is re-pointed.
@@ -74,17 +109,7 @@ async def check_profile_compliance(
         sensor.config_entry, CONF_EVSE_POWER_OFFERED_ENTITY_ID, None
     )
 
-    current_offered = None
-
-    if current_offered_entity_id:
-        state = sensor.hass.states.get(current_offered_entity_id)
-        if not units.is_unavailable(state):
-            try:
-                current_offered = float(state.state)
-            except (ValueError, TypeError):
-                current_offered = None
-            if units.is_unusable_number(current_offered):
-                current_offered = None
+    current_offered = units.read_number(sensor.hass, current_offered_entity_id)
 
     if current_offered is None and power_offered_entity_id:
         state = sensor.hass.states.get(power_offered_entity_id)
@@ -164,6 +189,15 @@ async def check_profile_compliance(
         _clear_mismatch(sensor)
         return
 
+    # Judged no faster than the charger reports. The offered current is read
+    # off the charger's meter values, and a charger that sends them only now
+    # and then shows a stale figure for that long after every command: a
+    # go-eCharger V4 with no transaction running sent clock-aligned values
+    # every 15 minutes, so judged in 60 s it drew a hard reset every 12.5
+    # minutes - 44 reboots in ten days (2026-10-02). The window is the
+    # readout's own longest gap where that is longer.
+    window = max(AUTO_RESET_MISMATCH_SECONDS, _readout_gap(sensor) or 0.0)
+
     diff = abs(current_offered - sensor._last_commanded_limit)
     if diff > tolerance:
         # The count is the published diagnostic; the clock is the decision.
@@ -182,7 +216,7 @@ async def check_profile_compliance(
             diff,
             sensor._mismatch_count,
             mismatched_s,
-            AUTO_RESET_MISMATCH_SECONDS,
+            window,
         )
     else:
         if sensor._mismatch_count > 0:
@@ -196,7 +230,7 @@ async def check_profile_compliance(
         sensor._profile_reset_count = 0
         return
 
-    if mismatched_s >= AUTO_RESET_MISMATCH_SECONDS:
+    if mismatched_s >= window:
         _clear_mismatch(sensor)
         sensor._profile_reset_count += 1
 
@@ -237,9 +271,7 @@ async def perform_hard_reset(sensor) -> None:
     # The OCPP reset button is named after the OCPP charge point ID, not the
     # Load Juggler entity_id - same resolution as the connector/control
     # entities in load.py and hub_calculation.py.
-    charger_id = sensor.config_entry.data.get(
-        CONF_CHARGER_ID
-    ) or sensor.config_entry.data.get(CONF_ENTITY_ID)
+    charger_id = _charger_id(sensor)
     if not charger_id:
         _LOGGER.error(
             "Cannot hard reset %s: no OCPP charger ID configured", sensor._attr_name
@@ -272,13 +304,7 @@ async def perform_hard_reset(sensor) -> None:
     # the one last recorded as accepted, so that record stops being a fact
     # about it until the next command lands (see the same step in the
     # reset_ocpp_evse service, which the fallback above goes through).
-    load_rt = (
-        sensor.hass.data.get(DOMAIN, {})
-        .get("loads", {})
-        .get(sensor.config_entry.entry_id)
-    )
-    if load_rt is not None:
-        load_rt.pop(EVSE_RT_COMMANDED_LIMIT, None)
+    sensor._runtime().pop(EVSE_RT_COMMANDED_LIMIT, None)
     try:
         await sensor.hass.services.async_call(
             "button",

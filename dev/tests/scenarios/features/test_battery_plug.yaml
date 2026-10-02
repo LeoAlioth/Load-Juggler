@@ -8,7 +8,7 @@
 #   - Excess:         plug ON while battery SOC >= "full" SOC, or the site is
 #                     exporting
 # EVSEs are unaffected (they keep modulating). See _source_limit() in
-# target_calculator.py and BEHAVIOR_BY_MODE in const/modes.py.
+# target_calculator.py and the plug modes' behaviors in const/plug.py.
 #
 # All scenarios use a dedicated solar entity (solar_production_direct: true) so
 # battery discharge is added to the inverter pool, and night-time solar (0 W)

@@ -24,28 +24,17 @@ Two things about it are easy to misread, and both are pinned below:
 * **"Left" is measured, not permitted.** The pools are deducted by each load's
   real footprint (``_pool_deduction``), so an untouched pool beside a granted
   permit is the normal reading for an idle plug - not a missed deduction.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_pool_snapshot.py   (standalone, no pytest)
-  pytest dev/tests/test_pool_snapshot.py    (Docker / CI tier)
 """
 
-import sys
 from dataclasses import fields as dataclass_fields
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules()
-
-from custom_components.dynamic_ocpp_evse.calculations.models import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
     PhaseConstraints,
     PhaseValues,
     SiteContext,
 )
-from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (  # noqa: E402
+from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     calculate_all_load_targets,
 )
 
@@ -211,21 +200,3 @@ def test_the_snapshot_is_plain_json_safe_data():
     for pool in _POOLS:
         for value in snapshot[pool]["start"].values():
             assert isinstance(value, (float, bool)), (pool, value)
-
-
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

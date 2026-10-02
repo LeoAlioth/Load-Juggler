@@ -12,7 +12,6 @@ scenarios:
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
@@ -27,6 +26,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
@@ -46,7 +46,6 @@ scenarios:
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
@@ -61,12 +60,14 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         active: false
       - entity_id: "load_2"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
@@ -89,7 +90,6 @@ scenarios:
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
@@ -104,12 +104,14 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         # active: true (default)
       - entity_id: "load_2"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
@@ -132,7 +134,6 @@ scenarios:
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       phase_b_consumption: 5.0
@@ -147,12 +148,14 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         # active: true (default)
       - entity_id: "load_2"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
@@ -175,7 +178,6 @@ scenarios:
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
       phase_b_consumption: 1.0
@@ -190,12 +192,14 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
         # active: true (default)
       - entity_id: "load_2"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 1
@@ -219,7 +223,6 @@ scenarios:
       max_import_power: 5750
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
 
@@ -233,6 +236,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 1
@@ -252,7 +256,6 @@ scenarios:
       max_import_power: 5750
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 2.0
 
@@ -266,12 +269,14 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         # active: true (default)
       - entity_id: "load_2"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 1
@@ -294,7 +299,6 @@ scenarios:
       max_import_power: 5750
 
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
 
@@ -308,12 +312,14 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 1
         priority: 1
         # active: true (default)
       - entity_id: "load_2"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 1
@@ -336,7 +342,6 @@ scenarios:
       max_import_power: 5750
 
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 3450  # 15A
       phase_a_consumption: 3.0
 
@@ -350,6 +355,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 1

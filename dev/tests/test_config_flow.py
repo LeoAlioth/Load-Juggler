@@ -674,3 +674,31 @@ def test_offgrid_battery_none_grid_values_blocked():
     errors = {}
     validate_offgrid_battery_requirement(grid, {}, errors)
     assert errors.get("base") == "battery_required_no_cts"
+
+
+async def test_a_disabled_inverters_battery_does_not_count(hass):
+    """The engine leaves a disabled inverter entry out of the fleet
+    (registry.get_inverters_for_hub), so its battery satisfies neither the
+    off-grid requirement nor the hub's battery-entity gate."""
+    from homeassistant.config_entries import ConfigEntryDisabler
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_HUB_ENTRY_ID,
+        ENTRY_TYPE_INVERTER,
+    )
+    from custom_components.dynamic_ocpp_evse.helpers import hub_has_battery
+
+    hub = MockConfigEntry(domain=DOMAIN, data={ENTRY_TYPE: ENTRY_TYPE_HUB})
+    hub.add_to_hass(hass)
+    for disabled_by, counts in ((None, True), (ConfigEntryDisabler.USER, False)):
+        inverter = MockConfigEntry(
+            domain=DOMAIN,
+            data={ENTRY_TYPE: ENTRY_TYPE_INVERTER, CONF_HUB_ENTRY_ID: hub.entry_id},
+            options=_BATTERY_FULL,
+            disabled_by=disabled_by,
+        )
+        inverter.add_to_hass(hass)
+        errors = {}
+        validate_offgrid_battery_requirement({}, {}, errors, hass, hub.entry_id)
+        assert (errors == {}) is counts
+        assert hub_has_battery(hass, hub) is counts
+        await hass.config_entries.async_remove(inverter.entry_id)

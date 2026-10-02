@@ -17,7 +17,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       battery_soc: null
@@ -30,6 +29,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 1
@@ -61,7 +61,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       battery_soc: null
@@ -74,6 +73,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
@@ -97,7 +97,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       battery_soc: null
@@ -110,6 +109,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
@@ -130,7 +130,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       battery_soc: null
@@ -143,6 +142,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 3
@@ -163,7 +163,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       battery_soc: null
@@ -176,6 +175,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Standard"
         min_current: 6
         max_current: 16
         phases: 2

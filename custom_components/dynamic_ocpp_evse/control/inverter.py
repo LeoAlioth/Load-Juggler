@@ -30,6 +30,10 @@ register rather than a software knob:
      False → True: the destination hold or the reservation taking hold) writes
      down at once. That is a protective regime transition, not a steady-state
      correction, and only steady-state corrections are made lazy.
+   * **Never the same value twice in an interval** - for an interval after a
+     write, the register is taken to hold what we wrote rather than what it
+     reads back, so a register slow to report a write, or one that clamps or
+     refuses it, gets one retry per interval instead of a write per cycle.
 
    Some firmwares commit these registers to EEPROM, and the measured cost of
    the whole arrangement is ~54 writes a day against the ~31 of the design it
@@ -208,29 +212,6 @@ INVERTER_RT_SOC_FLOOR_WARNED = "soc_control_floor_warned"
 SOC_NORMAL_WARN_INTERVAL = 300.0  # s between repeats of that warning
 
 
-def _read_number(hass, entity_id, unit=None):
-    """Current numeric state of ``entity_id``, or None if unusable.
-
-    ``unit`` converts through units.py - needed for the battery voltage, whose
-    sensor may publish millivolts. Left None for the target register itself: it
-    is read in whatever unit that register uses, both to compare against the
-    value we are about to write and to be republished as the charge-control
-    sensor's own measurement.
-    """
-    if not entity_id:
-        return None
-    state = hass.states.get(entity_id)
-    if units.is_unavailable(state):
-        return None
-    try:
-        value = float(state.state)
-    except (TypeError, ValueError):
-        return None
-    if unit == units.DOMAIN_VOLTS:
-        value = units.to_volts(value, state.attributes.get("unit_of_measurement"))
-    return None if units.is_unusable_number(value) else value
-
-
 def _entity_max(hass, entity_id):
     """The target number entity's own maximum, when it advertises one."""
     state = hass.states.get(entity_id) if entity_id else None
@@ -288,7 +269,7 @@ def battery_voltage(hass, entry) -> float:
         get_entry_value(entry, CONF_BATTERY_NOMINAL_VOLTAGE, None)
         or DEFAULT_BATTERY_NOMINAL_VOLTAGE
     )
-    live = _read_number(
+    live = units.read_number(
         hass,
         get_entry_value(entry, CONF_BATTERY_VOLTAGE_ENTITY_ID, None),
         unit=units.DOMAIN_VOLTS,
@@ -365,8 +346,10 @@ def should_write(current, desired, previous_applied, deadband, deadband_up=None)
     """Whether ``desired`` is far enough from what the register already holds.
 
     Compared against the register's live value, so an inverter that rounded or
-    rejected the last write is corrected rather than assumed. ``previous_applied``
-    covers the case where the register cannot be read back at all.
+    rejected the last write is corrected rather than assumed - once the interval
+    after that write has passed; inside it the caller passes the value written
+    instead. ``previous_applied`` covers the case where the register cannot be
+    read back at all.
 
     DIRECTIONAL, for the same reason the pacing is. The configured deadband is a
     percentage of the NORMAL value, which is the right scale for a reduction -
@@ -510,24 +493,8 @@ def down_window_value(samples, now_mono, window_s):
     return max(value for _stamp, value in samples)
 
 
-def ramp_baseline(applied, current):
-    """What an upward move is measured from: the last value we WROTE.
-
-    Our own last write rather than the read-back, so the ramp advances on the
-    same wall clock the pacing already runs on instead of on how promptly the
-    inverter's integration happens to re-poll the register. A ramp that stalled
-    waiting for a read-back would leave the battery limited indefinitely, which
-    is the one failure worse than releasing too fast.
-
-    The read-back is the fallback for the case with no memory to use: the first
-    write after a reload, where the register itself is the only record of where
-    the limit stands.
-    """
-    return applied if applied is not None else current
-
-
 async def send_inverter_charge_limit(
-    hass, entry, hub_entry, advice_w, now_mono, limiting=None
+    hass, entry, hub_entry, advice_w, now_mono, limiting
 ) -> None:
     """Apply (or release) this inverter's battery charge limit.
 
@@ -540,10 +507,7 @@ async def send_inverter_charge_limit(
     (``forecast_charge_limiting``, published per inverter). It is not the value
     and it is not a duplicate of it: the downward persistence window has to tell
     a protective regime transition (the gate engaging) from a steady-state
-    correction, and only the second is made lazy. None means the caller has no
-    gate state to offer - a hub that publishes none, or a call from a test of
-    something else - and then every reduction is treated as protective and
-    written at once, which is the pre-window behaviour and errs toward writing.
+    correction, and only the second is made lazy.
     """
     target_entity = get_entry_value(entry, CONF_CHARGE_LIMIT_ENTITY_ID, None)
     if not target_entity:
@@ -567,7 +531,7 @@ async def send_inverter_charge_limit(
     # that sensor a continuous graph instead of a value that only moves when we
     # happen to write. It is a hass.states lookup, not device traffic; the actual
     # Modbus polling belongs to whoever owns the number entity.
-    current = _read_number(hass, target_entity)
+    current = units.read_number(hass, target_entity)
     inverter_rt[INVERTER_RT_REGISTER] = current
     inverter_rt[INVERTER_RT_NORMAL] = normal
 
@@ -610,7 +574,9 @@ async def send_inverter_charge_limit(
     # firmwares put them in EEPROM. See ``should_write`` for why up and down
     # want different bands at all.
     deadband_up = deadband if step is None else min(deadband, abs(step) / 3.0)
-    baseline = ramp_baseline(applied, current)
+    # An upward move is measured from our own last write, not the read-back, so
+    # the ramp never stalls on a slow re-poll; the read-back only after a reload.
+    baseline = applied if applied is not None else current
     releasing = not enabled or advice_w is None
     # The gate edge the exemption keys on. Tracked here rather than handed in as
     # an event because this module is the only thing that needs the edge - and a
@@ -750,25 +716,20 @@ async def send_inverter_charge_limit(
     )
 
     # --- Directional pacing (rule 2) ------------------------------------------
-    # Where the reduction is measured from: the same reference the deadband uses,
-    # so the two agree about what "the register already holds" means.
-    reference = current if current is not None else applied
-    # A reduction to be persistent about: the gate is known, this is not the
-    # protective cycle the gate engaged on, and the value really is below what
-    # the register holds by more than the deadband.
+    # Where the reduction is measured from: the higher of the read-back and our
+    # own last write. They differ only when the register is slow to report a
+    # write, clamps it, refuses it or was set by hand - and a value below what we
+    # last told it is a reduction whatever the register reports, so it waits for
+    # its window rather than being written as a "rise" above a lagging read-back.
+    known = [value for value in (current, applied) if value is not None]
+    reference = max(known) if known else None
+    # A reduction to be persistent about: this is not the protective cycle the
+    # gate engaged on, and the value really is below what the register holds by
+    # more than the deadband.
     reducing = (
-        limiting is not None
-        and not engaging
-        and reference is not None
-        and desired < reference - deadband
+        not engaging and reference is not None and desired < reference - deadband
     )
-    if limiting is None:
-        # No gate state to reason about (see the signature): the pre-window
-        # contract, one minimum interval between writes in either direction.
-        inverter_rt[INVERTER_RT_DOWN_SAMPLES] = []
-        if last_write is not None and (now_mono - last_write) < interval:
-            return
-    elif not reducing:
+    if not reducing:
         # A rise, a move inside the deadband, or a protective transition. The
         # window is about one standing reduction and this is not it - and a rise
         # is not paced at all: it is bounded by the slew step above, and the
@@ -796,7 +757,22 @@ async def send_inverter_charge_limit(
         # The least reduction every sample in the window agreed on.
         target = round(quantise(slew_limited(settled, baseline, step), reg_step), 1)
 
-    if not should_write(current, target, applied, deadband, deadband_up):
+    # Inside the interval after a write, what the register holds is what we wrote
+    # it, not what it reads back: a register slow to report a write, or one that
+    # clamps or refuses it, would otherwise be sent the same value on every site
+    # cycle (22 writes of 78.1 A in 44 s against a register stuck at 2 A,
+    # 2026-10-02). After the interval the read-back is believed again, so a value
+    # it rounded, clamped or refused is retried - once per interval. Any value
+    # past the deadband from our last write still goes at once, and so does the
+    # gate engaging: protection writes over a register that has not shown it.
+    fresh = (
+        not engaging
+        and applied is not None
+        and last_write is not None
+        and now_mono - last_write < interval
+    )
+    holds = applied if fresh else current
+    if not should_write(holds, target, applied, deadband, deadband_up):
         return
 
     await _write(hass, entry, target_entity, target, unit)
@@ -850,21 +826,7 @@ def resolve_normal_soc(hass, entry):
     normal_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
     if not normal_entity:
         return DEFAULT_SOC_LIMIT_NORMAL
-    return _read_number(hass, normal_entity)
-
-
-def desired_soc(normal, advice_soc) -> float:
-    """The ceiling to enforce: the lower of the normal and the recommendation.
-
-    The whole control, in one line. min() is what makes it safe to point at
-    entities somebody else owns - we can only ever hold the battery lower than
-    they asked, never higher - and it is also the release mechanism: the
-    forecast's advice climbs back to 100 % as the production peak passes, at
-    which point the min() is the normal again and the slots are the user's.
-    """
-    if advice_soc is None:
-        return float(normal)
-    return float(min(normal, advice_soc))
+    return units.read_number(hass, normal_entity)
 
 
 async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
@@ -892,7 +854,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     # One read per target per call, before any branch - same reasoning as the
     # charge-rate register above: these are hass.states lookups, and a value
     # that only refreshed when we wrote would make the sensor a step function.
-    slots = {entity_id: _read_number(hass, entity_id) for entity_id in targets}
+    slots = {entity_id: units.read_number(hass, entity_id) for entity_id in targets}
     inverter_rt[INVERTER_RT_SOC_SLOTS] = slots
     inverter_rt[INVERTER_RT_SOC_NORMAL] = normal
     inverter_rt[INVERTER_RT_SOC_RECOMMENDED] = advice_soc
@@ -936,7 +898,9 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
             _warn_floor_misconfig(entry, inverter_rt, now_mono, normal_entity)
             return
 
-    desired = round(desired_soc(normal, advice_soc), 1)
+    # The lower of the normal and the advice: we only ever hold the battery
+    # below what the slots' owner asked, and the advice climbing back releases.
+    desired = round(float(normal if advice_soc is None else min(normal, advice_soc)), 1)
     inverter_rt[INVERTER_RT_SOC_DESIRED] = desired
     # "limiting" is specifically "we are holding it below what its owner asked
     # for". Tracking the normal - no advice, or advice at or above it - is idle,

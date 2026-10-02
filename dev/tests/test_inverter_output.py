@@ -21,26 +21,7 @@ production. ``abs()`` fabricated output; a 0-clamp would erase the term the
 fleet sum needs to net the child's back-feed against its parent. The clamps
 that remain are the aggregates where physics demands them: a member's derived
 production, the fleet solar total, per-phase household.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_inverter_output.py     (standalone, no pytest needed)
-  pytest dev/tests/test_inverter_output.py      (Docker / CI tier)
 """
-
-import sys
-from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Module loading - shared stub loader (avoids the HA-importing package root).
-# hub_calculation is needed for the display-headroom test (#48) - it pulls in
-# fleet and the rest of its import chain, engine/hub_result.py (where
-# _build_hub_result lives) included, with the few homeassistant modules its
-# siblings import at module level stubbed when HA is absent.
-# ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules(engine_modules=("fleet", "hub_calculation"))
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     PhaseValues,
@@ -350,6 +331,7 @@ def _derived_solar_site(**overrides):
     defaults = dict(
         voltage=V,
         main_breaker_rating=63,
+        grid_current=PhaseValues(0.0, None, None),
         consumption=PhaseValues(0.0, None, None),
         export_current=PhaseValues(0.0, None, None),
         solar_is_derived=True,
@@ -365,18 +347,7 @@ def _derived_solar_site(**overrides):
 
 
 def _display_result(site):
-    return _build_hub_result(
-        site,
-        raw_phases=(0.0, None, None),
-        voltage=V,
-        battery_soc=site.battery_soc,
-        battery_soc_min=site.battery_soc_min,
-        battery_max_discharge_power=site.battery_max_discharge_power,
-        battery_power=site.battery_power,
-        load_targets={},
-        load_available={},
-        load_names={},
-    )
+    return _build_hub_result(site)
 
 
 def test_display_headroom_uses_prefeedback_output():
@@ -408,24 +379,3 @@ def test_display_headroom_rating_clamp_still_applies():
         inverter_output_total=6500.0,
     )
     assert _close(_display_result(overloaded)["available_battery_power"], 0.0)
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)
