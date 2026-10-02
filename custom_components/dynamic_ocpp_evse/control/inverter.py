@@ -30,6 +30,10 @@ register rather than a software knob:
      False → True: the destination hold or the reservation taking hold) writes
      down at once. That is a protective regime transition, not a steady-state
      correction, and only steady-state corrections are made lazy.
+   * **Never the same value twice in an interval** - for an interval after a
+     write, the register is taken to hold what we wrote rather than what it
+     reads back, so a register slow to report a write, or one that clamps or
+     refuses it, gets one retry per interval instead of a write per cycle.
 
    Some firmwares commit these registers to EEPROM, and the measured cost of
    the whole arrangement is ~54 writes a day against the ~31 of the design it
@@ -342,8 +346,10 @@ def should_write(current, desired, previous_applied, deadband, deadband_up=None)
     """Whether ``desired`` is far enough from what the register already holds.
 
     Compared against the register's live value, so an inverter that rounded or
-    rejected the last write is corrected rather than assumed. ``previous_applied``
-    covers the case where the register cannot be read back at all.
+    rejected the last write is corrected rather than assumed - once the interval
+    after that write has passed; inside it the caller passes the value written
+    instead. ``previous_applied`` covers the case where the register cannot be
+    read back at all.
 
     DIRECTIONAL, for the same reason the pacing is. The configured deadband is a
     percentage of the NORMAL value, which is the right scale for a reduction -
@@ -710,9 +716,13 @@ async def send_inverter_charge_limit(
     )
 
     # --- Directional pacing (rule 2) ------------------------------------------
-    # Where the reduction is measured from: the same reference the deadband uses,
-    # so the two agree about what "the register already holds" means.
-    reference = current if current is not None else applied
+    # Where the reduction is measured from: the higher of the read-back and our
+    # own last write. They differ only when the register is slow to report a
+    # write, clamps it, refuses it or was set by hand - and a value below what we
+    # last told it is a reduction whatever the register reports, so it waits for
+    # its window rather than being written as a "rise" above a lagging read-back.
+    known = [value for value in (current, applied) if value is not None]
+    reference = max(known) if known else None
     # A reduction to be persistent about: this is not the protective cycle the
     # gate engaged on, and the value really is below what the register holds by
     # more than the deadband.
@@ -747,7 +757,22 @@ async def send_inverter_charge_limit(
         # The least reduction every sample in the window agreed on.
         target = round(quantise(slew_limited(settled, baseline, step), reg_step), 1)
 
-    if not should_write(current, target, applied, deadband, deadband_up):
+    # Inside the interval after a write, what the register holds is what we wrote
+    # it, not what it reads back: a register slow to report a write, or one that
+    # clamps or refuses it, would otherwise be sent the same value on every site
+    # cycle (22 writes of 78.1 A in 44 s against a register stuck at 2 A,
+    # 2026-10-02). After the interval the read-back is believed again, so a value
+    # it rounded, clamped or refused is retried - once per interval. Any value
+    # past the deadband from our last write still goes at once, and so does the
+    # gate engaging: protection writes over a register that has not shown it.
+    fresh = (
+        not engaging
+        and applied is not None
+        and last_write is not None
+        and now_mono - last_write < interval
+    )
+    holds = applied if fresh else current
+    if not should_write(holds, target, applied, deadband, deadband_up):
         return
 
     await _write(hass, entry, target_entity, target, unit)
