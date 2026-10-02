@@ -10,8 +10,7 @@ annotations only, under ``TYPE_CHECKING``. That is what lets this module live
 outside the package root: it used to sit in ``__init__.py``, where every
 caller in ``engine/``, ``entities/`` and ``config_flow.py`` had to defer its
 import to function scope to dodge the circular dependency back through the
-HA-importing package root. Keeping it HA-import-free also means pure tooling
-(``dev/tests/standalone_loader.py``) can load it directly.
+HA-importing package root.
 """
 
 from __future__ import annotations
@@ -96,3 +95,20 @@ def get_inverters_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[Config
 def get_groups_for_hub(hass: HomeAssistant, hub_entry_id: str) -> list[ConfigEntry]:
     """Get all circuit group config entries for a hub."""
     return _children_of_hub(hass, hub_entry_id, ENTRY_TYPE_GROUP)
+
+
+def follow_renames(value, renames: dict):
+    """``value`` - an entry's data or options - with every string that IS a
+    renamed entity id, key or value, swapped for its new id. Home Assistant
+    moves an entity's history on a rename but not the settings that name it:
+    after Anze's renames of 2026-09-28 the well pump's switch, the plugs and
+    the meters here pointed at entities that no longer existed."""
+    if isinstance(value, str):
+        return renames.get(value, value)
+    if isinstance(value, list):
+        return [follow_renames(v, renames) for v in value]
+    if isinstance(value, tuple):
+        return tuple(follow_renames(v, renames) for v in value)
+    if isinstance(value, dict):
+        return {follow_renames(k, renames): follow_renames(v, renames) for k, v in value.items()}
+    return value

@@ -10,10 +10,8 @@ So the engine's allocation sets *how fast*, and the reserve sets *whether*.
 """
 
 import logging
-from datetime import datetime, timezone
 
 from ..const import (
-    DOMAIN,
     CONF_CONNECTED_TO_PHASE,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
@@ -34,6 +32,7 @@ from ..const import (
     resolve_station_reserve,
 )
 from ..helpers import get_entry_value
+from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,11 +59,7 @@ async def send_power_station_command(
         )
         return
 
-    load_rt = (
-        sensor.hass.data.get(DOMAIN, {})
-        .get("loads", {})
-        .get(entry.entry_id, {})
-    )
+    load_rt = sensor._runtime()
 
     voltage = get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
     phases = len(get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A")
@@ -86,7 +81,7 @@ async def send_power_station_command(
 
     # The station's own max charge limit is the user's battery-health cap; the
     # reserve is never raised above it.
-    charge_limit = _read_number(
+    charge_limit = units.read_number(
         sensor.hass, get_entry_value(entry, CONF_STATION_CHARGE_LIMIT_ENTITY_ID, None)
     )
     if charge_limit is None:
@@ -125,7 +120,7 @@ async def send_power_station_command(
     # write on a change of at least one device step.
     try:
         if speed is not None:
-            current_speed = _read_number(sensor.hass, speed_entity)
+            current_speed = units.read_number(sensor.hass, speed_entity)
             if (
                 current_speed is None
                 or abs(current_speed - speed) >= STATION_CHARGE_POWER_STEP
@@ -137,7 +132,7 @@ async def send_power_station_command(
                     blocking=False,
                 )
 
-        current_reserve = _read_number(sensor.hass, reserve_entity)
+        current_reserve = units.read_number(sensor.hass, reserve_entity)
         if current_reserve is None or abs(current_reserve - reserve) >= 1:
             await sensor.hass.services.async_call(
                 "number",
@@ -150,19 +145,5 @@ async def send_power_station_command(
             "Power station command failed for %s: %s", sensor._attr_name, e
         )
 
-    sensor._last_update = datetime.now(timezone.utc)
-    sensor._last_command_time = now_mono
+    stamp_command(sensor, now_mono)
 
-
-def _read_number(hass, entity_id):
-    """Current numeric state of ``entity_id``, or None if unusable."""
-    if not entity_id:
-        return None
-    state = hass.states.get(entity_id)
-    if units.is_unavailable(state):
-        return None
-    try:
-        value = float(state.state)
-    except (TypeError, ValueError):
-        return None
-    return None if units.is_unusable_number(value) else value

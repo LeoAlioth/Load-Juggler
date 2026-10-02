@@ -13,41 +13,31 @@ paused by the car (SuspendedEV). Carried across into Charging, that 0 A counted
 as settled on the very cycle charging began, while the meter still read 0.
 
 This rig closes the loop through ``run_hub_calculation`` and the real permit
-pipeline (``control.smoothing.apply_smoothing``) against a plant, like
-dev/tests/test_managed_draw_smoothing.py: chargers on one breaker-limited phase
+pipeline (``control.smoothing.apply_smoothing``) against a plant - the
+shared rig in dev/tests/closed_loop.py: chargers on one breaker-limited phase
 whose cars slew their draw toward what they are commanded, and a CT that reads
 the household plus every draw, all updating in the same cycle.
 """
-
-from types import SimpleNamespace
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse.const import (
-    CONF_CHARGER_ID,
     CONF_ENTITY_ID,
-    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-    CONF_HUB_ENTRY_ID,
-    CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
-    CONF_PHASES,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_LOAD,
 )
 
-V = 230.0
+from .closed_loop import AMPS, DT, V, close_loop, evse_entry, slew
+
 BREAKER_A = 25.0
 HOUSE_A = 8.0
 ALLOWANCE_A = BREAKER_A - HOUSE_A     # 17 A: all the chargers may take together
-DT = 2                                # the default site cycle, seconds
 CAR_RAMP_A_S = 1.0                    # how fast a car follows its command
 # A connector status held this long at 0 A outlasts the settle time (15 s),
 # the case that used to count as settled.
@@ -68,27 +58,8 @@ def _hub(slug):
     )
 
 
-def _evse(hub, name, priority):
-    """A 1-phase 6→32 A Standard EVSE on phase A: the breaker binds, not it."""
-    return MockConfigEntry(
-        domain=DOMAIN, version=2, minor_version=4, title=name,
-        data={CONF_NAME: name,
-              CONF_ENTITY_ID: name,
-              ENTRY_TYPE: ENTRY_TYPE_LOAD,
-              CONF_CHARGER_ID: name,
-              CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: f"sensor.{name}_current",
-              CONF_HUB_ENTRY_ID: hub.entry_id},
-        options={
-            CONF_LOAD_PRIORITY: priority,
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT: 6,
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: 32,
-            CONF_PHASES: 1,
-        },
-    )
-
-
 async def _site(hass, slug, cars, cycles):
-    """Close the loop: engine permit → permit pipeline → car → meters → engine.
+    """1-phase 6→32 A Standard EVSEs on phase A: the breaker binds, not them.
 
     ``cars`` is one dict per charger, in priority order: ``status(i)`` is the
     connector status on cycle ``i``, ``flows(i)`` whether the car takes current
@@ -96,74 +67,30 @@ async def _site(hass, slug, cars, cycles):
     when it stops), and an optional ``cap`` - the most the car will take
     whatever it is offered. One row per cycle, per-charger values in lists.
     """
-    from freezegun import freeze_time
-    from custom_components.dynamic_ocpp_evse.control.smoothing import (
-        apply_smoothing,
-    )
-    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
-        run_hub_calculation,
-    )
-
     hub = _hub(slug)
-    hub.add_to_hass(hass)
     names = [f"start_{slug}_evse{n}" for n in range(len(cars))]
-    entries = [_evse(hub, name, n + 1) for n, name in enumerate(names)]
-    for entry in entries:
-        entry.add_to_hass(hass)
-    hass.data[DOMAIN] = {
-        "hubs": {hub.entry_id: {"loads": [e.entry_id for e in entries]}},
-        "loads": {e.entry_id: {
-            "entry": e, "hub_entry_id": hub.entry_id, "dynamic_control": True,
-        } for e in entries},
-        "load_allocations": {e.entry_id: 0 for e in entries},
-        "inverters": {},
-    }
-    # apply_smoothing keeps its state on the load entity and touches only these.
-    permit_states = [
-        SimpleNamespace(
-            _attr_name=name, _ema_current=None, _schmitt_current=None,
-            _schmitt_state="rising", _rate_limited_current=0.0,
-        )
-        for name in names
-    ]
-
-    trace = []
     draws = [0.0] * len(cars)
-    commands = [0.0] * len(cars)
-    step = CAR_RAMP_A_S * DT
-    with freeze_time("2026-09-24 10:00:00+00:00") as frozen:
-        for i in range(cycles):
-            frozen.tick(DT)
-            statuses = [car["status"](i) for car in cars]
-            for n, car in enumerate(cars):
-                if car["flows"](i):
-                    want = min(commands[n], car.get("cap", commands[n]))
-                    draws[n] += max(-step, min(step, want - draws[n]))
-                else:
-                    draws[n] = 0.0
-                hass.states.async_set(
-                    f"sensor.{names[n]}_status_connector", statuses[n])
-                hass.states.async_set(
-                    f"sensor.{names[n]}_current", f"{draws[n]:.3f}",
-                    {"device_class": "current", "unit_of_measurement": "A"})
+
+    def plant(i, commands):
+        statuses = [car["status"](i) for car in cars]
+        for n, car in enumerate(cars):
+            if car["flows"](i):
+                want = min(commands[n], car.get("cap", commands[n]))
+                draws[n] = slew(draws[n], want, CAR_RAMP_A_S * DT)
+            else:
+                draws[n] = 0.0
             hass.states.async_set(
-                f"sensor.start_{slug}_phase_a", f"{HOUSE_A + sum(draws):.3f}",
-                {"device_class": "current", "unit_of_measurement": "A"})
-            result = run_hub_calculation(hass, hub)
-            # The load processor's own rounding (entities/load.py).
-            permits = [
-                round(result["load_available"][e.entry_id], 1) for e in entries
-            ]
-            commands = [
-                apply_smoothing(state, permit, False, hub)
-                for state, permit in zip(permit_states, permits)
-            ]
-            trace.append({
-                "i": i, "status": statuses, "draw": list(draws),
-                "permit": permits, "command": list(commands),
-                "import": HOUSE_A + sum(draws),
-            })
-    return trace
+                f"sensor.{names[n]}_status_connector", statuses[n])
+            hass.states.async_set(
+                f"sensor.{names[n]}_current", f"{draws[n]:.3f}", AMPS)
+        hass.states.async_set(
+            f"sensor.start_{slug}_phase_a", f"{HOUSE_A + sum(draws):.3f}", AMPS)
+        return {"status": statuses, "draw": list(draws),
+                "import": HOUSE_A + sum(draws)}
+
+    evses = [evse_entry(hub, name, priority=n + 1) for n, name in enumerate(names)]
+    return await close_loop(hass, hub, evses, cycles, plant,
+                            at="2026-09-24 10:00:00+00:00")
 
 
 def _worst_permit(trace, n=0):

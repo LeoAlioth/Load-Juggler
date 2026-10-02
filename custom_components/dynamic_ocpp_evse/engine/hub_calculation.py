@@ -5,13 +5,6 @@ This file provides a unified interface for EVSE calculations.
 All core calculation logic has been refactored into the calculations/ directory.
 """
 
-# PEP 604 unions (``float | None``) appear in this module's signatures. Nothing
-# here evaluates annotations at runtime (no dataclasses, NamedTuple/TypedDict or
-# get_type_hints calls), so deferring them keeps the module importable on the
-# Python 3.9 interpreters the standalone test runners use (same arrangement as
-# engine/auto_detect.py).
-from __future__ import annotations
-
 import logging
 import math
 import time
@@ -20,7 +13,6 @@ from datetime import datetime, timedelta, timezone
 
 from ..calculations import (
     SiteContext,
-    LoadContext,  # noqa: F401 - re-exported via __all__
     PhaseValues,
     calculate_all_load_targets,
     excess_margin,
@@ -62,7 +54,6 @@ from ..const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
     CTRL_FAST_TAU_S,
-    DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_UPDATE_FREQUENCY,
     EMA_TAU_S,
@@ -84,8 +75,10 @@ from ..calculations.utils import (
     compute_household_per_phase,
     grid_without_managed_draws,
     hold_per_phase_floor,
+    managed_phase_draws,
 )
 from ..helpers import get_entry_value
+from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
 from .hub_result import _build_hub_result, _compute_forecast_advice
@@ -97,10 +90,9 @@ from .load_builders import (
 from .readers import (
     _PHASE_LABELS,
     _check_entity_availability,
-    _coerce,
+    _f,
     _fv,
     _fv2,
-    _read_entity,
     _read_fleet_members,
     _read_grid_phases,
     _resolve_grid_phases,
@@ -148,14 +140,7 @@ def _managed_phase_draws(site, ema_inputs=None):
     switch is that this load does not stand down for us. Left in, it is
     household consumption, which is what an unmanaged load is.
     """
-    total_draws = [0.0, 0.0, 0.0]
-    for c in site.loads:
-        if not c.dynamic_control:
-            continue
-        a_draw, b_draw, c_draw = c.get_site_phase_draw()
-        total_draws[0] += a_draw
-        total_draws[1] += b_draw
-        total_draws[2] += c_draw
+    total_draws = managed_phase_draws(site)
     if ema_inputs is None:
         return total_draws
     # Same alpha, same shape as readers._smooth on grid_0..2.
@@ -163,6 +148,15 @@ def _managed_phase_draws(site, ema_inputs=None):
         _smooth(ema_inputs, f"managed_draw_{i}", d) or 0.0
         for i, d in enumerate(total_draws)
     ]
+
+
+def _split_grid(phases):
+    """Signed per-phase grid amps as ``(consumption, export)`` PhaseValues -
+    the import and the export half of each phase, None where it has none."""
+    return (
+        PhaseValues(*[max(0, r) if r is not None else None for r in phases]),
+        PhaseValues(*[max(0, -r) if r is not None else None for r in phases]),
+    )
 
 
 def _charge_control_view(site, consumption, export, battery_power, draws):
@@ -478,9 +472,7 @@ def _read_max_import_power(hass, hub_entry):
         hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
     )
     if max_import_power_entity:
-        return _coerce(
-            _read_entity(hass, max_import_power_entity, None, unit="W"), None
-        )  # Convert kW->W if needed
+        return units.read_number(hass, max_import_power_entity, units.DOMAIN_WATTS)
     if not get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
         return None
     hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
@@ -570,17 +562,7 @@ def _apply_phase_remaps(site, auto_detect_state):
             load.l1_phase = remap["l1_phase"]
             load.l2_phase = remap["l2_phase"]
             load.l3_phase = remap["l3_phase"]
-            # Recalculate active_phases_mask from new mapping
-            if load.phases == 3:
-                load.active_phases_mask = "".join(
-                    sorted({load.l1_phase, load.l2_phase, load.l3_phase})
-                )
-            elif load.phases == 2:
-                load.active_phases_mask = "".join(
-                    sorted({load.l1_phase, load.l2_phase})
-                )
-            elif load.phases == 1:
-                load.active_phases_mask = load.l1_phase
+            load.mask_from_mapping()
             _LOGGER.debug(
                 "Auto-remap applied for %s: L1:%s→%s L2:%s→%s L3:%s→%s mask=%s",
                 load.entity_id,
@@ -1204,7 +1186,7 @@ def _build_hub_status(
     # Configured non-grid sensors that are currently unavailable. Name them in
     # the status line itself (not just the warnings attribute) so the user sees
     # *which* sensor dropped out at a glance, without expanding attributes.
-    unavailable = _check_entity_availability(hass, hub_entry)
+    unavailable = _check_entity_availability(hass, hub_entry, members)
     if unavailable:
         hub_warnings.extend(
             f"{label} ({entity_id}) is unavailable" for label, entity_id in unavailable
@@ -1243,7 +1225,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         dict with calculated values including:
             - CONF_TOTAL_ALLOCATED_CURRENT: Total allocated current (A)
             - CONF_PHASES: Number of phases
-            - CONF_CHARGING_MODE: Current charging mode
             - load_targets: per-load target currents
             - Other site/load data
     """
@@ -1291,10 +1272,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     smoothed_phases = [
         _smooth(ema_inputs, f"grid_{i}", r) for i, r in enumerate(raw_phases)
     ]
-    consumption = [max(0, r) if r is not None else None for r in smoothed_phases]
-    export = [max(0, -r) if r is not None else None for r in smoothed_phases]
-    consumption_pv = PhaseValues(*consumption)
-    export_pv = PhaseValues(*export)
+    consumption_pv, export_pv = _split_grid(smoothed_phases)
     # The charge controller's view of the same phases: fast toward either
     # limit, slow back toward zero, under its own EMA keys (see
     # _charge_control_view). The symmetric values above feed everything else.
@@ -1302,12 +1280,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         _smooth_directional(ema_inputs, f"grid_ctrl_{i}", r, fast_away=True)
         for i, r in enumerate(raw_phases)
     ]
-    ctrl_consumption_pv = PhaseValues(
-        *[max(0, r) if r is not None else None for r in ctrl_phases]
-    )
-    ctrl_export_pv = PhaseValues(
-        *[max(0, -r) if r is not None else None for r in ctrl_phases]
-    )
+    ctrl_consumption_pv, ctrl_export_pv = _split_grid(ctrl_phases)
 
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
@@ -1491,39 +1464,20 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_production_total=solar_production_total,
         solar_is_derived=solar_is_derived,
         solar_is_metered=fleet.solar_is_metered(members),
-        battery_soc=float(battery_soc) if battery_soc is not None else None,
-        battery_power=float(battery_power) if battery_power is not None else None,
-        battery_soc_min=float(battery_soc_min) if battery_soc_min is not None else None,
-        battery_soc_target=float(battery_soc_target)
-        if battery_soc_target is not None
-        else None,
-        battery_soc_full=float(battery_soc_full)
-        if battery_soc_full is not None
-        else None,
-        battery_soc_hysteresis=float(battery_soc_hysteresis)
-        if battery_soc_hysteresis is not None
-        else 5,
-        battery_max_charge_power=float(battery_max_charge_power)
-        if battery_max_charge_power is not None
-        else None,
-        battery_max_discharge_power=float(battery_max_discharge_power)
-        if battery_max_discharge_power is not None
-        else None,
-        max_grid_import_power=float(max_grid_import_power)
-        if max_grid_import_power is not None
-        else None,
-        inverter_max_power=float(inverter_max_power)
-        if inverter_max_power is not None
-        else None,
-        inverter_max_power_per_phase=float(inverter_max_power_per_phase)
-        if inverter_max_power_per_phase is not None
-        else None,
+        battery_soc=_f(battery_soc),
+        battery_power=_f(battery_power),
+        battery_soc_min=_f(battery_soc_min),
+        battery_soc_target=_f(battery_soc_target),
+        battery_soc_full=_f(battery_soc_full),
+        battery_max_charge_power=_f(battery_max_charge_power),
+        battery_max_discharge_power=_f(battery_max_discharge_power),
+        max_grid_import_power=_f(max_grid_import_power),
+        inverter_max_power=_f(inverter_max_power),
+        inverter_max_power_per_phase=_f(inverter_max_power_per_phase),
         inverter_supports_asymmetric=inverter_supports_asymmetric,
         wiring_topology=wiring_topology,
         inverter_output_per_phase=inverter_output_per_phase,
-        inverter_output_total=float(inverter_output_total)
-        if inverter_output_total is not None
-        else None,
+        inverter_output_total=_f(inverter_output_total),
         net_grid_power=float(net_grid_power),
         excess_export_threshold=excess_threshold,
         allow_grid_charging=allow_grid_charging,
@@ -1533,11 +1487,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
 
     # --- Add loads ---
-    hub_entry_id = (
-        hub_entry.entry_id
-        if hasattr(hub_entry, "entry_id")
-        else hub_entry.data.get("hub_entry_id")
-    )
+    hub_entry_id = hub_entry.entry_id
     _add_loads_to_site(
         hass, site, hub_entry_id, load_entries,
         settle_seconds=get_entry_value(
@@ -1576,7 +1526,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         site,
         ctrl_consumption_pv,
         ctrl_export_pv,
-        float(battery_power_ctrl) if battery_power_ctrl is not None else None,
+        _f(battery_power_ctrl),
         # Its phases come from the DIRECTIONAL smoothers, but the draw it
         # subtracts is the same smoothed term the site view used - one value,
         # so the two views cannot disagree about what our loads draw.
@@ -1608,10 +1558,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     calculate_all_load_targets(site)
 
     grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)
-
-    load_targets = {c.load_id: c.allocated_current for c in site.loads}
-    load_available = {c.load_id: c.available_current for c in site.loads}
-    load_names = {c.load_id: c.entity_id for c in site.loads}
 
     # Persist this cycle's permit for next-cycle settle detection - an EVSE
     # only counts as "settled and under-drawing" when its measured draw stays
@@ -1662,9 +1608,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         hub_entry,
         hub_runtime,
         site,
-        battery_soc,
         members,
-        excess_on,
         ctrl_site=ctrl_site,
     )
     for inv_id, advice in forecast_per_inverter.items():
@@ -1674,15 +1618,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # --- Build result ---
     return _build_hub_result(
         site,
-        raw_phases,
-        voltage,
-        battery_soc,
-        battery_soc_min,
-        battery_max_discharge_power,
-        battery_power,
-        load_targets,
-        load_available,
-        load_names,
         auto_notifications,
         group_data,
         grid_stale=grid_stale,
@@ -1697,12 +1632,3 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         forecast_advice=forecast_advice,
         inverters_data=inverters_data,
     )
-
-
-__all__ = [
-    "SiteContext",
-    "LoadContext",
-    "PhaseValues",
-    "calculate_all_load_targets",
-    "run_hub_calculation",
-]

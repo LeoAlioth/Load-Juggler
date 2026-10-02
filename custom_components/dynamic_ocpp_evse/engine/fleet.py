@@ -438,7 +438,7 @@ def output_power_measured(members, voltage: float) -> Optional[float]:
     """The fleet's measured AC output in watts - Σ per-phase member outputs ×
     voltage. None when no member has output entities.
 
-    Signed on purpose (see hub_calculation._read_inverter_output): a cascaded
+    Signed on purpose (see readers._read_signed_amps): a cascaded
     child inverter on a hybrid's load port makes the parent's reading negative,
     and the signed sum nets that back-feed against the child's own positive
     reading - which is precisely the AC power the pair delivers to the site.
@@ -558,7 +558,7 @@ def member_solar(member, voltage: float) -> Optional[float]:
     series - for the calculation; it is not published (solar_is_unsplit).
 
     The max(0, ·) is a physical clamp, and it matters now that outputs are
-    signed (see hub_calculation._read_inverter_output): a negative result means
+    signed (see readers._read_signed_amps): a negative result means
     power is flowing INTO this inverter - a cascaded child inverter back-feeding
     its parent's load port, or the grid charging its battery - and neither is
     production of its own. The child's production is counted on the child's own

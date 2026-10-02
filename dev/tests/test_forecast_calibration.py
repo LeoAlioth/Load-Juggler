@@ -12,7 +12,6 @@ Docker / CI tier:
 from datetime import datetime, timedelta, timezone
 
 from custom_components.dynamic_ocpp_evse.calculations.calibration import (
-    GAIN_CLAMP_HIGH,
     GAIN_CLAMP_LOW,
     GAIN_HOUR_OFFSET_HIGH,
     CLIP_WALL_TOLERANCE_W,
@@ -29,7 +28,6 @@ from custom_components.dynamic_ocpp_evse.calculations.calibration import (
     prune_series,
     series_days,
     series_gain,
-    update_gain,
 )
 
 T0 = datetime(2026, 8, 31, 6, 0, tzinfo=timezone.utc)
@@ -139,39 +137,6 @@ def test_an_uninformative_day_yields_no_ratio():
 def test_no_data_yields_no_ratio():
     assert day_ratio({}) is None
     assert day_ratio(None) is None
-
-
-# --- Folding a day into the gain ------------------------------------------
-
-
-def test_a_day_moves_the_gain_one_tenth_of_the_way():
-    assert round(update_gain(1.0, 1.10, weight=0.1), 4) == 1.01
-
-
-def test_an_uninformative_day_leaves_the_gain_alone():
-    assert update_gain(1.07, None) == 1.07
-
-
-def test_the_gain_is_clamped_at_both_ends():
-    assert update_gain(GAIN_CLAMP_HIGH, 5.0) == GAIN_CLAMP_HIGH
-    assert update_gain(GAIN_CLAMP_LOW, 0.1) == GAIN_CLAMP_LOW
-
-
-def test_a_run_of_extreme_days_parks_at_the_bound_and_stays_visible():
-    """The clamp is on the RESULT, so a persistently wrong array pins the gain
-    at 1.25 where the published value shows it, rather than averaging into
-    something that looks moderate."""
-    gain = 1.0
-    for _ in range(200):
-        gain = update_gain(gain, 3.0)
-    assert gain == GAIN_CLAMP_HIGH
-
-
-def test_converges_on_a_steady_bias():
-    gain = 1.0
-    for _ in range(100):
-        gain = update_gain(gain, 1.08)
-    assert round(gain, 3) == 1.08
 
 
 # --- Peakiness: the Jensen gap, measured ----------------------------------

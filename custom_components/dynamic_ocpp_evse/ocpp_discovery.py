@@ -23,16 +23,14 @@ Moved here verbatim from ``config_flow/helpers.py``, where it could only be
 reached by the flows.
 """
 
-# PEP 604 unions (``str | None``) appear in this module's signatures, and
-# engine/load_builders.py imports it, so it has to load on the Python 3.9
-# interpreters the standalone test runners use. Nothing here evaluates
-# annotations at runtime, so deferring them is enough (same arrangement as
-# engine/load_builders.py and engine/auto_detect.py).
 from __future__ import annotations
 
 import logging
 
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+from homeassistant.helpers.device_registry import (
+    async_entries_for_config_entry,
+    async_get as async_get_device_registry,
+)
 from homeassistant.helpers.entity_registry import (
     async_get as async_get_entity_registry,
 )
@@ -156,15 +154,20 @@ def _split_ocpp_unique_id(unique_id) -> tuple[str, int | None, str] | None:
     parts = str(unique_id).split(".")
     if len(parts) < 4 or parts[0] != OCPP_INTEGRATION_DOMAIN or parts[-1] != "sensor":
         return None
-    head = parts[1:-2]
+    head = _split_head(parts[1:-2])
+    return None if head is None else (*head, parts[-2])
+
+
+def _split_head(head: list) -> tuple[str, int | None] | None:
+    """``(charge point id, connector number)`` from the dot-split parts between
+    an ocpp unique_id's prefix and its key: ``<cpid>[.conn<n>]``, the cpid
+    possibly dotted itself. None when no id is left."""
     connector = None
     if len(head) > 1 and head[-1].startswith("conn") and head[-1][4:].isdigit():
         connector = int(head[-1][4:])
         head = head[:-1]
     charge_point_id = ".".join(head)
-    if not charge_point_id:
-        return None
-    return charge_point_id, connector, parts[-2]
+    return (charge_point_id, connector) if charge_point_id else None
 
 
 def _ocpp_metric_of(entity) -> str | None:
@@ -417,15 +420,18 @@ def ocpp_device_for_charge_point(hass, charge_point_id: str | None) -> str | Non
         return None
     best_id = None
     best_rank = None
-    # .values(), because .devices is a MAPPING of device id -> entry and
-    # iterating it yields the ids. This was briefly "fixed" to iterate the
-    # mapping directly, on the strength of DeviceRegistry.__iter__ returning
-    # entries - which is about a different object, and DeviceRegistry is not
-    # iterable at all. Every charge point then arrived here as a string and
-    # the whole ocpp discovery path raised, silently to anyone not running
-    # the tests. Home Assistant deprecates nothing here: BaseRegistryItems
-    # defines .values() precisely to avoid __iter__ overhead (2026-09-22).
-    for device in async_get_device_registry(hass).devices.values():
+    # Walked per ocpp config entry, which owns every device carrying an
+    # ("ocpp", ...) identifier - never through ``.devices``. That container
+    # changed shape under us: up to HA 2026.8 a mapping whose iteration yields
+    # device ids (iterating it once turned every charge point into a string,
+    # 2026-09-18), from 2026.9 a container of entries whose ``.values()`` is
+    # deprecated. No spelling of it works on every core hacs.json allows.
+    registry = async_get_device_registry(hass)
+    for device in (
+        device
+        for ocpp_entry in hass.config_entries.async_entries(OCPP_INTEGRATION_DOMAIN)
+        for device in async_entries_for_config_entry(registry, ocpp_entry.entry_id)
+    ):
         # ANY identifier may be the match - the charge point device carries its
         # cp_id alongside its cpid, and this is a membership question, so it
         # never needed to single one out.
@@ -592,24 +598,39 @@ def ocpp_connector_status_entity(hass, entry) -> str:
     keeps working exactly as before. Resolved once per entry setup and cached
     (see _RT_STATUS_ENTITY).
     """
-    load_rt = (hass.data.get(DOMAIN, {}).get("loads") or {}).get(entry.entry_id)
-    if load_rt is not None and _RT_STATUS_ENTITY in load_rt:
-        return load_rt[_RT_STATUS_ENTITY]
+    return _resolve_cached(
+        hass,
+        entry,
+        _RT_STATUS_ENTITY,
+        _ocpp_status_entity_for,
+        "sensor.{}" + OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR,
+    )
 
-    # The canonical charge point id for classification is the one every OCPP
-    # service call uses (options-first, so an options edit is honoured); the
-    # legacy fallback keeps composing off CONF_CHARGER_ID, byte-for-byte what
-    # this used to be, so no working site can shift underneath itself.
+
+def _resolve_cached(hass, entry, cache_key, resolver, fallback) -> str:
+    """``resolver(hass, charge point id)`` for one load entry, cached in its
+    runtime bucket under ``cache_key``, else ``fallback`` (a format string)
+    filled with the legacy id.
+
+    The canonical charge point id for classification is the one every OCPP
+    service call uses (options-first, so an options edit is honoured); the
+    legacy fallback keeps composing off CONF_CHARGER_ID, byte-for-byte what
+    this used to be, so no working site can shift underneath itself.
+    """
+    load_rt = (hass.data.get(DOMAIN, {}).get("loads") or {}).get(entry.entry_id)
+    if load_rt is not None and cache_key in load_rt:
+        return load_rt[cache_key]
+
     legacy_id = entry.data.get(CONF_CHARGER_ID) or entry.data.get(CONF_ENTITY_ID)
     charge_point_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None) or legacy_id
-    resolved = _ocpp_status_entity_for(hass, charge_point_id)
+    resolved = resolver(hass, charge_point_id)
     if resolved is None and charge_point_id != legacy_id:
-        resolved = _ocpp_status_entity_for(hass, legacy_id)
+        resolved = resolver(hass, legacy_id)
     if resolved is None:
-        resolved = f"sensor.{legacy_id}{OCPP_ENTITY_SUFFIX_STATUS_CONNECTOR}"
+        resolved = fallback.format(legacy_id)
 
     if load_rt is not None:
-        load_rt[_RT_STATUS_ENTITY] = resolved
+        load_rt[cache_key] = resolved
     return resolved
 
 
@@ -665,15 +686,8 @@ def _split_ocpp_switch_unique_id(unique_id) -> tuple[str, int | None, str] | Non
     parts = str(unique_id).split(".")
     if len(parts) < 4 or parts[0] != "switch" or parts[1] != OCPP_INTEGRATION_DOMAIN:
         return None
-    head = parts[2:-1]
-    connector = None
-    if len(head) > 1 and head[-1].startswith("conn") and head[-1][4:].isdigit():
-        connector = int(head[-1][4:])
-        head = head[:-1]
-    charge_point_id = ".".join(head)
-    if not charge_point_id:
-        return None
-    return charge_point_id, connector, parts[-1]
+    head = _split_head(parts[2:-1])
+    return None if head is None else (*head, parts[-1])
 
 
 def ocpp_charge_control_entity(hass, entry) -> str:
@@ -683,18 +697,10 @@ def ocpp_charge_control_entity(hass, entry) -> str:
     resolved from the registry, with the legacy composed name kept as the
     fallback so a template-sensor site is unchanged. Nothing new is stored.
     """
-    load_rt = (hass.data.get(DOMAIN, {}).get("loads") or {}).get(entry.entry_id)
-    if load_rt is not None and _RT_CHARGE_CONTROL_ENTITY in load_rt:
-        return load_rt[_RT_CHARGE_CONTROL_ENTITY]
-
-    legacy_id = entry.data.get(CONF_CHARGER_ID) or entry.data.get(CONF_ENTITY_ID)
-    charge_point_id = get_entry_value(entry, CONF_OCPP_DEVICE_ID, None) or legacy_id
-    resolved = _ocpp_charge_control_entity_for(hass, charge_point_id)
-    if resolved is None and charge_point_id != legacy_id:
-        resolved = _ocpp_charge_control_entity_for(hass, legacy_id)
-    if resolved is None:
-        resolved = f"switch.{legacy_id}_{_OCPP_CHARGE_CONTROL_KEY}"
-
-    if load_rt is not None:
-        load_rt[_RT_CHARGE_CONTROL_ENTITY] = resolved
-    return resolved
+    return _resolve_cached(
+        hass,
+        entry,
+        _RT_CHARGE_CONTROL_ENTITY,
+        _ocpp_charge_control_entity_for,
+        "switch.{}_" + _OCPP_CHARGE_CONTROL_KEY,
+    )

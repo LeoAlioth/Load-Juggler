@@ -48,16 +48,7 @@ CONF_UPDATE_FREQUENCY = "update_frequency"
 
 # sensor attributes
 CONF_PHASES = "phases"
-CONF_CHARGING_MODE = "charging_mode"  # Legacy key - kept for hub_data result dict backward compat
 CONF_TOTAL_ALLOCATED_CURRENT = "total_allocated_current"
-CONF_PHASE_A_CURRENT = "phase_a_current"
-CONF_PHASE_B_CURRENT = "phase_b_current"
-CONF_PHASE_C_CURRENT = "phase_c_current"
-CONF_EVSE_CURRENT_IMPORT = "evse_current_import"
-CONF_EVSE_CURRENT_OFFERED = "evse_current_offered"
-CONF_MAX_IMPORT_POWER = "max_import_power"
-CONF_MIN_CURRENT = "min_current"
-CONF_MAX_CURRENT = "max_current"
 
 # Shared default values
 DEFAULT_PHASE_VOLTAGE = 230
@@ -357,15 +348,32 @@ WATTS_PROFILE_TOLERANCE = 0.10
 # that fires, as before. (Not 75 - that would be the SIXTH check.) The
 # mismatch COUNT survives as the auto_reset_mismatch_count attribute, which is
 # a useful diagnostic and public; it no longer decides anything.
+# ...and never shorter than the charger's own readout gap (control/compliance.py):
+# a go-eCharger V4 reporting every 15 minutes was judged stale and reset every
+# 12.5 minutes, 44 reboots in ten days (2026-10-02).
 AUTO_RESET_MISMATCH_SECONDS = 60.0
 AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
 ESCALATION_PROFILE_RESET_LIMIT = 3   # profile resets before escalating to hard reset
 HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minutes)
+# Connector states in which the car is not drawing, so there is nothing to
+# comply with: a suspended car's charger reports its offered current rarely -
+# Home's Elvi said 6-8 A all night against 16 A commanded, the car drawing
+# nothing - and no reset changes that. Judged anyway, it was a profile reset
+# every three minutes and a hard reset every fourteen, for nine nights
+# (2026-09-29).
+COMPLIANCE_IDLE_CONNECTOR_STATUSES = ("SuspendedEV", "SuspendedEVSE")
+# A charger fetching or installing firmware is not reset: FirmwareStatus as
+# the OCPP integration's "status firmware" sensor carries it...
+FIRMWARE_BUSY_STATES = ("Downloading", "Downloaded", "Installing")
+# ...but only a report this recent counts. The sensor keeps the last one
+# for good, and the Elvi's has said Downloading since 21 Sep; restored on a
+# restart, it holds the checks for this long after one.
+FIRMWARE_BUSY_HOLD_SECONDS = 3600
 
 # Operating mode configuration (per-load). The shared pieces are only the
 # OperatingMode dataclass and the BEHAVIOR_* engine behaviors below. Each
 # device type defines its own operating modes independently - see
-# const/evse.py, const/plug.py, const/hot_water_tank.py.
+# const/evse.py, const/plug.py, const/hot_water_tank.py, const/power_station.py.
 CONF_OPERATING_MODE = "operating_mode"
 
 # Transient marker set in a plug load entry's data by async_migrate_entry
@@ -373,15 +381,9 @@ CONF_OPERATING_MODE = "operating_mode"
 # state to "Solar Priority" once, then clears the marker.
 MIGRATE_PLUG_SOLAR_ONLY_FLAG = "_migrate_plug_solar_only"
 
-# Set in a hub entry's data once its legacy hub-level inverter/battery fields
-# have been imported into a standalone inverter entry (or for new hubs, which
-# never had them) - makes the one-time auto-import idempotent across restarts.
-MIGRATE_HUB_INVERTER_IMPORTED_FLAG = "_hub_inverter_imported"
-
 # Engine behaviors - how a load competes for power. The distribution engine
-# switches on the behavior, never on the device type or the mode label. Which
-# behavior each operating mode uses is mapped centrally in const/modes.py
-# (BEHAVIOR_BY_MODE) - the const device modules stay free of engine concepts.
+# switches on the behavior, never on the device type or the mode label; each
+# OperatingMode names the one it competes with.
 # Modulating behaviors (EVSE - varies the current).
 BEHAVIOR_FULL_POWER = "full_power"          # draw at max from any source
 BEHAVIOR_SOLAR_PRIORITY = "solar_priority"  # follow solar, grid-backed minimum
@@ -408,23 +410,19 @@ BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > targ
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True)
 class OperatingMode:
-    """One device-type operating mode - the user-facing definition.
+    """One device-type operating mode.
 
     key       stored string value (select entity state + runtime dict)
     label     user-facing display name
     priority  distribution urgency tier, 1-4 (lower = served first)
     icon      mdi icon for the select entity
-
-    The engine behavior a mode competes with is mapped separately in
-    const/modes.py, keyed by the mode object - so each module-level instance
-    is a distinct mode. ``eq=False`` keeps identity equality/hashing: two
-    device types whose modes coincide on every display field (e.g. EVSE and
-    plug "Excess") are still distinct modes, never a collapsed dict key.
+    behavior  the engine BEHAVIOR_* it competes with
     """
 
     key: str
     label: str
     priority: int
     icon: str
+    behavior: str

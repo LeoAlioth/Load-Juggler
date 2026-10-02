@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from homeassistant.config_entries import ConfigEntry
 
 from .const import (
@@ -12,10 +14,6 @@ from .const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
-    CONF_HUB_ENTRY_ID,
-    DOMAIN,
-    ENTRY_TYPE,
-    ENTRY_TYPE_INVERTER,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -37,6 +35,9 @@ from .const import (
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
 )
+from .registry import get_inverters_for_hub
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def prettify_name(name: str) -> str:
@@ -78,21 +79,20 @@ def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
     sliders, the Allow Grid Charging switch), shared across the sensor,
     number and switch platforms so they cannot drift apart.
     """
-    if get_entry_value(hub_entry, CONF_BATTERY_SOC_ENTITY_ID, None) or get_entry_value(
-        hub_entry, CONF_BATTERY_POWER_ENTITY_ID, None
-    ):
-        return True
-    for entry in hass.config_entries.async_entries(DOMAIN):
-        if (
-            entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-            and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry.entry_id
-            and (
-                get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
-                or get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-            )
-        ):
-            return True
-    return False
+    return any(
+        get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+        or get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
+        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
+    )
+
+
+def fleet_battery_capacity(hass, hub_entry: ConfigEntry) -> float:
+    """kWh of battery on this hub's fleet: the hub's own (legacy) capacity
+    plus every inverter entry's - the engine's forecast gate."""
+    return sum(
+        get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
+        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
+    )
 
 
 def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
@@ -103,17 +103,50 @@ def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
     as soon as ANY member has one. The hub's own (legacy) fields count until
     the auto-import moves them onto an inverter entry.
     """
-    entries = [hub_entry] + [
-        entry
-        for entry in hass.config_entries.async_entries(DOMAIN)
-        if entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-        and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry.entry_id
-    ]
     return any(
         get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None)
         or get_entry_value(entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
-        for entry in entries
+        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
     )
+
+
+async def ocpp_config_value(hass, ocpp_device_id: str | None, key: str):
+    """One configuration key read from an OCPP charger, or None.
+
+    Asks through the ocpp integration's ``get_configuration`` service (absent
+    when that integration is not loaded) and accepts the three response shapes
+    seen in the wild: ``{key: value}``, ``{"value": value}`` and the protocol's
+    own ``{"configurationKey": [{"key": ..., "value": ...}]}``. Any failure is
+    None - every caller treats an unknown value as "not detected".
+    """
+    if not ocpp_device_id or not hass.services.has_service("ocpp", "get_configuration"):
+        return None
+    try:
+        response = await hass.services.async_call(
+            "ocpp",
+            "get_configuration",
+            {"devid": ocpp_device_id, "ocpp_key": key},
+            blocking=True,
+            return_response=True,
+        )
+        if not isinstance(response, dict):
+            return None
+        value = response.get(key)
+        if value is None:
+            value = response.get("value")
+        if value is None:
+            value = next(
+                (
+                    item.get("value")
+                    for item in response.get("configurationKey", [])
+                    if isinstance(item, dict) and item.get("key") == key
+                ),
+                None,
+            )
+        return value
+    except Exception as err:
+        _LOGGER.debug("Could not read OCPP %s from %s: %s", key, ocpp_device_id, err)
+        return None
 
 
 def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> None:
@@ -170,15 +203,12 @@ def validate_offgrid_battery_requirement(
     ):
         # A battery on a linked inverter entry satisfies the requirement -
         # after the auto-import that is where the battery normally lives.
-        if hass is not None and hub_entry_id:
-            for entry in hass.config_entries.async_entries(DOMAIN):
-                if (
-                    entry.data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER
-                    and entry.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
-                    and get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
-                    and get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-                ):
-                    return
+        if hass is not None and hub_entry_id and any(
+            get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+            and get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
+            for entry in get_inverters_for_hub(hass, hub_entry_id)
+        ):
+            return
         errors["base"] = "battery_required_no_cts"
 
 

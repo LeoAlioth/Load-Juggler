@@ -19,25 +19,13 @@ divergence between those two tests, in either direction, silently granted full
 breaker headroom on a blind site. The reader now propagates its sentinel and
 ``_resolve_grid_phases`` is the only thing allowed to substitute a value, which
 is what the middle section here pins down.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_availability_contract.py   (standalone, no pytest)
-  pytest dev/tests/test_availability_contract.py    (Docker / CI tier)
 """
 
 import ast
 import math
 import re
-import sys
 import time
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules(
-    engine_modules=("hub_calculation",), control_modules=("smoothing",)
-)
 
 from custom_components.dynamic_ocpp_evse import units
 from custom_components.dynamic_ocpp_evse.const import (
@@ -1204,20 +1192,3 @@ def test_the_permit_filter_and_the_input_filter_share_one_time_constant():
     src = inspect.getsource(smoothing)
     assert "ema_alpha_for" in src, "the control EMA must use the shared conversion"
     assert "EMA_ALPHA" not in src, "a per-cycle weight is back in the permit filter"
-
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

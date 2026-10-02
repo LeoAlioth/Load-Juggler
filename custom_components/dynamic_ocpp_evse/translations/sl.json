@@ -1,28 +1,5 @@
 {
     "entity": {
-        "select": {
-            "distribution_mode": {
-                "name": "Način porazdelitve",
-                "state": {
-                    "shared": "Deljeno",
-                    "priority": "Prioriteta",
-                    "sequential___optimized": "Zaporedno - optimizirano",
-                    "sequential___strict": "Zaporedno - strogo"
-                }
-            },
-            "operating_mode": {
-                "name": "Način delovanja",
-                "state": {
-                    "standard": "Standardni",
-                    "continuous": "Neprekinjeni",
-                    "solar_priority": "Prednost sonca",
-                    "solar_only": "Samo sonce",
-                    "excess": "Presežek",
-                    "freeze_protection": "Zaščita pred zmrzaljo",
-                    "normal": "Normalni"
-                }
-            }
-        },
         "sensor": {
             "solar_production": {
                 "name": "Sončna proizvodnja"
@@ -118,25 +95,6 @@
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
-                }
-            },
-            "hub_inverter": {
-                "title": "Konfiguracija razsmernika",
-                "description": "Nastavite omejitve moči razsmernika in senzorje izhoda po fazah (neobvezno - nastavite moč na 0 za brez omejitev)\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
-                "data": {
-                    "inverter_max_power": "Skupna moč razsmernika",
-                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
-                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
-                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
-                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
-                    "wiring_topology": "Topologija ožičenja"
-                },
-                "data_description": {
-                    "inverter_max_power": "Nazivna moč iz podatkovnega lista razsmernika. Nastavite na 0 za preskočitev omejitev razsmernika.",
-                    "inverter_max_power_per_phase": "Običajno skupna moč deljena s številom faz. Nastavite na 0 za preskočitev omejitev po fazah.",
-                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
-                    "wiring_topology": "Vzporedno: razsmernik in omrežje napajata neodvisno (AC-sklopljena sončna, brez baterije). Zaporedno: vsa energija teče skozi razsmernik (hibridni razsmernik z DC-sklopljeno baterijo)."
                 }
             },
             "inverter_features": {
@@ -312,19 +270,17 @@
                     "connected_to_phase": "Priključeno na fazo",
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
-                    "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
-                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje: to izmeri njegov senzor moči (ali naprava za merjenje moči), brez njega pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje: to izmeri njegov senzor moči, brez njega pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
-                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa - uporabljen namesto fiksne moči, kadar je prisoten.",
-                    "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
+                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
                     "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
@@ -432,7 +388,6 @@
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
             "entity_id_in_use": "Ta ID entitete že uporablja druga naprava Load Juggler - izberite enoličen ID.",
-            "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
             "invalid_unit": "Neujemanje enote senzorja - preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
             "unknown": "Prišlo je do neznane napake",
             "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo - označite tudi »Baterija«."
@@ -502,45 +457,6 @@
                 },
                 "data_description": {
                     "priority_order": "Povlecite za spremembo vrstnega reda. Določa, kateri porabnik dobi moč prvi, ko je ni dovolj za vse - ta vrstni red učinkuje samo v načinih razdeljevanja Prioriteta in Zaporedno."
-                }
-            },
-            "hub_grid": {
-                "title": "Posodobi nastavitve merilnega mesta",
-                "description": "Posodobite priključek na omrežje in politiko lokacije",
-                "data": {
-                    "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
-                    "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno)",
-                    "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
-                    "main_breaker_rating": "Nazivni tok glavnega odklopnika (na fazo)",
-                    "invert_phases": "Obrni odčitke toka",
-                    "enable_max_import_power": "Omogoči omejitev največje odjemne moči",
-                    "max_import_power_entity_id": "Senzor za največjo odjemno moč (neobvezno - nadomesti drsnik)",
-                    "phase_voltage": "Napetost na fazo",
-                    "grid_export_limit": "Omejitev izvoza v omrežje",
-                    "excess_trigger_margin": "Odmik sprožilca Excess",
-                    "excess_hysteresis": "Histereza načina Excess",
-                    "site_update_frequency": "Pogostost osveževanja senzorjev lokacije",
-                    "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
-                    "solar_grace_period": "Odlog za način Solar/Excess",
-                    "battery_soc_hysteresis": "Histereza napolnjenosti baterije",
-                    "base_consumption": "Osnovna poraba hiše",
-                    "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti"
-                },
-                "data_description": {
-                    "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
-                    "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
-                    "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = varovalka x faze x napetost). Odznačite, da drsnik odstranite - vendar pozor: senzor za preglasitev spodaj, če je nastavljen, še vedno velja; ima prednost pred drsnikom in pred to nastavitvijo.",
-                    "max_import_power_entity_id": "Napredno - uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
-                    "phase_voltage": "Običajno 230 V v Evropi, 120 V v Severni Ameriki.",
-                    "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
-                    "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess. Razsmerniki režejo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
-                    "excess_hysteresis": "Koliko sme presežek pasti pod sprožilec, preden se vklopljeni porabnik izklopi. Odmik sprožilca določa, kje se način Excess vklopi; ta nastavitev pa širino pasu, v katerem ostane vklopljen, da porabnik ne utripa, ko presežek niha okoli sprožilca.",
-                    "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja porabnikom.",
-                    "auto_detect_phase_mapping": "Spremlja tokove porabnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste porabnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
-                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
-                    "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo.",
-                    "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
-                    "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
             },
             "hub_connection": {
@@ -628,49 +544,6 @@
                     "filter_dead_band": "Spremembe dovoljenja, manjše od te, se prezrejo, da porabnik ne dobi novega ukaza zaradi šuma. 0 to izklopi.",
                     "filter_ramp_up_rate": "Dovoljenje se proti cilju vedno premika vsaj tako hitro, v amperih na sekundo. Pri veliki razliki ga proporcionalni odziv premakne hitreje.",
                     "filter_ramp_down_rate": "Enako za padanje. Določa tudi, koliko sme ponujeni tok polnilnice zaostajati za ukazom, preden se šteje, da ga ignorira."
-                }
-            },
-            "hub_inverter": {
-                "title": "Posodobi nastavitve razsmernika",
-                "description": "Posodobite konfiguracijo razsmernika\n\nMaksimalna moč praznjenja baterije: {battery_power_hint}",
-                "data": {
-                    "inverter_max_power": "Skupna moč razsmernika",
-                    "inverter_max_power_per_phase": "Maksimalna moč razsmernika na fazo",
-                    "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
-                    "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
-                    "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
-                    "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)",
-                    "wiring_topology": "Topologija ožičenja"
-                },
-                "data_description": {
-                    "inverter_max_power": "Nazivna moč iz podatkovnega lista razsmernika. Nastavite na 0 za preskočitev omejitev razsmernika.",
-                    "inverter_max_power_per_phase": "Običajno skupna moč deljena s številom faz. Nastavite na 0 za preskočitev omejitev po fazah.",
-                    "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
-                    "wiring_topology": "Vzporedno: razsmernik in omrežje napajata neodvisno (AC-sklopljena sončna, brez baterije). Zaporedno: vsa energija teče skozi razsmernik (hibridni razsmernik z DC-sklopljeno baterijo)."
-                }
-            },
-            "hub": {
-                "title": "Posodobi nastavitve baterije in sončne elektrarne",
-                "description": "Posodobite konfiguracijo baterije in sončne proizvodnje",
-                "data": {
-                    "solar_production_entity_id": "Senzor proizvodnje solarne energije",
-                    "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
-                    "battery_power_entity_id": "Senzor moči baterije",
-                    "battery_max_charge_power": "Maksimalna moč polnjenja baterije",
-                    "battery_max_discharge_power": "Maksimalna moč praznjenja baterije",
-                    "battery_soc_full": "Napolnjenost polne baterije",
-                    "solar_forecast_device_ids": "Sončna napoved (po ena naprava za vsako PV polje)",
-                    "battery_capacity_kwh": "Kapaciteta baterije"
-                },
-                "data_description": {
-                    "solar_production_entity_id": "Neobvezno - če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
-                    "battery_power_entity_id": "Mora prikazovati POZITIVNO število, ko se baterija prazni (oddaja moč), in negativno med polnjenjem. Če je senzor obrnjen, uporabite predlogo (template sensor), da obrnete predznak - sicer moč baterije ne bo nikoli na voljo porabnikom.",
-                    "battery_max_charge_power": "Maksimalna moč, ki jo razsmernik uporabi za polnjenje baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
-                    "battery_max_discharge_power": "Maksimalna moč, ki jo razsmernik lahko prazni iz baterije. Preverite specifikacije razsmernika ali aplikacijo baterije.",
-                    "battery_soc_full": "Napolnjenost, pri kateri ali nad katero se baterija šteje za polno. Pametni vtič v načinu Presežek se vklopi, ko baterija doseže to raven (ali ko mesto oddaja v omrežje).",
-                    "solar_forecast_device_ids": "Naprave iz integracije Open-Meteo Solar Forecast - ta ustvari po eno napravo za vsako PV polje, zato izberite napravo vsakega polja. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
-                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti baterije (uporabna kapaciteta). 0 izklopi napoved rezanja PV proizvodnje.",
-                    "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno."
                 }
             },
             "inverter_features": {
@@ -833,19 +706,17 @@
                     "connected_to_phase": "Priključeno na fazo",
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
-                    "tank_power_device_id": "Naprava za merjenje moči (neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
-                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje: to izmeri njegov senzor moči (ali naprava za merjenje moči), brez njega pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje: to izmeri njegov senzor moči, brez njega pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
-                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa - uporabljen namesto fiksne moči, kadar je prisoten.",
-                    "tank_power_device_id": "Lahko izberete pametni rele/vtičnico, ki napaja grelnik; njen senzor moči se poišče samodejno.",
+                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
                     "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."

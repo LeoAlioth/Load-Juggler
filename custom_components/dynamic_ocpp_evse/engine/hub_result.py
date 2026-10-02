@@ -11,13 +11,6 @@ Split out of hub_calculation.py, which now consumes these rather than defining
 them.
 """
 
-# PEP 604 unions (``float | None``) appear in this module's signatures. Nothing
-# here evaluates annotations at runtime (no dataclasses, NamedTuple/TypedDict or
-# get_type_hints calls), so deferring them keeps the module importable on the
-# Python 3.9 interpreters the standalone test runners use (same arrangement as
-# engine/auto_detect.py).
-from __future__ import annotations
-
 import logging
 import time
 
@@ -62,6 +55,8 @@ from ..const import (
     FORECAST_SOC_HYSTERESIS,
     LEG_DRAWING_CURRENT,
 )
+from ..calculations.target_calculator import _sort_loads
+from ..calculations.utils import managed_phase_draws
 from ..helpers import get_entry_value
 from . import fleet
 from .forecast_reader import (
@@ -72,17 +67,22 @@ from .forecast_reader import (
 
 _LOGGER = logging.getLogger(__name__)
 
+# The forecast advice's carried state in hub_runtime (see
+# _compute_forecast_advice), dropped together whenever the advice is off.
+_FORECAST_LATCHES = (
+    "_forecast_max_soc",
+    "_forecast_reservation_due",
+    "_forecast_charge_limiting",
+    "_forecast_soc_yielding",
+)
+
 
 def _compute_forecast_advice(
     hass,
     hub_entry,
     hub_runtime,
     site,
-    battery_soc,
     members,
-    excess_on=False,  # noqa: ARG001 - kept for callers; the observers now
-    # gate on physical curtailment (``export_is_clamped``) rather than on the
-    # Excess verdict, which is a different question entirely.
     ctrl_site=None,
 ):
     """Advisory battery headroom from the PV clipping forecast.
@@ -206,6 +206,7 @@ def _compute_forecast_advice(
     measurements, so a reload, a cloud or an hour of release leaves nothing
     stale to carry back in.
     """
+    battery_soc = site.battery_soc
     export_limit = (
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
         or 0
@@ -235,11 +236,8 @@ def _compute_forecast_advice(
         or capacity_kwh <= 0
         or not (device_ids or legacy_entity_ids)
     ):
-        hub_runtime.pop("_forecast_max_soc", None)
-        hub_runtime.pop("_forecast_reservation_due", None)
-        hub_runtime.pop("_forecast_charge_limiting", None)
-        hub_runtime.pop("_forecast_soc_yielding", None)
-        hub_runtime.pop("_forecast_parse_memo", None)
+        for key in (*_FORECAST_LATCHES, "_forecast_parse_memo"):
+            hub_runtime.pop(key, None)
         return None, {}
 
     base_consumption = (
@@ -378,10 +376,8 @@ def _compute_forecast_advice(
     # they say how much surplus the day will waste, which is what load
     # scheduling wants.
     if off_grid:
-        hub_runtime.pop("_forecast_max_soc", None)
-        hub_runtime.pop("_forecast_reservation_due", None)
-        hub_runtime.pop("_forecast_charge_limiting", None)
-        hub_runtime.pop("_forecast_soc_yielding", None)
+        for key in _FORECAST_LATCHES:
+            hub_runtime.pop(key, None)
 
     deficit = headroom_deficit_kwh(fc.absorbable_kwh, capacity_kwh, battery_soc)
     # The figure the ENGINE acts on, published because ``absorbable_kwh`` is
@@ -648,15 +644,6 @@ def _draw_is_unknown(load, booked):
 
 def _build_hub_result(
     site,
-    raw_phases,
-    voltage,
-    battery_soc,
-    battery_soc_min,
-    battery_max_discharge_power,
-    battery_power,
-    load_targets,
-    load_available,
-    load_names,
     auto_detect_notifications=None,
     group_data=None,
     grid_stale=False,
@@ -734,6 +721,11 @@ def _build_hub_result(
     ``draw_estimated`` names it so the entities can mark those figures as
     estimates (entities/readout.py).
     """
+    voltage = site.voltage
+    battery_power = site.battery_power
+    # The raw (unsmoothed, resolved) grid phases the site was built from.
+    raw_phases = (site.grid_current.a, site.grid_current.b, site.grid_current.c)
+    load_targets = {c.load_id: c.allocated_current for c in site.loads}
     # Which loads carry an invented 0 draw this cycle (see _draw_is_unknown).
     # Resolved once, here, because both the per-load figure and the total need
     # the same answer, and it needs this cycle's permits.
@@ -765,13 +757,13 @@ def _build_hub_result(
     # despite a healthy SOC.
     battery_discharge_unusable = discharge_headroom_unknown(site)
     if (
-        battery_soc is not None
-        and battery_soc_min is not None
-        and battery_soc >= battery_soc_min
-        and battery_max_discharge_power
+        site.battery_soc is not None
+        and site.battery_soc_min is not None
+        and site.battery_soc >= site.battery_soc_min
+        and site.battery_max_discharge_power
         and not battery_discharge_unusable
     ):
-        battery_rated_discharge = round(float(battery_max_discharge_power), 0)
+        battery_rated_discharge = round(float(site.battery_max_discharge_power), 0)
     else:
         battery_rated_discharge = 0
 
@@ -792,12 +784,7 @@ def _build_hub_result(
     net_consumption = sum(r for r in raw_phases if r is not None) * voltage
     # Raw export with the managed draws added back, per phase (an importing
     # phase adds no export - the same clamp the engine's reconstruction uses).
-    _draws = [0.0, 0.0, 0.0]
-    for c in site.loads:
-        if not c.dynamic_control:
-            continue          # unmanaged: its draw is household, not ours
-        for i, d in enumerate(c.get_site_phase_draw()):
-            _draws[i] += d
+    _draws = managed_phase_draws(site)
     # Off-grid there is nothing to export to and the phase readings are
     # synthetic zeros, so adding the draws back would fabricate export equal to
     # whatever our loads are drawing (3141 W on a live off-grid site,
@@ -1007,15 +994,11 @@ def _build_hub_result(
     load_modes = {c.load_id: c.operating_mode for c in site.loads}
 
     # Per-load effective priority rank - the order the engine serves loads
-    # when power is contended: mode urgency first, then the configured priority
-    # number (the same sort key _sort_loads uses to distribute power). Rank
-    # 1 is served first. Exposed so each device can show where it really
-    # stands, since mode urgency can override the configured priority number.
-    _ranked = sorted(
-        site.loads,
-        key=lambda c: (c.mode_priority, c.priority),
-    )
-    load_rank = {c.load_id: idx + 1 for idx, c in enumerate(_ranked)}
+    # when power is contended (_sort_loads: mode urgency first, then the
+    # configured priority number). Rank 1 is served first. Exposed so each
+    # device can show where it really stands, since mode urgency can override
+    # the configured priority number.
+    load_rank = {c.load_id: idx + 1 for idx, c in enumerate(_sort_loads(site.loads))}
 
     # Per-load actual draw - the measured current the load is really
     # pulling (sum of phase currents). For a binary load this is what the
@@ -1061,7 +1044,6 @@ def _build_hub_result(
     return {
         CONF_TOTAL_ALLOCATED_CURRENT: round(sum(load_targets.values()), 1),
         CONF_PHASES: site.num_phases,
-        "calc_used": "calculate_all_load_targets",
         # Site-level data for hub sensor
         "battery_soc": site.battery_soc,
         "battery_soc_min": site.battery_soc_min,
@@ -1111,8 +1093,8 @@ def _build_hub_result(
         "excess_margin_power": round(excess_margin_power, 0),
         # Per-load targets
         "load_targets": load_targets,
-        "load_available": load_available,
-        "load_names": load_names,
+        "load_available": {c.load_id: c.available_current for c in site.loads},
+        "load_names": {c.load_id: c.entity_id for c in site.loads},
         "load_modes": load_modes,
         "load_rank": load_rank,
         "load_draw": load_draw,

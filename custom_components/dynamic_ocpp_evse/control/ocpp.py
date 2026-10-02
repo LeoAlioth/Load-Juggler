@@ -15,13 +15,11 @@ from ..const import (
     CHARGE_RATE_UNIT_WATTS,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
-    CONF_UPDATE_FREQUENCY,
-    DEFAULT_UPDATE_FREQUENCY,
-    DOMAIN,
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, ocpp_config_value
+from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -29,50 +27,21 @@ _LOGGER = logging.getLogger(__name__)
 
 async def detect_charge_rate_unit(sensor, ocpp_device_id: str) -> str | None:
     """Query OCPP charger for ChargingScheduleAllowedChargingRateUnit."""
-    if not ocpp_device_id:
+    value = await ocpp_config_value(
+        sensor.hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
+    )
+    if not value:
         return None
-    if not sensor.hass.services.has_service("ocpp", "get_configuration"):
-        return None
-    try:
-        response = await sensor.hass.services.async_call(
-            "ocpp",
-            "get_configuration",
-            {
-                "devid": ocpp_device_id,
-                "ocpp_key": "ChargingScheduleAllowedChargingRateUnit",
-            },
-            blocking=True,
-            return_response=True,
-        )
-        if not response or not isinstance(response, dict):
-            return None
-        value = response.get("ChargingScheduleAllowedChargingRateUnit")
-        if value is None:
-            value = response.get("value")
-        if value is None:
-            for item in response.get("configurationKey", []):
-                if (
-                    isinstance(item, dict)
-                    and item.get("key") == "ChargingScheduleAllowedChargingRateUnit"
-                ):
-                    value = item.get("value")
-                    break
-        if not value:
-            return None
-        value = str(value).strip()
-        if "Current" in value and "Power" in value:
-            return CHARGE_RATE_UNIT_AMPS
-        elif "Power" in value:
-            return CHARGE_RATE_UNIT_WATTS
-        elif "Current" in value:
-            return CHARGE_RATE_UNIT_AMPS
-        return None
-    except Exception:
-        return None
+    value = str(value).strip()
+    if "Current" in value:
+        return CHARGE_RATE_UNIT_AMPS
+    if "Power" in value:
+        return CHARGE_RATE_UNIT_WATTS
+    return None
 
 
 async def send_ocpp_command(
-    sensor, limit: float, hub_entry, dynamic_control_on: bool, now_mono: float,
+    sensor, limit: float, hub_entry, now_mono: float,
     effective_status: str | None = None,
 ) -> None:
     """Send OCPP charging profile to an EVSE charger.
@@ -111,8 +80,7 @@ async def send_ocpp_command(
             sensor._attr_name,
             effective_status,
         )
-        sensor._last_update = datetime.now(timezone.utc)
-        sensor._last_command_time = now_mono
+        stamp_command(sensor, now_mono)
         return
 
     profile_timeout = int(
@@ -174,47 +142,37 @@ async def send_ocpp_command(
         sensor._last_set_current = limit_for_charger
         sensor._last_set_power = None
 
-    if profile_validity_mode == PROFILE_VALIDITY_MODE_ABSOLUTE:
+    absolute = profile_validity_mode == PROFILE_VALIDITY_MODE_ABSOLUTE
+    charging_profile = {
+        "chargingProfileId": 11,
+        "stackLevel": stack_level,
+        "chargingProfileKind": "Absolute" if absolute else "Relative",
+        "chargingProfilePurpose": "TxDefaultProfile",
+    }
+    schedule = {"chargingRateUnit": rate_unit}
+    if absolute:
         now = datetime.now(timezone.utc)
         valid_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
         valid_to = (now + timedelta(seconds=profile_timeout)).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
-        charging_profile = {
-            "chargingProfileId": 11,
-            "stackLevel": stack_level,
-            "chargingProfileKind": "Absolute",
-            "chargingProfilePurpose": "TxDefaultProfile",
-            "validFrom": valid_from,
-            "validTo": valid_to,
-            "chargingSchedule": {
-                "chargingRateUnit": rate_unit,
-                "startSchedule": valid_from,
-                "chargingSchedulePeriod": [
-                    {"startPeriod": 0, "limit": limit_for_charger}
-                ],
-            },
-        }
+        charging_profile["validFrom"] = valid_from
+        charging_profile["validTo"] = valid_to
+        schedule["startSchedule"] = valid_from
         _LOGGER.debug(
             f"Using absolute profile validity mode: {valid_from} to {valid_to}"
         )
     else:
-        charging_profile = {
-            "chargingProfileId": 11,
-            "stackLevel": stack_level,
-            "chargingProfileKind": "Relative",
-            "chargingProfilePurpose": "TxDefaultProfile",
-            "chargingSchedule": {
-                "chargingRateUnit": rate_unit,
-                "duration": profile_timeout,
-                "chargingSchedulePeriod": [
-                    {"startPeriod": 0, "limit": limit_for_charger}
-                ],
-            },
-        }
+        schedule["duration"] = profile_timeout
         _LOGGER.debug(
             f"Using relative profile validity mode: duration={profile_timeout}s"
         )
+    # Key order as before: the period list closes the schedule, the schedule
+    # closes the profile.
+    schedule["chargingSchedulePeriod"] = [
+        {"startPeriod": 0, "limit": limit_for_charger}
+    ]
+    charging_profile["chargingSchedule"] = schedule
 
     ocpp_device_id = get_entry_value(sensor.config_entry, CONF_OCPP_DEVICE_ID, None)
     if not ocpp_device_id:
@@ -287,13 +245,7 @@ async def send_ocpp_command(
     # (engine/readout_watch.py) judges the charger's reported draw against the
     # limit it actually holds, and blind mode assumes exactly this figure. The
     # unit matters only for the tolerance a W-encoded profile is given.
-    load_rt = (
-        sensor.hass.data.get(DOMAIN, {})
-        .get("loads", {})
-        .get(sensor.config_entry.entry_id)
-    )
-    if load_rt is not None:
-        load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
-        load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
-    sensor._last_update = datetime.now(timezone.utc)
-    sensor._last_command_time = now_mono
+    load_rt = sensor._runtime()
+    load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
+    load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
+    stamp_command(sensor, now_mono)

@@ -35,9 +35,7 @@ the charger last accepted. The clock is simulated (every module's
 ``time.monotonic``), so ten minutes of site cycles run in well under a second.
 """
 
-import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -79,15 +77,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     WIRING_TOPOLOGY_PARALLEL,
     WIRING_TOPOLOGY_SERIES,
 )
-from custom_components.dynamic_ocpp_evse.engine import (
-    auto_detect,
-    hub_calculation,
-    hub_result,
-    load_builders,
-    readers,
-)
-from custom_components.dynamic_ocpp_evse.control import compliance, status
-from custom_components.dynamic_ocpp_evse.entities import load as load_entity
+from custom_components.dynamic_ocpp_evse.engine import hub_calculation
+
+from .closed_loop import clocked
 
 V = 230.0
 HOUSE_W = 1000.0
@@ -116,26 +108,6 @@ SITES = pytest.mark.parametrize(
     ],
     indirect=True,
 )
-
-_CLOCKED = (
-    load_builders, hub_calculation, readers, hub_result, auto_detect,
-    load_entity, status, compliance,
-)
-
-
-class _Clock:
-    """``time`` as the modules above see it: monotonic() is ours to advance,
-    everything else is the real module."""
-
-    def __init__(self, start):
-        self.now = start
-
-    def monotonic(self):
-        return self.now
-
-    def __getattr__(self, name):
-        return getattr(time, name)
-
 
 class World:
     """The grid-tied site, and the car behind the charger."""
@@ -327,21 +299,13 @@ async def _session(hass, site, minutes, published=None, on_cycle=None):
     appends each cycle's published hub data to ``published`` when given.
     ``on_cycle(world, seconds)`` runs before each cycle's readings go out."""
     world = World(hass, site)
-    clock = _Clock(10_000.0)
     hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
         site.hub.entry_id, {}
     )[site.evse.entry_id] = sensor_platform.LoadJugglerDeviceSensor(
         hass, site.evse, site.hub, "evse", "evse"
     )
-    patches = [patch.object(module, "time", clock) for module in _CLOCKED]
-    patches.append(patch(
-        "homeassistant.core.ServiceRegistry.async_call",
-        new_callable=AsyncMock, side_effect=world.accept,
-    ))
-    for p in patches:
-        p.start()
     log = []
-    try:
+    with clocked(world.accept) as clock:
         for _ in range(int(minutes * 60 / CYCLE_S)):
             if on_cycle is not None:
                 on_cycle(world, clock.now - 10_000.0)
@@ -351,9 +315,6 @@ async def _session(hass, site, minutes, published=None, on_cycle=None):
             if published is not None:
                 published.append(dict(hass.data[DOMAIN]["hub_data"][site.hub.entry_id]))
             clock.now += CYCLE_S
-    finally:
-        for p in reversed(patches):
-            p.stop()
     return log
 
 
@@ -554,15 +515,15 @@ async def test_solar_remaining_is_the_sun_the_house_leaves(hass, site):
     published as spare sun.
     """
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
     await _session(hass, site, minutes=3)
     sensors = {
-        d["hub_data_key"]: DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+        d.data_key: LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
         for d in HUB_SENSOR_DEFINITIONS
-        if d["hub_data_key"] in ("available_solar_power", "available_solar_current")
+        if d.data_key in ("available_solar_power", "available_solar_current")
     }
     for sensor in sensors.values():
         await sensor.async_update()
@@ -632,7 +593,7 @@ async def test_meter_only_solar_power_is_the_sun_not_the_battery(
     which is None wherever no member knows its production.
     """
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -642,10 +603,10 @@ async def test_meter_only_solar_power_is_the_sun_not_the_battery(
     await _session(hass, site, minutes=3, on_cycle=_read)
     published = {}
     for d in HUB_SENSOR_DEFINITIONS:
-        if d["hub_data_key"] in ("solar_power", "household_power"):
-            sensor = DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+        if d.data_key in ("solar_power", "household_power"):
+            sensor = LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
             await sensor.async_update()
-            published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+            published[d.data_key] = (sensor.native_value, sensor.available)
 
     if not battery_read:
         assert published == {
@@ -698,7 +659,7 @@ async def test_solar_remaining_is_unknown_with_the_battery_unread(hass, site):
     is unchanged.
     """
     from custom_components.dynamic_ocpp_evse.sensor import (
-        DynamicOcppEvseHubDataSensor,
+        LoadJugglerHubDataSensor,
         HUB_SENSOR_DEFINITIONS,
     )
 
@@ -708,10 +669,10 @@ async def test_solar_remaining_is_unknown_with_the_battery_unread(hass, site):
     await _session(hass, site, minutes=3, on_cycle=_unread)
     published = {}
     for d in HUB_SENSOR_DEFINITIONS:
-        if d["hub_data_key"] in ("available_solar_power", "available_solar_current"):
-            sensor = DynamicOcppEvseHubDataSensor(hass, site.hub, "Hub", "hub", d)
+        if d.data_key in ("available_solar_power", "available_solar_current"):
+            sensor = LoadJugglerHubDataSensor(hass, site.hub, "Hub", "hub", d)
             await sensor.async_update()
-            published[d["hub_data_key"]] = (sensor.native_value, sensor.available)
+            published[d.data_key] = (sensor.native_value, sensor.available)
 
     assert published == {
         "available_solar_power": (None, True),

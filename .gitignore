@@ -2,11 +2,10 @@ __pycache__/
 **/__pycache__/
 **/**/__pycache__/
 **/**/**/__pycache__/
-dev/tests/test_results.log
 .claude
-dev/tests/scenarios_combined_temp.yaml
 *.whl
 dev/debug.log
 dev/tests/debug.log
 .github/instructions/Context.instructions.md
 /.venv
+.vscode/

@@ -6,10 +6,8 @@ power (on/off) and writes the setpoint chosen by the tank's operating mode.
 """
 
 import logging
-from datetime import datetime, timezone
 
 from ..const import (
-    DOMAIN,
     CONF_CLIMATE_ENTITY_ID,
     CONF_HEATING_ELEMENT_POWER,
     DEFAULT_HEATING_ELEMENT_POWER,
@@ -24,6 +22,7 @@ from ..const import (
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
 )
 from ..helpers import get_entry_value
+from . import stamp_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -119,11 +118,7 @@ async def send_hot_water_tank_command(
         )
         return
 
-    load_rt = (
-        sensor.hass.data.get(DOMAIN, {})
-        .get("loads", {})
-        .get(sensor.config_entry.entry_id, {})
-    )
+    load_rt = sensor._runtime()
     mode = load_rt.get(
         "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key
     )
@@ -238,8 +233,7 @@ async def send_hot_water_tank_command(
             e,
         )
 
-    sensor._last_update = datetime.now(timezone.utc)
-    sensor._last_command_time = now_mono
+    stamp_command(sensor, now_mono)
 
 
 async def _command_water_heater(hass, entity_id, state, permitted, setpoint):

@@ -8,22 +8,7 @@ moment a car ramps while the inverter output side lags 10-30 s (Modbus polling
 plus input EMA), so the subtraction transiently clamps household to 0 and the
 engine hands the real household's power out as phantom headroom.
 ``hold_per_phase_floor`` bridges that window: instant rise, wall-clock decay.
-
-Pure Python, no Home Assistant dependencies. Runnable two ways:
-  python3 dev/tests/test_household_hold.py     (standalone, no pytest needed)
-  pytest dev/tests/test_household_hold.py      (Docker / CI tier)
 """
-
-import sys
-from pathlib import Path
-
-# ---------------------------------------------------------------------------
-# Module loading - shared stub loader (avoids the HA-importing package root)
-# ---------------------------------------------------------------------------
-sys.path.insert(0, str(Path(__file__).resolve().parent))
-from standalone_loader import load_pure_modules
-
-load_pure_modules(calc_modules=("models", "utils"))
 
 from custom_components.dynamic_ocpp_evse.calculations.models import PhaseValues
 from custom_components.dynamic_ocpp_evse.calculations.utils import (
@@ -196,24 +181,3 @@ def test_sustained_real_drop_is_not_held_forever():
     for _ in range(30):  # 60 s = 4 bridge windows
         held = hold_per_phase_floor(PhaseValues(0.0, None, None), held, d)
     assert held.a < 4.0 * 1e-3
-
-
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    # Deliberately pytest-free: the pure tier has to run on the developer's
-    # machine, which has no pytest (dev/tests/conftest.py imports HA anyway).
-    failed = []
-    for _name, _fn in sorted(list(globals().items())):
-        if not _name.startswith("test_") or not callable(_fn):
-            continue
-        try:
-            _fn()
-        except Exception as exc:  # noqa: BLE001 - report and continue
-            failed.append((_name, exc))
-            print(f"FAIL {_name}: {type(exc).__name__}: {exc}")
-        else:
-            print(f"PASS {_name}")
-    print(f"\n{'FAILED' if failed else 'OK'} - {len(failed)} failure(s)")
-    sys.exit(1 if failed else 0)

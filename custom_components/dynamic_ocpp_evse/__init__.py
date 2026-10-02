@@ -1,4 +1,4 @@
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.config_entries import (
     ConfigEntry,
     SOURCE_IMPORT,
@@ -6,24 +6,21 @@ from homeassistant.config_entries import (
 )
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.script import Script
-from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
-from datetime import datetime, timedelta
+from homeassistant.helpers.debounce import Debouncer
+from homeassistant.helpers import entity_registry as er
 import logging
+import operator
 import voluptuous as vol
 from .const import (
     ALL_OPERATING_MODE_KEYS,
-    CHARGE_RATE_UNIT_AMPS,
     CHARGE_RATE_UNIT_AUTO,
     CHARGE_RATE_UNIT_WATTS,
-    CONF_ALLOW_GRID_CHARGING_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_SOC_HYSTERESIS,
-    CONF_BATTERY_SOC_TARGET_ENTITY_ID,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
@@ -51,7 +48,6 @@ from .const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
-    CONF_POWER_BUFFER_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -70,22 +66,13 @@ from .const import (
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_OCPP_PROFILE_TIMEOUT,
-    DEFAULT_OPERATING_MODE_EVSE,
-    DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
-    DEFAULT_OPERATING_MODE_PLUG,
-    DEFAULT_OPERATING_MODE_POWER_STATION,
     DEFAULT_PHASE_VOLTAGE,
     DEFAULT_PROFILE_VALIDITY_MODE,
     DEFAULT_STACK_LEVEL,
     DEFAULT_UPDATE_FREQUENCY,
     DEVICE_TYPE_EVSE,
-    DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
-    DEVICE_TYPE_POWER_STATION,
-    DISTRIBUTION_MODE_PRIORITY,
-    DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED,
-    DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
-    DISTRIBUTION_MODE_SHARED,
+    DISTRIBUTION_MODES,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -94,6 +81,7 @@ from .const import (
     ENTRY_TYPE_INVERTER,
     EVSE_RT_COMMANDED_LIMIT,
     MIGRATE_PLUG_SOLAR_ONLY_FLAG,
+    modes_for,
     CONF_INVERTER_FEATURES,
 )
 from .helpers import (
@@ -103,20 +91,24 @@ from .helpers import (
 )
 from . import units
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
-from .registry import (  # noqa: F401 - re-exported; canonical home is registry.py
-    get_loads_for_hub,
-    get_groups_for_hub,
-    get_hub_for_load,
-    get_inverters_for_hub,
-)
+from .registry import follow_renames
 
 _LOGGER = logging.getLogger(__name__)
 
+# how long renamed entities are gathered before they are followed
+RENAME_SETTLE_S = 5.0
+
+# The platforms each entry type forwards to - set up and unloaded alike.
+PLATFORMS = {
+    ENTRY_TYPE_HUB: ["number", "switch", "sensor", "select"],
+    ENTRY_TYPE_LOAD: ["sensor", "number", "button", "select", "switch"],
+    ENTRY_TYPE_GROUP: ["sensor"],
+    # Sensors plus the write-control opt-in switches
+    ENTRY_TYPE_INVERTER: ["sensor", "switch"],
+}
+
 # Define the config schema
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
-
-# Integration version for entity migration
-INTEGRATION_VERSION = "2.0.0"
 
 # The stored strings the generic charger → load rename replaced (2.4 → 2.5).
 # Named here rather than in const/ because nothing outside the migration may
@@ -127,6 +119,30 @@ _LEGACY_ENTRY_TYPE_CHARGER = "charger"
 _LEGACY_CONF_CHARGER_PRIORITY = "charger_priority"
 # The write deadband when it was a percentage of the normal value (2.5 → 2.6).
 _LEGACY_CONF_CHARGE_CONTROL_DEADBAND = "inverter_charge_control_deadband"
+
+
+# The options a 2.x entry starts from, seeded from its data (by the v1 → v2
+# step and by the 2.0 → 2.1 one): (key, default when data lacks it too).
+_V2_SEEDED_OPTIONS = (
+    (CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT),
+    (CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT),
+    (CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY),
+    (CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT),
+    (CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION),
+    (CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL),
+    (CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT),
+    (CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE),
+    (CONF_BATTERY_SOC_ENTITY_ID, None),
+    (CONF_BATTERY_POWER_ENTITY_ID, None),
+    (CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
+    (CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER),
+    (CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS),
+)
+
+
+def _seed_v2_options(options: dict, data) -> None:
+    for key, default in _V2_SEEDED_OPTIONS:
+        options.setdefault(key, data.get(key, default))
 
 
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -142,30 +158,9 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         # Mark this as a hub entry (legacy entries become hubs)
         new_data[ENTRY_TYPE] = ENTRY_TYPE_HUB
         
-        # Generate entity IDs for hub-created entities if not present
-        entity_id = new_data.get(CONF_ENTITY_ID, "dynamic_ocpp_evse")
-        if CONF_BATTERY_SOC_TARGET_ENTITY_ID not in new_data:
-            new_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-        if CONF_ALLOW_GRID_CHARGING_ENTITY_ID not in new_data:
-            new_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
-        if CONF_POWER_BUFFER_ENTITY_ID not in new_data:
-            new_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
-        
         # Update the config entry with new version
         options = dict(entry.options)
-        options.setdefault(CONF_EVSE_MINIMUM_CHARGE_CURRENT, new_data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT))
-        options.setdefault(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, new_data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT))
-        options.setdefault(CONF_UPDATE_FREQUENCY, new_data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY))
-        options.setdefault(CONF_OCPP_PROFILE_TIMEOUT, new_data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
-        options.setdefault(CONF_CHARGE_PAUSE_DURATION, new_data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION))
-        options.setdefault(CONF_STACK_LEVEL, new_data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
-        options.setdefault(CONF_CHARGE_RATE_UNIT, new_data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT))
-        options.setdefault(CONF_PROFILE_VALIDITY_MODE, new_data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE))
-        options.setdefault(CONF_BATTERY_SOC_ENTITY_ID, new_data.get(CONF_BATTERY_SOC_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_POWER_ENTITY_ID, new_data.get(CONF_BATTERY_POWER_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_MAX_CHARGE_POWER, new_data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_MAX_DISCHARGE_POWER, new_data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_SOC_HYSTERESIS, new_data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS))
+        _seed_v2_options(options, new_data)
 
         hass.config_entries.async_update_entry(
             entry,
@@ -185,20 +180,7 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # Handle minor version updates if version is already 2
     if entry.version == 2 and getattr(entry, 'minor_version', 0) < 1:
         options = dict(entry.options)
-        data = entry.data
-        options.setdefault(CONF_EVSE_MINIMUM_CHARGE_CURRENT, data.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT))
-        options.setdefault(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT))
-        options.setdefault(CONF_UPDATE_FREQUENCY, data.get(CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY))
-        options.setdefault(CONF_OCPP_PROFILE_TIMEOUT, data.get(CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT))
-        options.setdefault(CONF_CHARGE_PAUSE_DURATION, data.get(CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION))
-        options.setdefault(CONF_STACK_LEVEL, data.get(CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
-        options.setdefault(CONF_CHARGE_RATE_UNIT, data.get(CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT))
-        options.setdefault(CONF_PROFILE_VALIDITY_MODE, data.get(CONF_PROFILE_VALIDITY_MODE, DEFAULT_PROFILE_VALIDITY_MODE))
-        options.setdefault(CONF_BATTERY_SOC_ENTITY_ID, data.get(CONF_BATTERY_SOC_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_POWER_ENTITY_ID, data.get(CONF_BATTERY_POWER_ENTITY_ID))
-        options.setdefault(CONF_BATTERY_MAX_CHARGE_POWER, data.get(CONF_BATTERY_MAX_CHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_MAX_DISCHARGE_POWER, data.get(CONF_BATTERY_MAX_DISCHARGE_POWER, DEFAULT_BATTERY_MAX_POWER))
-        options.setdefault(CONF_BATTERY_SOC_HYSTERESIS, data.get(CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS))
+        _seed_v2_options(options, entry.data)
 
         hass.config_entries.async_update_entry(
             entry,
@@ -458,50 +440,27 @@ async def async_setup(hass: HomeAssistant, config: dict):
             _LOGGER.error(f"No OCPP device ID configured for entry {entry.title} - cannot reset")
             return
 
-        evse_minimum_charge_current = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
-        
-        # Get charge rate unit from charger config
+        # The charger's minimum current, in amps unless the charger takes watts
+        # (configured, or auto-detected from its current-offered sensor's unit)
+        # and the hub's voltage is there to convert with.
+        limit_for_charger = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        rate_unit = "A"
         charge_rate_unit = get_entry_value(entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
-        
-        # If set to auto, detect from sensor
         if charge_rate_unit == CHARGE_RATE_UNIT_AUTO:
-            current_offered_entity = get_entry_value(
-                entry, CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, None
+            offered = get_entry_value(entry, CONF_EVSE_CURRENT_OFFERED_ENTITY_ID, None)
+            offered_state = hass.states.get(offered) if offered else None
+            if offered_state and offered_state.attributes.get("unit_of_measurement") == "W":
+                charge_rate_unit = CHARGE_RATE_UNIT_WATTS
+        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+        hub_entry = hass.config_entries.async_get_entry(hub_entry_id) if hub_entry_id else None
+        if charge_rate_unit == CHARGE_RATE_UNIT_WATTS and hub_entry:
+            voltage = (
+                get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
+                or DEFAULT_PHASE_VOLTAGE
             )
-            if current_offered_entity:
-                sensor_state = hass.states.get(current_offered_entity)
-                if sensor_state:
-                    unit = sensor_state.attributes.get("unit_of_measurement")
-                    charge_rate_unit = CHARGE_RATE_UNIT_WATTS if unit == "W" else CHARGE_RATE_UNIT_AMPS
-                else:
-                    charge_rate_unit = CHARGE_RATE_UNIT_AMPS
-            else:
-                charge_rate_unit = CHARGE_RATE_UNIT_AMPS
-        
-        # Convert limit if using Watts
-        if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
-            # Need to get hub config for voltage and charger config for phases
-            hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-            if hub_entry_id:
-                hub_entry = hass.config_entries.async_get_entry(hub_entry_id)
-                if hub_entry:
-                    voltage = (
-                        get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
-                        or DEFAULT_PHASE_VOLTAGE
-                    )
-                    charger_phases = _charger_phase_count(entry)
-                    limit_for_charger = round(evse_minimum_charge_current * voltage * charger_phases, 1)
-                    rate_unit = "W"
-                else:
-                    limit_for_charger = evse_minimum_charge_current
-                    rate_unit = "A"
-            else:
-                limit_for_charger = evse_minimum_charge_current
-                rate_unit = "A"
-        else:
-            limit_for_charger = evse_minimum_charge_current
-            rate_unit = "A"
-        
+            limit_for_charger = round(limit_for_charger * voltage * _charger_phase_count(entry), 1)
+            rate_unit = "W"
+
         # Stack level for reset should be 1 lower than regular operation
         configured_stack_level = int(get_entry_value(entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
         reset_stack_level = max(1, configured_stack_level - 1)
@@ -547,152 +506,105 @@ async def async_setup(hass: HomeAssistant, config: dict):
 
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
 
-    # --- Helper to find an entity by unique_id suffix within a config entry ---
-    def _find_entity_state(entity_id_suffix: str, config_entry_id: str):
-        """Find an entity's HA entity_id by matching unique_id pattern."""
-        entity_registry = async_get_entity_registry(hass)
-        for eid, entity in entity_registry.entities.items():
-            if (entity.config_entry_id == config_entry_id
-                    and entity.platform == DOMAIN
-                    and entity.unique_id.endswith(entity_id_suffix)):
-                return eid
-        return None
+    def _own_entity(entry_id: str, platform: str, suffix: str):
+        """The entity_id of one of an entry's own entities, or None.
 
-    def _read_other_current(suffix: str, config_entry_id: str):
-        """Read the float value of a charger's _min/_max current entity, or None."""
-        eid = _find_entity_state(suffix, config_entry_id)
-        if not eid:
+        Its unique_id is the entry's entity-id prefix plus ``suffix``.
+        """
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None:
             return None
-        state = hass.states.get(eid)
-        if units.is_unavailable(state):
-            return None
-        try:
-            value = float(state.state)
-        except (ValueError, TypeError):
-            return None
-        return None if units.is_unusable_number(value) else value
-
-    # --- set_operating_mode service ---
-    async def handle_set_operating_mode(call: ServiceCall):
-        """Set the operating mode for a load."""
-        entry_id = call.data["entry_id"]
-        mode = call.data["mode"]
-
-        entity_id = _find_entity_state("_operating_mode", entry_id)
-        if not entity_id:
-            _LOGGER.error("Could not find operating mode entity for load %s", entry_id)
-            return
-
-        await hass.services.async_call(
-            "select", "select_option",
-            {"entity_id": entity_id, "option": mode},
-            blocking=True,
+        return er.async_get(hass).async_get_entity_id(
+            platform, DOMAIN, f"{entry.data.get(CONF_ENTITY_ID)}{suffix}"
         )
 
-    hass.services.async_register(
-        DOMAIN, "set_operating_mode", handle_set_operating_mode,
-        schema=vol.Schema({
-            vol.Required("entry_id"): cv.string,
-            vol.Required("mode"): vol.In(ALL_OPERATING_MODE_KEYS),
-        }),
-    )
+    # How each platform's entity is set: its service, and that service's value key.
+    setters = {"select": ("select_option", "option"), "number": ("set_value", "value")}
 
-    # --- set_distribution_mode service ---
-    async def handle_set_distribution_mode(call: ServiceCall):
-        """Set the distribution mode for a hub."""
-        entry_id = call.data["entry_id"]
-        mode = call.data["mode"]
+    def _forward(suffix, platform, field, sibling=None):
+        """A service handing ``call.data[field]`` to one of the entry's own
+        entities, through that platform's own (validating) set service.
 
-        entity_id = _find_entity_state("_distribution_mode", entry_id)
-        if not entity_id:
-            _LOGGER.error("Could not find distribution mode entity for hub %s", entry_id)
-            return
+        ``sibling`` is ``(suffix, crosses)`` for the min/max current pair: the
+        sliders are independent entities, so a service call could otherwise
+        leave the engine with min > max - a value that ``crosses(value,
+        sibling_value)`` is rejected.
+        """
+        service, key = setters[platform]
 
-        await hass.services.async_call(
-            "select", "select_option",
-            {"entity_id": entity_id, "option": mode},
-            blocking=True,
-        )
-
-    hass.services.async_register(
-        DOMAIN, "set_distribution_mode", handle_set_distribution_mode,
-        schema=vol.Schema({
-            vol.Required("entry_id"): cv.string,
-            vol.Required("mode"): vol.In([
-                DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
-                DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
-            ]),
-        }),
-    )
-
-    # --- set_max_current service ---
-    async def handle_set_max_current(call: ServiceCall):
-        """Set the max current for a charger."""
-        entry_id = call.data["entry_id"]
-        current = call.data["current"]
-
-        entity_id = _find_entity_state("_max_current", entry_id)
-        if not entity_id:
-            _LOGGER.error("Could not find max current entity for charger %s", entry_id)
-            return
-
-        # Enforce min ≤ max - the min/max sliders are independent entities, so a
-        # service call could otherwise leave the engine with min > max.
-        min_value = _read_other_current("_min_current", entry_id)
-        if min_value is not None and current < min_value:
-            _LOGGER.error(
-                "set_max_current for %s rejected: %.1fA is below min current %.1fA",
-                entry_id, current, min_value,
+        async def handle(call: ServiceCall):
+            entry_id = call.data["entry_id"]
+            value = call.data[field]
+            entity_id = _own_entity(entry_id, platform, suffix)
+            if not entity_id:
+                _LOGGER.error("Could not find the %s entity of %s", suffix[1:].replace("_", " "), entry_id)
+                return
+            if sibling is not None:
+                other_suffix, crosses = sibling
+                other = units.read_number(
+                    hass, _own_entity(entry_id, "number", other_suffix)
+                )
+                if other is not None and crosses(value, other):
+                    _LOGGER.error(
+                        "%s for %s rejected: %.1fA crosses %s %.1fA",
+                        call.service, entry_id, value, other_suffix[1:].replace("_", " "), other,
+                    )
+                    return
+            await hass.services.async_call(
+                platform, service, {"entity_id": entity_id, key: value}, blocking=True
             )
+
+        return handle
+
+    current = vol.Schema({
+        vol.Required("entry_id"): cv.string,
+        vol.Required("current"): vol.Coerce(float),
+    })
+    for service, handler, schema in (
+        ("set_operating_mode", _forward("_operating_mode", "select", "mode"),
+         vol.Schema({
+             vol.Required("entry_id"): cv.string,
+             vol.Required("mode"): vol.In(ALL_OPERATING_MODE_KEYS),
+         })),
+        ("set_distribution_mode", _forward("_distribution_mode", "select", "mode"),
+         vol.Schema({
+             vol.Required("entry_id"): cv.string,
+             vol.Required("mode"): vol.In(DISTRIBUTION_MODES),
+         })),
+        ("set_max_current", _forward("_max_current", "number", "current", ("_min_current", operator.lt)), current),
+        ("set_min_current", _forward("_min_current", "number", "current", ("_max_current", operator.gt)), current),
+    ):
+        hass.services.async_register(DOMAIN, service, handler, schema=schema)
+
+    # Renamed entities: gathered for a few seconds - a rename tool changes
+    # dozens at once - then written into every entry that names them, each
+    # of which then reloads. Registered here rather than per entry so a
+    # rename landing while an entry reloads is not missed.
+    pending: dict = {}
+
+    async def _follow() -> None:
+        renames = dict(pending)
+        pending.clear()
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            data, options = follow_renames(dict(entry.data), renames), follow_renames(dict(entry.options), renames)
+            if data != dict(entry.data) or options != dict(entry.options):
+                _LOGGER.info("Following renamed entities in %s: %s", entry.title, renames)
+                hass.config_entries.async_update_entry(entry, data=data, options=options)
+
+    flush = Debouncer(hass, _LOGGER, cooldown=RENAME_SETTLE_S, immediate=False, function=_follow)
+
+    @callback
+    def _renamed(event) -> None:
+        old, new = event.data.get("old_entity_id"), event.data.get("entity_id")
+        if event.data.get("action") != "update" or not old or not new or old == new:
             return
+        for k, v in list(pending.items()):   # renamed twice before the flush: a to b to c
+            if v == old:
+                pending[k] = new
+        pending[old] = new
+        hass.async_create_task(flush.async_call())
 
-        await hass.services.async_call(
-            "number", "set_value",
-            {"entity_id": entity_id, "value": current},
-            blocking=True,
-        )
-
-    hass.services.async_register(
-        DOMAIN, "set_max_current", handle_set_max_current,
-        schema=vol.Schema({
-            vol.Required("entry_id"): cv.string,
-            vol.Required("current"): vol.Coerce(float),
-        }),
-    )
-
-    # --- set_min_current service ---
-    async def handle_set_min_current(call: ServiceCall):
-        """Set the min current for a charger."""
-        entry_id = call.data["entry_id"]
-        current = call.data["current"]
-
-        entity_id = _find_entity_state("_min_current", entry_id)
-        if not entity_id:
-            _LOGGER.error("Could not find min current entity for charger %s", entry_id)
-            return
-
-        # Enforce min ≤ max - see handle_set_max_current.
-        max_value = _read_other_current("_max_current", entry_id)
-        if max_value is not None and current > max_value:
-            _LOGGER.error(
-                "set_min_current for %s rejected: %.1fA is above max current %.1fA",
-                entry_id, current, max_value,
-            )
-            return
-
-        await hass.services.async_call(
-            "number", "set_value",
-            {"entity_id": entity_id, "value": current},
-            blocking=True,
-        )
-
-    hass.services.async_register(
-        DOMAIN, "set_min_current", handle_set_min_current,
-        schema=vol.Schema({
-            vol.Required("entry_id"): cv.string,
-            vol.Required("current"): vol.Coerce(float),
-        }),
-    )
+    hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, _renamed)
 
     return True
 
@@ -728,7 +640,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data.setdefault(DOMAIN, {
         "hubs": {},
         "loads": {},
-        "groups": {},  # Circuit group entries
         "inverters": {},  # Inverter entries (power sources, optional battery)
         "load_allocations": {},  # Stores current allocation for each load
     })
@@ -753,6 +664,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         hass.data[DOMAIN].setdefault(PENDING_PLUG_MODE_MIGRATION, set()).add(
             entry.entry_id
         )
+
+    # Every child entry needs its hub up first. HA sets up config entries
+    # concurrently in arbitrary order, so the hub may not be ready yet -
+    # ConfigEntryNotReady has HA retry the child once it has finished.
+    if entry_type in (ENTRY_TYPE_LOAD, ENTRY_TYPE_GROUP, ENTRY_TYPE_INVERTER):
+        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
+        if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
+            raise ConfigEntryNotReady(
+                f"Hub {hub_entry_id} not ready for {entry_type} {entry.title}"
+            )
 
     if entry_type == ENTRY_TYPE_HUB:
         await _setup_hub_entry(hass, entry)
@@ -808,8 +729,6 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     hass.data[DOMAIN]["hubs"][entry.entry_id] = {
         "entry": entry,
         "loads": [],  # List of load entry_ids linked to this hub
-        "groups": [],    # List of circuit group entry_ids linked to this hub
-        "inverters": [],  # List of inverter entry_ids linked to this hub
         "distribution_mode": DEFAULT_DISTRIBUTION_MODE,
         "allow_grid_charging": True,
         "power_buffer": 0,
@@ -832,8 +751,7 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Check if entities need migration
     await _migrate_hub_entities_if_needed(hass, entry)
     
-    # Forward setup to hub platforms (number, switch, sensor, select for hub-level entities)
-    await hass.config_entries.async_forward_entry_setups(entry, ["number", "switch", "sensor", "select"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_HUB])
 
     # Trigger discovery for unconfigured OCPP chargers
     await _discover_and_notify_chargers(hass, entry.entry_id)
@@ -841,9 +759,9 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Auto-import: a hub still carrying legacy hub-level HARDWARE config
     # (inverter, battery or PV entities and capacities - bare charge/discharge
     # defaults don't count) gets it moved onto a standalone inverter entry.
-    # The trigger is the presence of a field, not the imported flag, so a
-    # release that moves one more field onto the inverter converges on the
-    # next restart; blanking removes the trigger, making it self-terminating.
+    # The trigger is the presence of a field, so a release that moves one
+    # more field onto the inverter converges on the next restart; blanking
+    # removes the trigger, making it self-terminating.
     # Until the import lands the engine keeps treating the hub's fields as one
     # implicit fleet member, so nothing is lost or double-counted in between.
     if any(
@@ -877,14 +795,6 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
     
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
 
-    # Verify hub exists. HA sets up config entries concurrently in arbitrary
-    # order, so the hub may not be ready yet - raise ConfigEntryNotReady so HA
-    # retries this load once the hub has finished setting up.
-    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        raise ConfigEntryNotReady(
-            f"Hub {hub_entry_id} not ready for load {entry.title}"
-        )
-
     # Before any entity is built: an entry still carrying a pre-2026-02-19
     # device-registry UUID as its charge point id has every OCPP command
     # rejected by ocpp 0.11.2+, and composes the wrong charge-control switch
@@ -894,15 +804,7 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
     repair_ocpp_device_id(hass, entry)
 
     # Store load data (runtime state written by entities, read by calculation)
-    device_type = entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-    if device_type == DEVICE_TYPE_PLUG:
-        default_mode = DEFAULT_OPERATING_MODE_PLUG
-    elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
-        default_mode = DEFAULT_OPERATING_MODE_HOT_WATER_TANK
-    elif device_type == DEVICE_TYPE_POWER_STATION:
-        default_mode = DEFAULT_OPERATING_MODE_POWER_STATION
-    else:
-        default_mode = DEFAULT_OPERATING_MODE_EVSE
+    default_mode = modes_for(entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))[1]
     hass.data[DOMAIN]["loads"][entry.entry_id] = {
         "entry": entry,
         "hub_entry_id": hub_entry_id,
@@ -919,8 +821,7 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
     # Initialize load allocation
     hass.data[DOMAIN]["load_allocations"][entry.entry_id] = 0
     
-    # Forward setup to load platforms
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "number", "button", "select", "switch"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_LOAD])
     
     return True
 
@@ -928,27 +829,7 @@ async def _setup_load_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def _setup_group_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Set up a circuit group config entry."""
     _LOGGER.info("Setting up circuit group entry: %s", entry.title)
-
-    hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-
-    # Verify hub exists - raise ConfigEntryNotReady so HA retries this group
-    # once the hub has finished setting up (entry setup order is concurrent).
-    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        raise ConfigEntryNotReady(
-            f"Hub {hub_entry_id} not ready for group {entry.title}"
-        )
-
-    # Store group data
-    hass.data[DOMAIN]["groups"][entry.entry_id] = {
-        "entry": entry,
-        "hub_entry_id": hub_entry_id,
-    }
-
-    # Link group to hub
-    hass.data[DOMAIN]["hubs"][hub_entry_id]["groups"].append(entry.entry_id)
-
-    # Forward setup to sensor platform only (group sensors)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_GROUP])
 
     return True
 
@@ -959,26 +840,13 @@ async def _setup_inverter_entry(hass: HomeAssistant, entry: ConfigEntry):
 
     hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
 
-    # Verify hub exists - raise ConfigEntryNotReady so HA retries this inverter
-    # once the hub has finished setting up (entry setup order is concurrent).
-    if hub_entry_id not in hass.data[DOMAIN]["hubs"]:
-        raise ConfigEntryNotReady(
-            f"Hub {hub_entry_id} not ready for inverter {entry.title}"
-        )
-
     # Store inverter data
     hass.data[DOMAIN]["inverters"][entry.entry_id] = {
         "entry": entry,
         "hub_entry_id": hub_entry_id,
     }
 
-    # Link inverter to hub
-    hass.data[DOMAIN]["hubs"][hub_entry_id].setdefault("inverters", []).append(
-        entry.entry_id
-    )
-
-    # Sensors plus the Battery Charge Control switch (write-control opt-in)
-    await hass.config_entries.async_forward_entry_setups(entry, ["sensor", "switch"])
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_INVERTER])
 
     return True
 
@@ -1013,134 +881,62 @@ async def _discover_and_notify_chargers(hass: HomeAssistant, hub_entry_id: str):
 
 async def _migrate_hub_entities_if_needed(hass: HomeAssistant, entry: ConfigEntry):
     """Check if entities need to be migrated to the new hub architecture."""
-    entity_registry = async_get_entity_registry(hass)
+    entity_registry = er.async_get(hass)
     entity_id = entry.data.get(CONF_ENTITY_ID)
     
     if not entity_id:
         _LOGGER.warning("No entity_id found in hub config entry, skipping entity migration")
         return
     
-    # Define expected hub entities with their unique_ids
-    expected_entities = {
-        f"number.{entity_id}_home_battery_soc_target": f"{entity_id}_home_battery_soc_target",
-        f"number.{entity_id}_home_battery_soc_min": f"{entity_id}_home_battery_soc_min",
-        f"number.{entity_id}_power_buffer": f"{entity_id}_power_buffer",
-        f"switch.{entity_id}_allow_grid_charging": f"{entity_id}_allow_grid_charging"
-    }
-    
     # Check and update existing entities to be associated with this config entry
-    entities_migrated = []
-    for entity_entity_id, unique_id in expected_entities.items():
-        # Try to find entity by unique_id (this is the key for matching)
-        existing_entity = None
-        for reg_entity_id, reg_entity in entity_registry.entities.items():
-            if reg_entity.unique_id == unique_id and reg_entity.platform == DOMAIN:
-                existing_entity = reg_entity
-                break
-        
-        if existing_entity:
-            # Entity exists with this unique_id
-            if existing_entity.config_entry_id != entry.entry_id:
-                _LOGGER.info(f"Migrating existing entity {existing_entity.entity_id} (unique_id: {unique_id}) to hub config entry {entry.entry_id}")
-                entity_registry.async_update_entity(
-                    existing_entity.entity_id,
-                    config_entry_id=entry.entry_id
-                )
-                entities_migrated.append(unique_id)
-            else:
-                _LOGGER.debug(f"Entity {existing_entity.entity_id} already associated with hub config entry")
-                entities_migrated.append(unique_id)
-        else:
+    for platform, unique_id in (
+        ("number", f"{entity_id}_home_battery_soc_target"),
+        ("number", f"{entity_id}_home_battery_soc_min"),
+        ("number", f"{entity_id}_power_buffer"),
+        ("switch", f"{entity_id}_allow_grid_charging"),
+    ):
+        existing_id = entity_registry.async_get_entity_id(platform, DOMAIN, unique_id)
+        if existing_id is None:
             _LOGGER.info(f"Entity with unique_id {unique_id} will be created when the platform is set up")
-    
-    # Update the config entry to ensure it has the required entity IDs
-    updated_data = dict(entry.data)
-    updated_data[CONF_BATTERY_SOC_TARGET_ENTITY_ID] = f"number.{entity_id}_home_battery_soc_target"
-    updated_data[CONF_ALLOW_GRID_CHARGING_ENTITY_ID] = f"switch.{entity_id}_allow_grid_charging"
-    updated_data[CONF_POWER_BUFFER_ENTITY_ID] = f"number.{entity_id}_power_buffer"
-    updated_data["integration_version"] = INTEGRATION_VERSION
-
-    # Only write the entry when something actually changed - an unconditional
-    # async_update_entry on every startup triggers an extra hub reload.
-    if updated_data != dict(entry.data):
-        hass.config_entries.async_update_entry(entry, data=updated_data)
-        _LOGGER.info(f"Updated hub config entry with entity IDs. Migrated {len(entities_migrated)} entities")
-    else:
-        _LOGGER.debug("Hub config entry already current - no entity-ID migration needed")
+        elif entity_registry.async_get(existing_id).config_entry_id != entry.entry_id:
+            _LOGGER.info(f"Migrating existing entity {existing_id} (unique_id: {unique_id}) to hub config entry {entry.entry_id}")
+            entity_registry.async_update_entity(existing_id, config_entry_id=entry.entry_id)
+        else:
+            _LOGGER.debug(f"Entity {existing_id} already associated with hub config entry")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
     """Unload a Load Juggler config entry."""
     entry_type = entry.data.get(ENTRY_TYPE, ENTRY_TYPE_HUB)
-    
+    domain_data = hass.data[DOMAIN]
+
     if entry_type == ENTRY_TYPE_HUB:
         # Stop the site cycle FIRST - a tick landing mid-unload would drive
         # loads that are being torn down. async_shutdown cancels the timer and
         # drops the keepalive listener, so nothing survives the entry.
-        coordinator = hass.data[DOMAIN].get("hub_coordinators", {}).pop(
-            entry.entry_id, None
-        )
+        coordinator = domain_data.get("hub_coordinators", {}).pop(entry.entry_id, None)
         if coordinator is not None:
             await coordinator.async_shutdown()
 
-        # Unload hub platforms (includes select for distribution mode)
-        for domain in ["number", "switch", "sensor", "select"]:
-            await hass.config_entries.async_forward_entry_unload(entry, domain)
+    await hass.config_entries.async_unload_platforms(entry, PLATFORMS.get(entry_type, []))
 
-        # Remove hub from data
-        if entry.entry_id in hass.data[DOMAIN]["hubs"]:
-            del hass.data[DOMAIN]["hubs"][entry.entry_id]
+    if entry_type == ENTRY_TYPE_HUB:
         # The hub's load_processors bucket is deliberately left in place: its
         # entries belong to the LOADS' entity lifecycles (they unregister
         # themselves), and a hub reload must not strand loads that stay loaded.
-    
-    elif entry_type == ENTRY_TYPE_LOAD:
-        # Unload load platforms
-        for domain in ["sensor", "number", "button", "select", "switch"]:
-            await hass.config_entries.async_forward_entry_unload(entry, domain)
+        domain_data["hubs"].pop(entry.entry_id, None)
 
+    elif entry_type == ENTRY_TYPE_LOAD:
         # Remove load from hub's list
         hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-        if hub_entry_id in hass.data[DOMAIN]["hubs"]:
-            loads_list = hass.data[DOMAIN]["hubs"][hub_entry_id]["loads"]
+        if hub_entry_id in domain_data["hubs"]:
+            loads_list = domain_data["hubs"][hub_entry_id]["loads"]
             if entry.entry_id in loads_list:
                 loads_list.remove(entry.entry_id)
-        
-        # Remove load from data
-        if entry.entry_id in hass.data[DOMAIN]["loads"]:
-            del hass.data[DOMAIN]["loads"][entry.entry_id]
-        if entry.entry_id in hass.data[DOMAIN]["load_allocations"]:
-            del hass.data[DOMAIN]["load_allocations"][entry.entry_id]
-
-    elif entry_type == ENTRY_TYPE_GROUP:
-        # Unload group platforms
-        await hass.config_entries.async_forward_entry_unload(entry, "sensor")
-
-        # Remove group from hub's list
-        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-        if hub_entry_id in hass.data[DOMAIN]["hubs"]:
-            groups_list = hass.data[DOMAIN]["hubs"][hub_entry_id].get("groups", [])
-            if entry.entry_id in groups_list:
-                groups_list.remove(entry.entry_id)
-
-        # Remove group from data
-        if entry.entry_id in hass.data[DOMAIN]["groups"]:
-            del hass.data[DOMAIN]["groups"][entry.entry_id]
+        domain_data["loads"].pop(entry.entry_id, None)
+        domain_data["load_allocations"].pop(entry.entry_id, None)
 
     elif entry_type == ENTRY_TYPE_INVERTER:
-        # Unload inverter platforms
-        await hass.config_entries.async_forward_entry_unload(entry, "sensor")
-        await hass.config_entries.async_forward_entry_unload(entry, "switch")
-
-        # Remove inverter from hub's list
-        hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
-        if hub_entry_id in hass.data[DOMAIN]["hubs"]:
-            inverters_list = hass.data[DOMAIN]["hubs"][hub_entry_id].get("inverters", [])
-            if entry.entry_id in inverters_list:
-                inverters_list.remove(entry.entry_id)
-
-        # Remove inverter from data
-        if entry.entry_id in hass.data[DOMAIN].get("inverters", {}):
-            del hass.data[DOMAIN]["inverters"][entry.entry_id]
+        domain_data.get("inverters", {}).pop(entry.entry_id, None)
 
     return True

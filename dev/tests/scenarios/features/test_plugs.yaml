@@ -15,7 +15,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 3000
       phase_a_consumption: 2.0
       battery_soc: null
@@ -28,6 +27,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "plug_1"
+        operating_mode: "Solar Only"
         device_type: "plug"
         power_rating: 1500
         phases: 1
@@ -45,7 +45,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 2000
       phase_a_consumption: 5.0
       battery_soc: null
@@ -58,6 +57,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "plug_1"
+        operating_mode: "Solar Only"
         device_type: "plug"
         power_rating: 2000
         phases: 1
@@ -75,7 +75,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 6000
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
@@ -90,11 +89,13 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "evse_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
       - entity_id: "plug_1"
+        operating_mode: "Solar Only"
         device_type: "plug"
         power_rating: 1500
         phases: 1
@@ -118,7 +119,6 @@ scenarios:
       main_breaker_rating: 63
       max_import_power: 14490
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 12000
       phase_a_consumption: 2.0
       phase_b_consumption: 2.0
@@ -133,11 +133,13 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "evse_1"
+        operating_mode: "Solar Only"
         min_current: 6
         max_current: 16
         phases: 3
         priority: 1
       - entity_id: "plug_1"
+        operating_mode: "Solar Only"
         device_type: "plug"
         power_rating: 1500
         phases: 1
@@ -161,7 +163,6 @@ scenarios:
       main_breaker_rating: 63
       max_import_power: 14490
       distribution_mode: priority
-      charging_mode: Standard
       solar_production: 0
       phase_a_consumption: 5.0
       phase_b_consumption: 5.0
@@ -176,6 +177,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "plug_1"
+        operating_mode: "Continuous"
         device_type: "plug"
         power_rating: 11000
         phases: 3
@@ -194,7 +196,6 @@ scenarios:
       main_breaker_rating: 35
       max_import_power: 8050
       distribution_mode: priority
-      charging_mode: Solar
       solar_production: 5000
       phase_a_consumption: 2.0
       battery_soc: null
@@ -207,6 +208,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "plug_1"
+        operating_mode: "Solar Only"
         device_type: "plug"
         power_rating: 2000
         phases: 1

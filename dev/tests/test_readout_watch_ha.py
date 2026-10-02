@@ -214,11 +214,11 @@ async def test_an_accepted_command_is_published_for_the_engine(hass, site):
         "homeassistant.core.ServiceRegistry.async_call",
         new_callable=AsyncMock, side_effect=Exception("charger said no"),
     ):
-        await send_ocpp_command(sensor, 12.0, hub_entry, True, time.monotonic())
+        await send_ocpp_command(sensor, 12.0, hub_entry, time.monotonic())
     assert EVSE_RT_COMMANDED_LIMIT not in _runtime(hass, first)
 
     with patch("homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock):
-        await send_ocpp_command(sensor, 12.0, hub_entry, True, time.monotonic())
+        await send_ocpp_command(sensor, 12.0, hub_entry, time.monotonic())
     assert _runtime(hass, first)[EVSE_RT_COMMANDED_LIMIT] == 12.0
     assert _runtime(hass, first)[EVSE_RT_COMMANDED_RATE_UNIT] == "A"
 
@@ -503,7 +503,7 @@ async def test_while_blind_the_figures_are_estimates_and_the_status_says_so(hass
     )
 
     hub_entry, first, second = site
-    defs = {d["hub_data_key"]: d for d in HUB_SENSOR_DEFINITIONS}
+    defs = {d.data_key: d for d in HUB_SENSOR_DEFINITIONS}
     managed = LoadJugglerHubDataSensor(hass, hub_entry, "Hub", "hub", defs["total_evse_power"])
     household = LoadJugglerHubDataSensor(hass, hub_entry, "Hub", "hub", defs["household_power"])
     solar = LoadJugglerHubDataSensor(hass, hub_entry, "Hub", "hub", defs["solar_power"])

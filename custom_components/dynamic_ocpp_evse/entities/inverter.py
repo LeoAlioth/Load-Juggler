@@ -54,6 +54,7 @@ from homeassistant.util import dt as dt_util
 
 from ..engine.forecast_observers import gain_state, restore_gain_state
 from ..helpers import get_entry_value
+from .hub import DataSensorDescription
 from .mixins import (
     InverterEntityMixin,
     SiteCycleConsumerMixin,
@@ -64,53 +65,53 @@ from .mixins import (
 _LOGGER = logging.getLogger(__name__)
 
 INVERTER_SENSOR_DEFINITIONS = [
-    {
-        "unique_id_suffix": "solar_production",
-        "data_key": "solar_w",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:solar-power-variant",
-        "decimals": 0,
-    },
-    {
-        "unique_id_suffix": "battery_soc",
-        "data_key": "battery_soc",
-        "unit": "%",
-        "device_class": SensorDeviceClass.BATTERY,
-        "icon": "mdi:battery-80",
-        "decimals": 1,
-        "requires_battery": True,
-    },
-    {
-        "unique_id_suffix": "battery_power",
-        "data_key": "battery_power",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:battery-charging",
-        "decimals": 0,
-        "requires_battery": True,
-    },
+    DataSensorDescription(
+        key="solar_production",
+        data_key="solar_w",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:solar-power-variant",
+        decimals=0,
+    ),
+    DataSensorDescription(
+        key="battery_soc",
+        data_key="battery_soc",
+        native_unit_of_measurement="%",
+        device_class=SensorDeviceClass.BATTERY,
+        icon="mdi:battery-80",
+        decimals=1,
+        requires_battery=True,
+    ),
+    DataSensorDescription(
+        key="battery_power",
+        data_key="battery_power",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:battery-charging",
+        decimals=0,
+        requires_battery=True,
+    ),
     # PV clipping forecast advice for THIS battery: the fleet-uniform SOC
     # ceiling, and this battery's share of the fleet charge limit (split by
     # charge cap). The future write-control pushes these to the inverter.
-    {
-        "unique_id_suffix": "forecast_battery_max_soc",
-        "data_key": "forecast_battery_max_soc",
-        "unit": "%",
-        "device_class": SensorDeviceClass.BATTERY,
-        "icon": "mdi:battery-lock",
-        "decimals": 0,
-        "requires_forecast": True,
-    },
-    {
-        "unique_id_suffix": "forecast_charge_limit",
-        "data_key": "forecast_charge_limit_w",
-        "unit": "W",
-        "device_class": SensorDeviceClass.POWER,
-        "icon": "mdi:battery-charging-wireless",
-        "decimals": 0,
-        "requires_forecast": True,
-    },
+    DataSensorDescription(
+        key="forecast_battery_max_soc",
+        data_key="forecast_battery_max_soc",
+        native_unit_of_measurement="%",
+        device_class=SensorDeviceClass.BATTERY,
+        icon="mdi:battery-lock",
+        decimals=0,
+        requires_forecast=True,
+    ),
+    DataSensorDescription(
+        key="forecast_charge_limit",
+        data_key="forecast_charge_limit_w",
+        native_unit_of_measurement="W",
+        device_class=SensorDeviceClass.POWER,
+        icon="mdi:battery-charging-wireless",
+        decimals=0,
+        requires_forecast=True,
+    ),
     # OBSERVE-ONLY: how this array's forecast is actually performing, as
     # measured actual ÷ forecast energy over today's unconstrained intervals.
     # 100% means the forecast is exactly right. Nothing acts on it - it exists
@@ -122,26 +123,26 @@ INVERTER_SENSOR_DEFINITIONS = [
     # battery: accuracy is a property of the array, and the engine's observer
     # loop measures it for battery-less members too (a pure AC-coupled PV
     # inverter is often the site's cleanest instrument).
-    {
-        "unique_id_suffix": "forecast_accuracy",
-        "data_key": "forecast_accuracy_pct",
-        "unit": "%",
-        "icon": "mdi:target-variant",
-        "decimals": 1,
-        "requires_forecast_device": True,
+    DataSensorDescription(
+        key="forecast_accuracy",
+        data_key="forecast_accuracy_pct",
+        native_unit_of_measurement="%",
+        icon="mdi:target-variant",
+        decimals=1,
+        requires_forecast_device=True,
         # This sensor carries the gain observer's 15-minute series across
         # restarts (restore data, not attributes - the recorder must not copy
         # a growing array on every state change) and publishes the learned
         # gain, its hourly offsets and the series size as attributes.
-        "restores_gain": True,
-    },
+        restores_gain=True,
+    ),
 ]
 
 
 class LoadJugglerInverterDataSensor(
     SiteCycleConsumerMixin, InverterEntityMixin, SensorEntity, RestoreEntity
 ):
-    """Generic per-inverter data sensor driven by a definition dict.
+    """Generic per-inverter data sensor driven by a DataSensorDescription.
 
     A pure reader of the hub's published fleet aggregate, so it is pushed by
     the hub coordinator and available only while that publication is fresh.
@@ -159,25 +160,19 @@ class LoadJugglerInverterDataSensor(
     # renaming the inverter device renames every sensor on it. The unique_id
     # (and therefore the entity_id) is unaffected by a rename. The entity half
     # comes from the translations (entity.sensor.<key>.name), keyed by the
-    # definition's unique_id_suffix - both are stable identifiers for the same
-    # sensor, so one field serves as both.
+    # description's key, the unique_id suffix - both are stable identifiers for
+    # the same sensor, so one field serves as both.
     _attr_has_entity_name = True
-    _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, hass, config_entry, entity_id, defn):
+    def __init__(self, hass, config_entry, entity_id, description):
         self._init_entity(
             hass,
             config_entry,
             None,
-            f"{entity_id}_{defn['unique_id_suffix']}",
+            f"{entity_id}_{description.key}",
         )
-        self._attr_translation_key = defn["unique_id_suffix"]
-        self._defn = defn
-        self._attr_native_unit_of_measurement = defn["unit"]
-        # Optional: a ratio in percent has no fitting HA device class, and
-        # borrowing one (BATTERY, POWER_FACTOR) would mislabel it everywhere.
-        self._attr_device_class = defn.get("device_class")
-        self._attr_icon = defn["icon"]
+        self.entity_description = description
+        self._attr_translation_key = description.key
         self._attr_native_value = None
 
     def _read_site_data(self):
@@ -196,9 +191,9 @@ class LoadJugglerInverterDataSensor(
         own = self._my_inverter_data()
         if not own:
             return
-        value = own.get(self._defn["data_key"])
+        value = own.get(self.entity_description.data_key)
         self._attr_native_value = (
-            None if value is None else round(float(value), self._defn["decimals"])
+            None if value is None else round(float(value), self.entity_description.decimals)
         )
 
     # --- The gain series: attributes out, restore data across restarts ------
@@ -211,7 +206,7 @@ class LoadJugglerInverterDataSensor(
 
     @property
     def extra_state_attributes(self):
-        if not self._defn.get("restores_gain"):
+        if not self.entity_description.restores_gain:
             return None
         own = self._my_inverter_data()
         if not own or "forecast_gain" not in own:
@@ -229,14 +224,14 @@ class LoadJugglerInverterDataSensor(
 
     @property
     def extra_restore_state_data(self):
-        if not self._defn.get("restores_gain"):
+        if not self.entity_description.restores_gain:
             return None
         saved = gain_state(self._hub_runtime(), self.config_entry.entry_id)
         return RestoredExtraData(saved) if saved else None
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        if not self._defn.get("restores_gain"):
+        if not self.entity_description.restores_gain:
             return
         last = await self.async_get_last_extra_data()
         if last is None:
@@ -335,7 +330,7 @@ class LoadJugglerInverterChargeControlSensor(
         limit values are all in this sensor's own unit, so they can be read
         against the state directly.
         """
-        inverter_rt = self._inverter_runtime()
+        inverter_rt = self._runtime()
         last_write = inverter_rt.get(INVERTER_RT_LAST_WRITE)
         return {
             "control_state": inverter_rt.get(INVERTER_RT_STATUS, CONTROL_STATE_OFF),
@@ -375,9 +370,8 @@ class LoadJugglerInverterChargeControlSensor(
         advice_w = section.get("forecast_charge_limit_w")
         # The forecast's charge GATE, which the control's downward persistence
         # window needs in order to tell the cap ENGAGING (protective, written at
-        # once) from a steady-state correction (paced). Missing means a hub that
-        # published no gate state, and the control degrades to writing
-        # reductions immediately - see ``send_inverter_charge_limit``.
+        # once) from a steady-state correction (paced) - see
+        # ``send_inverter_charge_limit``. The hub publishes it beside every advice.
         await send_inverter_charge_limit(
             self.hass,
             self.config_entry,
@@ -398,7 +392,7 @@ class LoadJugglerInverterChargeControlSensor(
         land on None, which HA renders as unknown; the standing that explains
         which one it is rides along in ``control_state``.
         """
-        value = self._inverter_runtime().get(INVERTER_RT_REGISTER)
+        value = self._runtime().get(INVERTER_RT_REGISTER)
         self._attr_native_value = (
             None if value is None else round(float(value), self._decimals)
         )
@@ -476,7 +470,7 @@ class LoadJugglerInverterSocControlSensor(
         to include - or one that is unavailable and being skipped - is visible
         without reading the log.
         """
-        inverter_rt = self._inverter_runtime()
+        inverter_rt = self._runtime()
         last_write = inverter_rt.get(INVERTER_RT_SOC_LAST_WRITE)
         return {
             "control_state": inverter_rt.get(
@@ -526,7 +520,7 @@ class LoadJugglerInverterSocControlSensor(
         inverter. None when the switch is off, when the normal ceiling is
         unreadable and writes are deferred, or before the first cycle.
         """
-        desired = self._inverter_runtime().get(INVERTER_RT_SOC_DESIRED)
+        desired = self._runtime().get(INVERTER_RT_SOC_DESIRED)
         self._attr_native_value = None if desired is None else round(float(desired), 1)
 
     async def async_update(self):

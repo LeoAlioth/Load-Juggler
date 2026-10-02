@@ -11,7 +11,6 @@ scenarios:
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Excess
       solar_production: 11840  # Total 18kW
       phase_a_consumption: 0
       phase_b_consumption: 0
@@ -27,6 +26,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Excess"
         min_current: 6
         max_current: 16
         phases: 1
@@ -44,7 +44,6 @@ scenarios:
       max_import_power: 17250
 
       distribution_mode: priority
-      charging_mode: Excess
       solar_production: 10350  # Total ~10.35kW
       phase_a_consumption: 1.0
       phase_b_consumption: 1.0
@@ -60,6 +59,7 @@ scenarios:
       inverter_max_power: 12000
     loads:
       - entity_id: "load_1"
+        operating_mode: "Excess"
         min_current: 6
         max_current: 16
         phases: 3

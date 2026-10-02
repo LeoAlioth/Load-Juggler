@@ -9,7 +9,6 @@ from .entities.mixins import HubEntityMixin, LoadEntityMixin, InverterEntityMixi
 from .const import (
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, ENTRY_TYPE_INVERTER,
     CONF_NAME, CONF_ENTITY_ID,
-    CONF_HUB_ENTRY_ID, CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
     CONF_CHARGE_LIMIT_ENTITY_ID, INVERTER_RT_CONTROL_ENABLED,
     INVERTER_RT_SOC_CONTROL_ENABLED,
@@ -27,15 +26,11 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     if entry_type == ENTRY_TYPE_LOAD:
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
         name = config_entry.data.get(CONF_NAME, "Load")
-        hub_entry_id = config_entry.data.get(CONF_HUB_ENTRY_ID)
-        hub_entry = hass.config_entries.async_get_entry(hub_entry_id) if hub_entry_id else None
-        entities = [DynamicControlSwitch(hass, config_entry, hub_entry, entity_id, name)]
+        entities = [DynamicControlSwitch(hass, config_entry, entity_id, name)]
         device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         if device_type == DEVICE_TYPE_POWER_STATION:
             entities.append(
-                StationStormReserveSwitch(
-                    hass, config_entry, hub_entry, entity_id, name
-                )
+                StationStormReserveSwitch(hass, config_entry, entity_id, name)
             )
         async_add_entities(entities)
         return
@@ -88,94 +83,64 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
     async_add_entities(entities)
 
 
-class AllowGridChargingSwitch(HubEntityMixin, SwitchEntity, RestoreEntity):
-    """Switch to allow/disallow grid charging (hub-level)."""
+class _FlagSwitch(SwitchEntity, RestoreEntity):
+    """An on/off CONFIG flag the engine reads back from the runtime dict.
+
+    Restored from the last state, or ``_default`` when there is none.
+    """
 
     _attr_entity_category = EntityCategory.CONFIG
-    _hub_data_key = "allow_grid_charging"
-
-    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str, name: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Allow Grid Charging"
-        self._attr_unique_id = f"{entity_id}_allow_grid_charging"
-        self._state = True
-        self._attr_icon = "mdi:transmission-tower"
-
-    @property
-    def is_on(self):
-        return self._state
-
-    async def async_turn_on(self, **kwargs):
-        self._state = True
-        self.async_write_ha_state()
-        self._write_to_hub_data(True)
-        _LOGGER.info("Grid charging enabled")
-
-    async def async_turn_off(self, **kwargs):
-        self._state = False
-        self.async_write_ha_state()
-        self._write_to_hub_data(False)
-        _LOGGER.info("Grid charging disabled")
+    _default = False
 
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
-        if last_state is not None:
-            self._state = last_state.state == "on"
-        else:
-            self._state = True
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._state)
+        self._set(self._default if last_state is None else last_state.state == "on")
+
+    async def async_turn_on(self, **kwargs):
+        self._set(True)
+        _LOGGER.info("%s turned on", self.entity_id)
+
+    async def async_turn_off(self, **kwargs):
+        self._set(False)
+        _LOGGER.info("%s turned off", self.entity_id)
+
+    def _set(self, on: bool) -> None:
+        self._attr_is_on = on
+        self._publish(on)
 
 
-class DynamicControlSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
+class AllowGridChargingSwitch(HubEntityMixin, _FlagSwitch):
+    """Switch to allow/disallow grid charging (hub-level)."""
+
+    _data_key = "allow_grid_charging"
+    _default = True
+    _attr_icon = "mdi:transmission-tower"
+
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str, name: str):
+        self._init_entity(
+            hass, config_entry, f"{name} Allow Grid Charging", f"{entity_id}_allow_grid_charging"
+        )
+
+
+class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
     """Per-load switch to enable/disable dynamic current control.
 
     When ON (default): the load receives dynamically calculated current.
     When OFF: the load charges at its configured maximum current.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
-    _load_data_key = "dynamic_control"
+    _data_key = "dynamic_control"
+    _default = True
+    _attr_icon = "mdi:auto-fix"
 
-    def __init__(self, hass, config_entry, hub_entry, entity_id, name):
-        self.hass = hass
-        self.config_entry = config_entry
-        self.hub_entry = hub_entry
-        self._attr_name = f"{name} Dynamic Control"
-        self._attr_unique_id = f"{entity_id}_dynamic_control"
-        self._state = True
-        self._attr_icon = "mdi:auto-fix"
-
-    @property
-    def is_on(self):
-        return self._state
-
-    async def async_turn_on(self, **kwargs):
-        self._state = True
-        self.async_write_ha_state()
-        self._write_to_load_data(True)
-        _LOGGER.info("Dynamic control enabled for %s", self._attr_name)
-
-    async def async_turn_off(self, **kwargs):
-        self._state = False
-        self.async_write_ha_state()
-        self._write_to_load_data(False)
-        _LOGGER.info("Dynamic control disabled for %s - load will use max current", self._attr_name)
-
-    async def async_added_to_hass(self):
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        if last_state is not None:
-            self._state = last_state.state == "on"
-        else:
-            self._state = True
-        self.async_write_ha_state()
-        self._write_to_load_data(self._state)
+    def __init__(self, hass, config_entry, entity_id, name):
+        self._init_entity(
+            hass, config_entry, f"{name} Dynamic Control", f"{entity_id}_dynamic_control"
+        )
 
 
-class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
+class StationStormReserveSwitch(LoadEntityMixin, _FlagSwitch):
     """Per-station switch to hold a storm reserve.
 
     When ON: the station holds its storm reserve level, charging from whatever
@@ -185,56 +150,30 @@ class StationStormReserveSwitch(LoadEntityMixin, SwitchEntity, RestoreEntity):
     long as this is on.
 
     When OFF: the station returns to its operating mode and its normal reserve.
+
+    Default off: a storm reserve should be a deliberate act, and it is the one
+    state that lets the station charge from the grid at full rate.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
-    _load_data_key = "station_storm_reserve"
+    _data_key = "station_storm_reserve"
+    _attr_icon = "mdi:weather-lightning"
 
-    def __init__(self, hass, config_entry, hub_entry, entity_id, name):
-        self.hass = hass
-        self.config_entry = config_entry
-        self.hub_entry = hub_entry
-        self._attr_name = f"{name} Storm Reserve"
-        self._attr_unique_id = f"{entity_id}_station_storm_reserve"
-        self._state = False
-        self._attr_icon = "mdi:weather-lightning"
-
-    @property
-    def is_on(self):
-        return self._state
-
-    async def async_turn_on(self, **kwargs):
-        self._state = True
-        self.async_write_ha_state()
-        self._write_to_load_data(True)
-        _LOGGER.info(
-            "Storm reserve enabled for %s - charging from any source and holding",
-            self._attr_name,
+    def __init__(self, hass, config_entry, entity_id, name):
+        self._init_entity(
+            hass, config_entry, f"{name} Storm Reserve", f"{entity_id}_station_storm_reserve"
         )
 
-    async def async_turn_off(self, **kwargs):
-        self._state = False
-        self.async_write_ha_state()
-        self._write_to_load_data(False)
-        _LOGGER.info("Storm reserve disabled for %s", self._attr_name)
 
-    async def async_added_to_hass(self):
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        # Default off: a storm reserve should be a deliberate act, and it is the
-        # one state that lets the station charge from the grid at full rate.
-        self._state = last_state is not None and last_state.state == "on"
-        self.async_write_ha_state()
-        self._write_to_load_data(self._state)
-
-
-class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
+class BatteryChargeControlSwitch(InverterEntityMixin, _FlagSwitch):
     """Per-inverter opt-in for writing the forecast's charge limit.
 
     OFF (the default): the clipping forecast stays advisory - the sensors show
     what it recommends and nothing is written to the inverter. ON: the
     recommended charge limit is written to the configured register, and the
-    normal value is restored once the advice releases.
+    normal value is restored once the advice releases. Turning it off writes
+    nothing from here: the control loop sees the disabled flag on its next tick
+    and puts the normal value back, so the pacing and the write-once-on-release
+    logic stay in one place.
 
     Default off on purpose. This is the only entity in the integration whose
     'on' state makes Load Juggler write to a third-party device's Modbus
@@ -242,8 +181,8 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
     restore with no previous state.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
-    _inverter_data_key = INVERTER_RT_CONTROL_ENABLED
+    _data_key = INVERTER_RT_CONTROL_ENABLED
+    _attr_icon = "mdi:battery-clock"
     # Named off the device, so renaming the inverter renames this too, and the
     # entity half of that name comes from the translations (entity.switch.
     # battery_charge_control.name) so the Slovenian UI names it the same way its
@@ -252,55 +191,19 @@ class BatteryChargeControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntit
     _attr_translation_key = "battery_charge_control"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_unique_id = f"{entity_id}_battery_charge_control"
-        self._state = False
-        self._attr_icon = "mdi:battery-clock"
-
-    @property
-    def is_on(self):
-        return self._state
-
-    async def async_turn_on(self, **kwargs):
-        self._state = True
-        self.async_write_ha_state()
-        self._write_to_inverter_data(True)
-        _LOGGER.info(
-            "Battery charge control enabled for %s - the PV clipping forecast "
-            "will now write %s",
-            self.config_entry.title,
-            get_entry_value(self.config_entry, CONF_CHARGE_LIMIT_ENTITY_ID, None),
-        )
-
-    async def async_turn_off(self, **kwargs):
-        self._state = False
-        self.async_write_ha_state()
-        self._write_to_inverter_data(False)
-        # The control loop sees the disabled flag on its next tick and puts
-        # the normal value back - no write from here, so the pacing and the
-        # write-once-on-release logic stay in one place.
-        _LOGGER.info(
-            "Battery charge control disabled for %s - restoring its normal "
-            "charge limit",
-            self.config_entry.title,
-        )
-
-    async def async_added_to_hass(self):
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        self._state = last_state is not None and last_state.state == "on"
-        self.async_write_ha_state()
-        self._write_to_inverter_data(self._state)
+        self._init_entity(hass, config_entry, None, f"{entity_id}_battery_charge_control")
 
 
-class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
+class BatterySocControlSwitch(InverterEntityMixin, _FlagSwitch):
     """Per-inverter opt-in for writing the forecast's battery SOC ceiling.
 
     OFF (the default): the recommended max SOC stays advisory - the sensor shows
     it and none of the configured time-of-use slots is touched. ON: every
     configured slot is driven to the lower of the forecast's recommendation and
     the normal ceiling, and rises back with the recommendation on its own.
+    Turning it off writes nothing, here or in the control loop: the slots keep
+    whatever ceiling they currently hold. It stops writing; it does not undo
+    history.
 
     A switch of its own rather than a second meaning for Battery Charge Control.
     The two controls write different things at different strengths - a rate limit
@@ -314,54 +217,12 @@ class BatterySocControlSwitch(InverterEntityMixin, SwitchEntity, RestoreEntity):
     previous state.
     """
 
-    _attr_entity_category = EntityCategory.CONFIG
-    _inverter_data_key = INVERTER_RT_SOC_CONTROL_ENABLED
-    # Named off the device, so renaming the inverter renames this too, and the
-    # entity half of that name comes from the translations (entity.switch.
-    # battery_soc_control.name) so the Slovenian UI names it the same way its
-    # help text does. unique_id is unaffected either way.
+    _data_key = INVERTER_RT_SOC_CONTROL_ENABLED
+    _attr_icon = "mdi:battery-lock"
+    # Named off the device - see BatteryChargeControlSwitch (entity.switch.
+    # battery_soc_control.name).
     _attr_has_entity_name = True
     _attr_translation_key = "battery_soc_control"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_unique_id = f"{entity_id}_battery_soc_control"
-        self._state = False
-        self._attr_icon = "mdi:battery-lock"
-
-    @property
-    def is_on(self):
-        return self._state
-
-    async def async_turn_on(self, **kwargs):
-        self._state = True
-        self.async_write_ha_state()
-        self._write_to_inverter_data(True)
-        _LOGGER.info(
-            "Battery SOC control enabled for %s - the PV clipping forecast will "
-            "now write %s",
-            self.config_entry.title,
-            ", ".join(soc_targets(self.config_entry)),
-        )
-
-    async def async_turn_off(self, **kwargs):
-        self._state = False
-        self.async_write_ha_state()
-        self._write_to_inverter_data(False)
-        # No restore write from here, and none from the control loop either: the
-        # slots keep whatever ceiling they currently hold, which is either their
-        # owner's value or a limit that will simply stop being maintained.
-        # Turning this off stops writing; it does not undo history.
-        _LOGGER.info(
-            "Battery SOC control disabled for %s - its SOC slots are left as they "
-            "stand",
-            self.config_entry.title,
-        )
-
-    async def async_added_to_hass(self):
-        await super().async_added_to_hass()
-        last_state = await self.async_get_last_state()
-        self._state = last_state is not None and last_state.state == "on"
-        self.async_write_ha_state()
-        self._write_to_inverter_data(self._state)
+        self._init_entity(hass, config_entry, None, f"{entity_id}_battery_soc_control")

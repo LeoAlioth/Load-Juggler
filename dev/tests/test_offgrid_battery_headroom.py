@@ -33,9 +33,7 @@ The clock is simulated (every module's ``time.monotonic``), so ten minutes of
 site cycles run in well under a second.
 """
 
-import time
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -75,15 +73,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     ENTRY_TYPE_LOAD,
     WIRING_TOPOLOGY_SERIES,
 )
-from custom_components.dynamic_ocpp_evse.engine import (
-    auto_detect,
-    hub_calculation,
-    hub_result,
-    load_builders,
-    readers,
-)
-from custom_components.dynamic_ocpp_evse.control import compliance, status
-from custom_components.dynamic_ocpp_evse.entities import load as load_entity
+
+from .closed_loop import clocked
 
 V = 230.0
 DISCHARGE_W = 5000.0          # the battery's discharge rating
@@ -118,26 +109,6 @@ def _binding(site):
     if battery_room <= inverter_room:
         return battery_room / V, DISCHARGE_W, "battery_w"
     return inverter_room / V, site.inverter_w, "site_w"
-
-
-_CLOCKED = (
-    load_builders, hub_calculation, readers, hub_result, auto_detect,
-    load_entity, status, compliance,
-)
-
-
-class _Clock:
-    """``time`` as the modules above see it: monotonic() is ours to advance,
-    everything else is the real module."""
-
-    def __init__(self, start):
-        self.now = start
-
-    def monotonic(self):
-        return self.now
-
-    def __getattr__(self, name):
-        return getattr(time, name)
 
 
 class World:
@@ -270,21 +241,13 @@ async def _session(hass, site, minutes):
     """``minutes`` of real site cycles against the world, one CYCLE_S apart.
     Returns [(seconds, accepted limit, {world figure: W})] per cycle."""
     world = World(hass, site)
-    clock = _Clock(10_000.0)
     hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
         site.hub.entry_id, {}
     )[site.evse.entry_id] = sensor_platform.LoadJugglerDeviceSensor(
         hass, site.evse, site.hub, "evse", "evse"
     )
-    patches = [patch.object(module, "time", clock) for module in _CLOCKED]
-    patches.append(patch(
-        "homeassistant.core.ServiceRegistry.async_call",
-        new_callable=AsyncMock, side_effect=world.accept,
-    ))
-    for p in patches:
-        p.start()
     log = []
-    try:
+    with clocked(world.accept) as clock:
         for _ in range(int(minutes * 60 / CYCLE_S)):
             world.publish()
             await sensor_platform.async_run_hub_cycle(hass, site.hub)
@@ -293,9 +256,6 @@ async def _session(hass, site, minutes):
                 {"battery_w": world.battery_w, "site_w": world.site_w},
             ))
             clock.now += CYCLE_S
-    finally:
-        for p in reversed(patches):
-            p.stop()
     return log
 
 

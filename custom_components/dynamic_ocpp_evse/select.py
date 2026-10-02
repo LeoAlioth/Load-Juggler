@@ -7,16 +7,12 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from . import consume_plug_mode_migration
 from .const import (
-    DOMAIN, ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, CONF_NAME, CONF_ENTITY_ID,
-    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
-    DEVICE_TYPE_POWER_STATION,
+    ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, CONF_NAME, CONF_ENTITY_ID,
+    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_HOT_WATER_TANK,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
-    DEFAULT_DISTRIBUTION_MODE,
-    OPERATING_MODES_EVSE, OPERATING_MODES_PLUG, OPERATING_MODES_HOT_WATER_TANK,
-    OPERATING_MODES_POWER_STATION,
-    DEFAULT_OPERATING_MODE_EVSE, DEFAULT_OPERATING_MODE_PLUG,
-    DEFAULT_OPERATING_MODE_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_POWER_STATION,
+    DEFAULT_DISTRIBUTION_MODE, DISTRIBUTION_MODES,
+    modes_for,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -58,7 +54,7 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
     the select exposes their keys as options.
     """
 
-    _load_data_key = "operating_mode"
+    _data_key = "operating_mode"
 
     # Mode keys renamed across versions - a restored value is migrated before
     # use so existing installs keep a valid selection.
@@ -67,20 +63,10 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
     }
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Operating Mode"
-        self._attr_unique_id = f"{entity_id}_operating_mode"
+        self._init_entity(hass, config_entry, f"{name} Operating Mode", f"{entity_id}_operating_mode")
 
         self._device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
-        if self._device_type == DEVICE_TYPE_PLUG:
-            modes, default = OPERATING_MODES_PLUG, DEFAULT_OPERATING_MODE_PLUG
-        elif self._device_type == DEVICE_TYPE_HOT_WATER_TANK:
-            modes, default = OPERATING_MODES_HOT_WATER_TANK, DEFAULT_OPERATING_MODE_HOT_WATER_TANK
-        elif self._device_type == DEVICE_TYPE_POWER_STATION:
-            modes, default = OPERATING_MODES_POWER_STATION, DEFAULT_OPERATING_MODE_POWER_STATION
-        else:
-            modes, default = OPERATING_MODES_EVSE, DEFAULT_OPERATING_MODE_EVSE
+        modes, default = modes_for(self._device_type)
         self._modes = modes
         self._attr_options = [m.key for m in modes]
         self._attr_current_option = default.key
@@ -115,35 +101,23 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
             )
             if restored in self._attr_options:
                 self._attr_current_option = restored
-        self.async_write_ha_state()
-        self._write_to_load_data(self._attr_current_option)
+        self._publish(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
-        if option in self._attr_options:
-            self._attr_current_option = option
-            self.async_write_ha_state()
-            self._write_to_load_data(option)
-            _LOGGER.info(f"Operating mode changed to: {option}")
-        else:
-            _LOGGER.error(f"Invalid option selected: {option}")
+        # HA's select.select_option has already rejected an unknown option.
+        self._attr_current_option = option
+        self._publish(option)
+        _LOGGER.info(f"Operating mode changed to: {option}")
 
 
 class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEntity):
     """Representation of a Load Juggler Distribution Mode Select (Hub-level)."""
 
-    _hub_data_key = "distribution_mode"
+    _data_key = "distribution_mode"
 
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
-        self.hass = hass
-        self.config_entry = config_entry
-        self._attr_name = f"{name} Distribution Mode"
-        self._attr_unique_id = f"{entity_id}_distribution_mode"
-        self._attr_options = [
-            DISTRIBUTION_MODE_SHARED,
-            DISTRIBUTION_MODE_PRIORITY,
-            DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED,
-            DISTRIBUTION_MODE_SEQUENTIAL_STRICT
-        ]
+        self._init_entity(hass, config_entry, f"{name} Distribution Mode", f"{entity_id}_distribution_mode")
+        self._attr_options = DISTRIBUTION_MODES
         self._attr_current_option = DEFAULT_DISTRIBUTION_MODE
 
     @property
@@ -161,14 +135,10 @@ class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEnt
         last_state = await self.async_get_last_state()
         if last_state is not None and last_state.state in self._attr_options:
             self._attr_current_option = last_state.state
-        self.async_write_ha_state()
-        self._write_to_hub_data(self._attr_current_option)
+        self._publish(self._attr_current_option)
 
     async def async_select_option(self, option: str) -> None:
-        if option in self._attr_options:
-            self._attr_current_option = option
-            self.async_write_ha_state()
-            self._write_to_hub_data(option)
-            _LOGGER.info(f"Distribution mode changed to: {option}")
-        else:
-            _LOGGER.error(f"Invalid distribution mode selected: {option}")
+        # HA's select.select_option has already rejected an unknown option.
+        self._attr_current_option = option
+        self._publish(option)
+        _LOGGER.info(f"Distribution mode changed to: {option}")

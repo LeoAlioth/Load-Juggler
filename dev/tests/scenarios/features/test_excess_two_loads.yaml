@@ -47,7 +47,6 @@ scenarios:
         priority: 1
         current_temperature: 45
         normal_temperature: 45
-        boost_temperature: 65
         l1_phase: "B"
       - entity_id: "station"
         device_type: "power_station"
@@ -98,7 +97,6 @@ scenarios:
         priority: 1
         current_temperature: 45
         normal_temperature: 45
-        boost_temperature: 65
         l1_phase: "B"
       - entity_id: "station"
         device_type: "power_station"
@@ -147,7 +145,6 @@ scenarios:
         priority: 1
         current_temperature: 45
         normal_temperature: 45
-        boost_temperature: 65
         l1_phase: "B"
       - entity_id: "station"
         device_type: "power_station"

@@ -3,10 +3,11 @@
 The module-level utilities the flow steps lean on, none of them bound to a flow
 instance: the unit sets a form may offer (one declaration, shared with the
 readers), the entity-unit and forecast-device validators, the optional-entity
-key groups and the normalizers that clear them, entity auto-detection, the
-device-power resolver, entry-title composition, the controlled-device and
-priority-order helpers behind the priority page, the two OCPP probes the
-charger wizard asks the charger, and the hub phase count derived from the
+key groups and the normalizers that clear them, entity auto-detection,
+entry-title composition, the controlled-device and priority-order helpers
+behind the priority page (and the circuit-group load pickers), the two OCPP
+probes the charger wizard asks the charger, the station power-window check,
+the charger's hidden-leg fill, and the hub phase count derived from the
 configured grid CTs. The OCPP registry scan itself lives in the package-root
 ``ocpp_discovery.py``, where the engine can reach it too.
 
@@ -29,6 +30,9 @@ from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
@@ -45,21 +49,22 @@ from ..const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
     CONF_PRIORITY_ORDER,
-    CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
     CONF_STATION_AC_OUTPUT_ENTITY_ID,
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
-    CONF_TANK_POWER_DEVICE_ID,
+    CONF_STATION_MAX_CHARGE_POWER,
+    CONF_STATION_MIN_CHARGE_POWER,
     CONF_TANK_POWER_ENTITY_ID,
     CHARGE_LIMIT_UNIT_AMPS,
     CHARGE_RATE_UNIT_AMPS,
     CHARGE_RATE_UNIT_WATTS,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_LIMIT_UNIT,
+    DEFAULT_STATION_MAX_CHARGE_POWER,
+    DEFAULT_STATION_MIN_CHARGE_POWER,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -67,11 +72,12 @@ from ..const import (
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
 )
-from ..helpers import get_entry_value, normalize_optional_entity
+from ..detection_patterns import PHASE_PATTERNS
+from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
+from ..phases import beside, match_meter_entities
 from ..registry import get_inverters_for_hub
 
 _LOGGER = logging.getLogger(__name__)
-_POWER_FACTOR = 0.9  # 90% of detected limit for safe headroom
 
 # One declaration, shared with the readers: a unit offered here must be one
 # units.py can convert (see ENTITY_UNIT_CONTRACTS and test_unit_contracts.py).
@@ -87,10 +93,8 @@ _VOLTAGE_UNITS = units.VOLTAGE_UNITS
 #   hub grid (create + options)   _GRID_UNIT_MAP
 #   inverter config (create)      _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP
 #   inverter battery (create)     _BATTERY_UNIT_MAP
-#   inverter control (create)     _WRITE_CONTROL_UNIT_MAP
-#   inverter (options, one page)  all four of the above
-#   hub inverter (options)        _INVERTER_OUTPUT_UNIT_MAP
-#   hub battery (options)         _SOLAR_UNIT_MAP | _BATTERY_UNIT_MAP
+#   inverter control (create)     _write_control_unit_map(data)
+#   inverter (options, per page)  the matching one of the above
 #
 # Grouping rather than paging is what keeps a create/options twin pair honest:
 # both sides of a group get the same units by construction, and a multi-step
@@ -117,34 +121,22 @@ _BATTERY_UNIT_MAP = {
 _WRITE_CONTROL_UNIT_MAP = {
     # The charge-limit register is NOT here: it is written in whatever unit the
     # user chose (CONF_CHARGE_LIMIT_UNIT), so it has no fixed physical domain -
-    # _validate_charge_limit_unit checks it against the choice instead.
+    # _write_control_unit_map adds it against the choice instead.
     CONF_BATTERY_VOLTAGE_ENTITY_ID: _VOLTAGE_UNITS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID: _SOC_UNITS,
 }
 
 
-def _validate_charge_limit_unit(hass, user_input: dict, errors: dict) -> None:
-    """Validate the charge-limit register entity against the CHOSEN unit.
-
-    The register is written raw in the unit the user declared
-    (CONF_CHARGE_LIMIT_UNIT: DC amps on a Deye, watts elsewhere), so unlike the
-    physical-domain fields there is no canonical unit to convert into - an "A"
-    register configured as watts is exactly the mistake this catches. Skips
-    like _validate_entity_units: no entity, no state, or no unit → no error.
-    """
-    entity_id = user_input.get(CONF_CHARGE_LIMIT_ENTITY_ID)
-    if not entity_id:
-        return
-    state = hass.states.get(entity_id)
-    if units.is_unavailable(state):
-        return
-    unit = state.attributes.get("unit_of_measurement")
-    if not unit:
-        return
-    chosen = user_input.get(CONF_CHARGE_LIMIT_UNIT) or DEFAULT_CHARGE_LIMIT_UNIT
-    expected = _CURRENT_UNITS if chosen == CHARGE_LIMIT_UNIT_AMPS else _POWER_UNITS
-    if unit not in expected:
-        errors[CONF_CHARGE_LIMIT_ENTITY_ID] = "invalid_unit"
+def _write_control_unit_map(data: dict) -> dict:
+    """_WRITE_CONTROL_UNIT_MAP plus the charge-limit register, checked against
+    the CHOSEN unit: the register is written raw in the unit the user declared
+    (CONF_CHARGE_LIMIT_UNIT: DC amps on a Deye, watts elsewhere), so an "A"
+    register configured as watts is exactly the mistake this catches."""
+    chosen = data.get(CONF_CHARGE_LIMIT_UNIT) or DEFAULT_CHARGE_LIMIT_UNIT
+    register_units = (
+        _CURRENT_UNITS if chosen == CHARGE_LIMIT_UNIT_AMPS else _POWER_UNITS
+    )
+    return {**_WRITE_CONTROL_UNIT_MAP, CONF_CHARGE_LIMIT_ENTITY_ID: register_units}
 
 
 def _validate_entity_units(
@@ -205,7 +197,7 @@ def _normalize_inverter_power_caps(data: dict) -> None:
     """0 means "not configured" for the inverter power caps → store as None.
 
     In-place, and the one copy for every page that collects them: the inverter
-    create chain, the inverter options page and the legacy hub-inverter page.
+    create chain and the inverter options page.
     The schema builders do the reverse (``or 0``) so the round-trip holds.
     """
     for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE):
@@ -233,7 +225,7 @@ _INVERTER_ENTITY_KEYS = [
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
 ]
 _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
-_TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_TANK_POWER_DEVICE_ID]
+_TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID]
 _STATION_ENTITY_KEYS = [
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -269,35 +261,16 @@ def _normalize_optional_inputs(
     return normalized
 
 
-def _normalize_forecast_list(data: dict) -> dict:
-    """Normalize the solar forecast device list (battery step).
+def _normalize_list(data: dict, key: str) -> None:
+    """Store a multi-select's list at ``key``, [] when it was emptied - in place.
 
-    Separate from _normalize_optional_inputs, which is per-key scalar: the
-    multi-device selector yields a list and omits the key entirely when
-    cleared, so an emptied selection must become [] (feature off), not a
-    stale stored value. Submitting the form also drops any legacy
-    directly-configured sensor list - the device selection replaces it.
+    Separate from _normalize_optional_inputs, which is per-key scalar: a
+    multi-select yields a list and omits the key entirely once the user
+    clears it, so an emptied selection must become [] (the forecast devices,
+    the SOC slots - whose [] removes the Battery SOC Control switch and sensor
+    again - the inverter features), never a stale stored value.
     """
-    data[CONF_SOLAR_FORECAST_DEVICE_IDS] = [
-        d for d in (data.get(CONF_SOLAR_FORECAST_DEVICE_IDS) or []) if d
-    ]
-    data[CONF_SOLAR_FORECAST_ENTITY_IDS] = []
-    return data
-
-
-def _normalize_soc_limit_list(data: dict) -> dict:
-    """Normalize the SOC-ceiling target list (inverter write-control step).
-
-    Same reason as the forecast list above and not the scalar path: a
-    multi-entity selector yields a list and omits the key entirely once the
-    user clears it, so an emptied selection must become [] - which is what
-    removes the Battery SOC Control switch and sensor again - rather than
-    leaving the previously stored slots armed.
-    """
-    data[CONF_SOC_LIMIT_ENTITY_IDS] = [
-        e for e in (data.get(CONF_SOC_LIMIT_ENTITY_IDS) or []) if e
-    ]
-    return data
+    data[key] = [item for item in (data.get(key) or []) if item]
 
 
 # --- Entity auto-detection (the suggested defaults a create page opens with) ---
@@ -319,41 +292,126 @@ def _entity_registry_ids(hass) -> list[str]:
     ]
 
 
+_PHASE_SLOTS = ("phase_a", "phase_b", "phase_c")
+
+
+def _first_match(entity_ids: list[str], pattern: str) -> str | None:
+    return next((eid for eid in entity_ids if re.match(pattern, eid)), None)
+
+
 def _auto_detect_phase_entities(
     entity_ids: list[str], pattern_sets: list[dict]
 ) -> dict[str, str | None]:
     """Auto-detect a matching set of phase A/B/C entities from pattern sets.
 
-    Returns dict with keys 'phase_a', 'phase_b', 'phase_c' (values may be None).
+    Returns dict with keys 'phase_a', 'phase_b', 'phase_c' - all three set
+    from the first pattern set that matches all three, or all None.
     """
     for pattern_set in pattern_sets:
-        a = next(
-            (
-                eid
-                for eid in entity_ids
-                if re.match(pattern_set["patterns"]["phase_a"], eid)
-            ),
-            None,
+        found = {slot: _first_match(entity_ids, pattern_set["patterns"][slot])
+                 for slot in _PHASE_SLOTS}
+        if all(found.values()):
+            return found
+    return dict.fromkeys(_PHASE_SLOTS)
+
+
+def _device_rejects(hass, eid: str, pattern_sets: list[dict] = PHASE_PATTERNS) -> bool:
+    """A pattern set that matches ``eid`` tests its device, and the device is
+    not the meter (detection_patterns' ``device``): ids a meter shares with
+    another device - ha-solarman's "Grid L1 Power" on an Afore string inverter.
+    The registry is read only for an entity such a pattern matches."""
+    tests = [s["device"] for s in pattern_sets
+             if "device" in s and any(re.match(p, eid) for p in s["patterns"].values())]
+    if not tests:
+        return False
+    entry = async_get_entity_registry(hass).async_get(eid)
+    device = entry and entry.device_id and async_get_device_registry(hass).async_get(entry.device_id)
+    return not all(test(device or None) for test in tests)
+
+
+def _device_rows(hass, entity_registry, device_id: str) -> list[dict]:
+    """A device's sensors that have a state, in the shape
+    phases.match_meter_entities reads: the kind from the device class, or
+    from the unit for a sensor published without one."""
+    rows = []
+    for e in er_async_entries_for_device(entity_registry, device_id):
+        state = hass.states.get(e.entity_id)
+        if e.domain != "sensor" or state is None:
+            continue
+        unit = state.attributes.get("unit_of_measurement")
+        kind = e.device_class or e.original_device_class or (
+            "power" if unit in _POWER_UNITS else "current" if unit in _CURRENT_UNITS else None
         )
-        b = next(
-            (
-                eid
-                for eid in entity_ids
-                if re.match(pattern_set["patterns"]["phase_b"], eid)
-            ),
-            None,
-        )
-        c = next(
-            (
-                eid
-                for eid in entity_ids
-                if re.match(pattern_set["patterns"]["phase_c"], eid)
-            ),
-            None,
-        )
-        if a and b and c:
-            return {"phase_a": a, "phase_b": b, "phase_c": c}
-    return {"phase_a": None, "phase_b": None, "phase_c": None}
+        rows.append({"entity_id": e.entity_id, "device_class": kind,
+                     "name": e.name or e.original_name or ""})
+    return rows
+
+
+def _power_beside(hass, triple: dict[str, str | None]) -> dict[str, str | None]:
+    """The meter's own watts in place of the amps a pattern found.
+
+    A grid CT's power reading is signed and its current very often is not
+    (see detection_patterns._power_first), and a meter publishing amps per
+    phase usually publishes watts beside them. Each amps entity's DEVICE is
+    asked for its power reading on that phase whose name runs alongside
+    (phases.beside). All three or none, so the triple stays one unit; a
+    triple that is already watts, or has an entity without a device (a YAML
+    sensor), comes back as it is. A triple on a device its pattern's test
+    turns down (_device_rejects) is none.
+    """
+    if any(eid and _device_rejects(hass, eid) for eid in triple.values()):
+        return dict.fromkeys(_PHASE_SLOTS)
+    entity_registry = async_get_entity_registry(hass)
+    watts = {}
+    for slot, eid in triple.items():
+        entry = entity_registry.async_get(eid) if eid else None
+        if entry is None or entry.device_id is None:
+            return triple
+        rows = _device_rows(hass, entity_registry, entry.device_id)
+        if any(r["entity_id"] == eid and r["device_class"] == "power" for r in rows):
+            return triple
+        watts[slot] = beside(rows, eid, "power", slot[-1])
+    return watts if all(watts.values()) else triple
+
+
+def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> dict[str, str | None]:
+    """No pattern set matched all three phases, or the one that did was on a
+    device its test turns down (_device_rejects): the first complete set left
+    once such entities are dropped, as _power_beside offers it; else the
+    phases the first set to match any did, completed from that entity's own
+    device - a single-phase site's one CT, never a triple stitched together
+    from several meters.
+
+    The device's readings are matched as a grid connection's
+    (phases.match_meter_entities, role "grid" - only that device's rows,
+    never the whole registry: there a charger's current_import_l1..l3 would
+    win on the shortest name). Its watts when they cover as many phases as
+    its amps, the amps otherwise, and what the pattern found when the
+    device covers fewer phases than that or there is no device.
+    """
+    entity_ids = [eid for eid in entity_ids if not _device_rejects(hass, eid, pattern_sets)]
+    complete = _power_beside(hass, _auto_detect_phase_entities(entity_ids, pattern_sets))
+    if all(complete.values()):
+        return complete
+    for pattern_set in pattern_sets:
+        found = {slot: _first_match(entity_ids, pattern_set["patterns"][slot])
+                 for slot in _PHASE_SLOTS}
+        if any(found.values()):
+            break
+    else:
+        return dict.fromkeys(_PHASE_SLOTS)
+    entity_registry = async_get_entity_registry(hass)
+    entry = entity_registry.async_get(next(eid for eid in found.values() if eid))
+    if entry is None or entry.device_id is None:
+        return found
+    meter = match_meter_entities(_device_rows(hass, entity_registry, entry.device_id), "grid")
+
+    def count(triple):
+        return sum(1 for eid in triple.values() if eid)
+
+    best = max(({slot: meter.get(f"{kind}_{slot[-1]}") for slot in _PHASE_SLOTS}
+                for kind in ("power", "current")), key=count)  # power on a tie
+    return best if count(best) >= count(found) else found
 
 
 def _auto_detect_entity(
@@ -361,44 +419,9 @@ def _auto_detect_entity(
 ) -> str | None:
     """Auto-detect a single entity from pattern sets. Returns first match."""
     for pattern_set in pattern_sets:
-        match = next(
-            (eid for eid in entity_ids if re.match(pattern_set["pattern"], eid)),
-            None,
-        )
+        match = _first_match(entity_ids, pattern_set["pattern"])
         if match:
             return match
-    return None
-
-
-def _auto_detect_entity_value(
-    hass, pattern_sets: list[dict], factor: float = 1.0
-) -> int | None:
-    """Auto-detect an entity and read its numeric state value.
-
-    Returns int(state * factor), or None if not found / not numeric. Scans the
-    registry itself - the one caller (a form hint) detects exactly once.
-    """
-    entity_id = _auto_detect_entity(_entity_registry_ids(hass), pattern_sets)
-    if not entity_id:
-        return None
-    state = hass.states.get(entity_id)
-    if not state:
-        return None
-    try:
-        return int(float(state.state) * factor)
-    except (ValueError, TypeError):
-        return None
-
-
-def _resolve_device_power_entity(hass, device_id: str) -> str | None:
-    """Return the first power-class sensor entity belonging to a device."""
-    entity_registry = async_get_entity_registry(hass)
-    for entity in entity_registry.entities.values():
-        if entity.device_id != device_id:
-            continue
-        device_class = entity.device_class or entity.original_device_class
-        if device_class == "power":
-            return entity.entity_id
     return None
 
 
@@ -427,6 +450,14 @@ def _controlled_devices(hass, hub_entry_id: str) -> list:
         for e in hass.config_entries.async_entries(DOMAIN)
         if e.data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD
         and e.data.get(CONF_HUB_ENTRY_ID) == hub_entry_id
+    ]
+
+
+def _load_options(hass, hub_entry_id: str) -> list[dict]:
+    """Select options for every load on a hub (the circuit-group pickers)."""
+    return [
+        {"value": e.entry_id, "label": e.title}
+        for e in _controlled_devices(hass, hub_entry_id)
     ]
 
 
@@ -488,141 +519,61 @@ def _apply_priority_order(hass, devices: list, chosen: list) -> None:
 
 
 async def _detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
+    """The charge rate unit the charger accepts: "A", "W", or None if unknown.
+
+    From its ChargingScheduleAllowedChargingRateUnit; a charger that takes
+    both is driven in amps.
     """
-    Detect the charge rate unit supported by the OCPP charger.
-
-    Queries the charger via OCPP GetConfiguration for the
-    ChargingScheduleAllowedChargingRateUnit key.
-
-    Returns:
-        "A" for Amperes, "W" for Watts, None if detection fails.
-    """
-    if not ocpp_device_id:
-        _LOGGER.debug("No OCPP device ID - cannot detect charge rate unit")
+    value = await ocpp_config_value(
+        hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
+    )
+    if not value:
         return None
-
-    if not hass.services.has_service("ocpp", "get_configuration"):
-        _LOGGER.debug("ocpp.get_configuration service not available")
-        return None
-
-    try:
-        response = await hass.services.async_call(
-            "ocpp",
-            "get_configuration",
-            {
-                "devid": ocpp_device_id,
-                "ocpp_key": "ChargingScheduleAllowedChargingRateUnit",
-            },
-            blocking=True,
-            return_response=True,
-        )
-
-        if not response:
-            _LOGGER.debug("Empty response from ocpp.get_configuration")
-            return None
-
-        # Parse the response - handle multiple possible formats
-        value = None
-        if isinstance(response, dict):
-            # Direct key-value: {"ChargingScheduleAllowedChargingRateUnit": "Current"}
-            value = response.get("ChargingScheduleAllowedChargingRateUnit")
-            # Or nested: {"value": "Current"}
-            if value is None:
-                value = response.get("value")
-            # Or list format: {"configurationKey": [{"key": ..., "value": ...}]}
-            if value is None:
-                for item in response.get("configurationKey", []):
-                    if (
-                        isinstance(item, dict)
-                        and item.get("key")
-                        == "ChargingScheduleAllowedChargingRateUnit"
-                    ):
-                        value = item.get("value")
-                        break
-
-        if not value:
-            _LOGGER.debug(
-                "Could not parse charge rate unit from OCPP response: %s", response
-            )
-            return None
-
-        value = str(value).strip()
-        value_lower = value.lower()
-        _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
-
-        if "current" in value_lower and "power" in value_lower:
-            return CHARGE_RATE_UNIT_AMPS  # Both supported - prefer Amps
-        elif "power" in value_lower:
-            return CHARGE_RATE_UNIT_WATTS
-        elif "current" in value_lower:
-            return CHARGE_RATE_UNIT_AMPS
-        else:
-            _LOGGER.warning(
-                "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s",
-                value,
-            )
-            return None
-
-    except Exception as e:
-        _LOGGER.warning("Could not detect charge rate unit via OCPP: %s", e)
-        return None
+    value = str(value).strip()
+    _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
+    if "current" in value.lower():
+        return CHARGE_RATE_UNIT_AMPS
+    if "power" in value.lower():
+        return CHARGE_RATE_UNIT_WATTS
+    _LOGGER.warning(
+        "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s", value
+    )
+    return None
 
 
 async def _detect_meter_value_interval(hass, ocpp_device_id: str) -> int | None:
-    """Detect the MeterValueSampleInterval from the OCPP charger.
+    """The charger's MeterValueSampleInterval in seconds, clamped to 5-300.
 
-    This tells us how often the charger reports meter values, which is the
-    practical minimum interval for sending charging profile updates.
-
-    Returns:
-        Interval in seconds, or None if detection fails.
+    How often it reports meter values - the practical minimum interval for
+    sending charging profile updates. None if detection fails.
     """
-    if not ocpp_device_id:
+    value = await ocpp_config_value(hass, ocpp_device_id, "MeterValueSampleInterval")
+    if value is None:
         return None
-
-    if not hass.services.has_service("ocpp", "get_configuration"):
-        return None
-
     try:
-        response = await hass.services.async_call(
-            "ocpp",
-            "get_configuration",
-            {
-                "devid": ocpp_device_id,
-                "ocpp_key": "MeterValueSampleInterval",
-            },
-            blocking=True,
-            return_response=True,
-        )
-
-        if not response:
-            return None
-
-        value = None
-        if isinstance(response, dict):
-            value = response.get("MeterValueSampleInterval")
-            if value is None:
-                value = response.get("value")
-            if value is None:
-                for item in response.get("configurationKey", []):
-                    if (
-                        isinstance(item, dict)
-                        and item.get("key") == "MeterValueSampleInterval"
-                    ):
-                        value = item.get("value")
-                        break
-
-        if value is None:
-            return None
-
         interval = int(value)
-        _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
-        # Clamp to our supported range (5–300s)
-        return max(5, min(300, interval))
-
-    except Exception as e:
-        _LOGGER.debug("Could not detect MeterValueSampleInterval via OCPP: %s", e)
+    except (TypeError, ValueError):
         return None
+    _LOGGER.info("OCPP MeterValueSampleInterval = %ds", interval)
+    return max(5, min(300, interval))
+
+
+def _check_power_window(data: dict, errors: dict) -> None:
+    """A power station's max charge power may not sit below its min."""
+    if data.get(
+        CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
+    ) < data.get(CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER):
+        errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
+
+
+def _fill_hidden_legs(data: dict, hub_phases: int) -> None:
+    """Map the charger legs a site with fewer phases hides onto L1's phase -
+    in place - so the stored mask matches the phases the charger can use."""
+    l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
+    if hub_phases < 2:
+        data[CONF_CHARGER_L2_PHASE] = l1
+    if hub_phases < 3:
+        data[CONF_CHARGER_L3_PHASE] = l1
 
 
 def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
@@ -671,13 +622,6 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
         if any(source.get(key) for source in sources)
     )
     return max(count, 1)
-
-
-def _normalize_features_list(data: dict) -> dict:
-    """The features multi-select omits its key when emptied - store []."""
-    normalized = dict(data)
-    normalized[CONF_INVERTER_FEATURES] = list(normalized.get(CONF_INVERTER_FEATURES) or [])
-    return normalized
 
 
 def _validate_inverter_features(data: dict, errors: dict) -> None:

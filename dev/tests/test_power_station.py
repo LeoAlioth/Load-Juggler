@@ -112,22 +112,9 @@ def test_station_modulates_so_it_uses_the_evse_mode_set():
     ]
 
 
-def test_station_modes_are_distinct_objects_from_the_evse_ones():
-    # OperatingMode uses identity equality, so modes that coincide on every
-    # display field still map to their own engine behavior.
-    from custom_components.dynamic_ocpp_evse.const import (
-        EVSE_MODE_EXCESS,
-        STATION_MODE_EXCESS,
-    )
-    assert STATION_MODE_EXCESS is not EVSE_MODE_EXCESS
-    assert STATION_MODE_EXCESS != EVSE_MODE_EXCESS
-
-
 def test_every_station_mode_maps_to_a_behavior():
-    from custom_components.dynamic_ocpp_evse.const import behavior_for
-
     for mode in OPERATING_MODES_POWER_STATION:
-        assert behavior_for(mode)
+        assert mode.behavior
 
 
 def test_excess_mode_competes_at_the_lowest_urgency():

@@ -27,22 +27,13 @@ never had the fault; they are here so they keep not having it. The measured
 figures are in each test's docstring.
 """
 
-from types import SimpleNamespace
-
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse.const import (
-    CONF_CHARGER_ID,
     CONF_ENTITY_ID,
-    CONF_EVSE_CURRENT_IMPORT_ENTITY_ID,
-    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
-    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
-    CONF_HUB_ENTRY_ID,
-    CONF_LOAD_PRIORITY,
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
-    CONF_PHASES,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     DISTRIBUTION_MODE_PRIORITY,
@@ -52,16 +43,15 @@ from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    ENTRY_TYPE_LOAD,
 )
 
-V = 230.0
+from .closed_loop import AMPS, DT, V, close_loop, evse_entry, slew
+
 BREAKER_A = 25.0
 HOUSE_A = 8.0
 ALLOWANCE_A = BREAKER_A - HOUSE_A     # 17 A: all the car may take
 MIN_A = 6.0
 MAX_A = 32.0
-DT = 2                                # the default site cycle, seconds
 PLUG_IN = 30                          # cycles on the household alone first
 PAUSE = 90                            # the car stops taking current here...
 RESUME = 150                          # ...for 120 s, well past the settle window
@@ -93,27 +83,8 @@ def _hub(slug):
     )
 
 
-def _evse(hub):
-    """A 1-phase 6→32 A Standard EVSE: the breaker binds, not the car."""
-    return MockConfigEntry(
-        domain=DOMAIN, version=2, minor_version=4, title="PBM EVSE",
-        data={CONF_NAME: "PBM EVSE",
-              CONF_ENTITY_ID: "pbm_evse",
-              ENTRY_TYPE: ENTRY_TYPE_LOAD,
-              CONF_CHARGER_ID: "pbm_evse",
-              CONF_EVSE_CURRENT_IMPORT_ENTITY_ID: "sensor.pbm_evse_current",
-              CONF_HUB_ENTRY_ID: hub.entry_id},
-        options={
-            CONF_LOAD_PRIORITY: 1,
-            CONF_EVSE_MINIMUM_CHARGE_CURRENT: int(MIN_A),
-            CONF_EVSE_MAXIMUM_CHARGE_CURRENT: int(MAX_A),
-            CONF_PHASES: 1,
-        },
-    )
-
-
 async def _session(hass, mode, car_ramp_a_s, paused_draw_a):
-    """Close the loop: engine permit → permit pipeline → car → meters → engine.
+    """A 1-phase 6→32 A Standard EVSE: the breaker binds, not the car.
 
     The connector reads Available for ``PLUG_IN`` cycles so every input EMA is
     settled on the household alone. Then the car charges, and from ``PAUSE``
@@ -121,61 +92,26 @@ async def _session(hass, mode, car_ramp_a_s, paused_draw_a):
     while the connector keeps reporting Charging. The car slews its draw toward
     the lesser of its command and what it wants at ``car_ramp_a_s``.
     """
-    from freezegun import freeze_time
-    from custom_components.dynamic_ocpp_evse.control.smoothing import (
-        apply_smoothing,
-    )
-    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
-        run_hub_calculation,
-    )
-
     slug = f"{mode[:4].lower()}{car_ramp_a_s:g}d{paused_draw_a:g}".replace(".", "")
     hub = _hub(slug)
-    hub.add_to_hass(hass)
-    evse = _evse(hub)
-    evse.add_to_hass(hass)
-    hass.data[DOMAIN] = {
-        "hubs": {hub.entry_id: {
-            "loads": [evse.entry_id], "distribution_mode": mode,
-        }},
-        "loads": {evse.entry_id: {
-            "entry": evse, "hub_entry_id": hub.entry_id, "dynamic_control": True,
-        }},
-        "load_allocations": {evse.entry_id: 0},
-        "inverters": {},
-    }
     hass.states.async_set(STATUS, "Available")
-    # apply_smoothing keeps its state on the load entity and touches only these.
-    permit_state = SimpleNamespace(
-        _attr_name="pbm_evse", _ema_current=None, _schmitt_current=None,
-        _schmitt_state="rising", _rate_limited_current=0.0,
-    )
+    draw = 0.0
 
-    trace = []
-    draw = command = 0.0
-    step = car_ramp_a_s * DT
-    with freeze_time("2026-09-24 10:00:00+00:00") as frozen:
-        for i in range(CYCLES):
-            frozen.tick(DT)
-            if i == PLUG_IN:
-                hass.states.async_set(STATUS, "Charging")
-            if i >= PLUG_IN:
-                wants = paused_draw_a if PAUSE <= i < RESUME else MAX_A
-                target = min(command, wants)
-                draw += max(-step, min(step, target - draw))
-            hass.states.async_set(
-                "sensor.pbm_phase_a", f"{HOUSE_A + draw:.3f}",
-                {"device_class": "current", "unit_of_measurement": "A"})
-            hass.states.async_set(
-                "sensor.pbm_evse_current", f"{draw:.3f}",
-                {"device_class": "current", "unit_of_measurement": "A"})
-            result = run_hub_calculation(hass, hub)
-            # The load processor's own rounding (entities/load.py).
-            permit = round(result["load_available"][evse.entry_id], 1)
-            command = apply_smoothing(permit_state, permit, False, hub)
-            trace.append({"i": i, "draw": draw, "permit": permit,
-                          "command": command, "import": HOUSE_A + draw})
-    return trace
+    def plant(i, command):
+        nonlocal draw
+        if i == PLUG_IN:
+            hass.states.async_set(STATUS, "Charging")
+        if i >= PLUG_IN:
+            wants = paused_draw_a if PAUSE <= i < RESUME else MAX_A
+            draw = slew(draw, min(command, wants), car_ramp_a_s * DT)
+        hass.states.async_set("sensor.pbm_phase_a", f"{HOUSE_A + draw:.3f}", AMPS)
+        hass.states.async_set("sensor.pbm_evse_current", f"{draw:.3f}", AMPS)
+        return {"draw": draw, "import": HOUSE_A + draw}
+
+    return await close_loop(
+        hass, hub, evse_entry(hub, "pbm_evse", lo=int(MIN_A), hi=int(MAX_A)),
+        CYCLES, plant, at="2026-09-24 10:00:00+00:00",
+        hub_data={"distribution_mode": mode})
 
 
 def _window(trace, start, end):
