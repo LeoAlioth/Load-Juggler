@@ -348,6 +348,9 @@ WATTS_PROFILE_TOLERANCE = 0.10
 # that fires, as before. (Not 75 - that would be the SIXTH check.) The
 # mismatch COUNT survives as the auto_reset_mismatch_count attribute, which is
 # a useful diagnostic and public; it no longer decides anything.
+# ...and never shorter than the charger's own readout gap (control/compliance.py):
+# a go-eCharger V4 reporting every 15 minutes was judged stale and reset every
+# 12.5 minutes, 44 reboots in ten days (2026-10-02).
 AUTO_RESET_MISMATCH_SECONDS = 60.0
 AUTO_RESET_COOLDOWN_SECONDS = 120    # seconds to wait after reset before checking again
 ESCALATION_PROFILE_RESET_LIMIT = 3   # profile resets before escalating to hard reset

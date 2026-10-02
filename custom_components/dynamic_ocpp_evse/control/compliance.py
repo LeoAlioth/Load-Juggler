@@ -23,7 +23,9 @@ from ..const import (
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
     EVSE_RT_COMMANDED_LIMIT,
+    EVSE_RT_READOUT_WATCH,
 )
+from ..engine.readout_watch import normal_gap
 from ..helpers import get_entry_value
 from .. import units
 
@@ -44,6 +46,15 @@ def firmware_busy(sensor) -> bool:
         return False
     changed = getattr(state, "last_changed", None)
     return changed is not None and (datetime.now(timezone.utc) - changed).total_seconds() < FIRMWARE_BUSY_HOLD_SECONDS
+
+
+def _readout_gap(sensor):
+    """The longest recent gap between the charger's meter readings, in
+    seconds (engine/readout_watch.py) - None until the watch has learned it,
+    or on a load that has none."""
+    runtime = getattr(sensor, "_runtime", None)
+    state = runtime().get(EVSE_RT_READOUT_WATCH) if callable(runtime) else None
+    return normal_gap(state) if state else None
 
 
 def _clear_mismatch(sensor) -> None:
@@ -178,6 +189,15 @@ async def check_profile_compliance(
         _clear_mismatch(sensor)
         return
 
+    # Judged no faster than the charger reports. The offered current is read
+    # off the charger's meter values, and a charger that sends them only now
+    # and then shows a stale figure for that long after every command: a
+    # go-eCharger V4 with no transaction running sent clock-aligned values
+    # every 15 minutes, so judged in 60 s it drew a hard reset every 12.5
+    # minutes - 44 reboots in ten days (2026-10-02). The window is the
+    # readout's own longest gap where that is longer.
+    window = max(AUTO_RESET_MISMATCH_SECONDS, _readout_gap(sensor) or 0.0)
+
     diff = abs(current_offered - sensor._last_commanded_limit)
     if diff > tolerance:
         # The count is the published diagnostic; the clock is the decision.
@@ -196,7 +216,7 @@ async def check_profile_compliance(
             diff,
             sensor._mismatch_count,
             mismatched_s,
-            AUTO_RESET_MISMATCH_SECONDS,
+            window,
         )
     else:
         if sensor._mismatch_count > 0:
@@ -210,7 +230,7 @@ async def check_profile_compliance(
         sensor._profile_reset_count = 0
         return
 
-    if mismatched_s >= AUTO_RESET_MISMATCH_SECONDS:
+    if mismatched_s >= window:
         _clear_mismatch(sensor)
         sensor._profile_reset_count += 1
 
