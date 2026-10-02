@@ -4834,13 +4834,18 @@ def _advice_cycle(inverter_entry, advice_w):
     The engine is patched out on purpose: producing this number for real needs a
     whole configured clipping forecast, and these tests are about who performs
     the write and when, not about how the advice is computed. ``None`` is the
-    release signal - the forecast having nothing to say.
+    release signal - the forecast having nothing to say. The gate rides beside
+    the advice as ``engine/hub_result`` publishes it: on with an advice, off
+    without one.
     """
     return patch(
         "custom_components.dynamic_ocpp_evse.sensor.run_hub_calculation",
         return_value={
             "inverters": {
-                inverter_entry.entry_id: {"forecast_charge_limit_w": advice_w}
+                inverter_entry.entry_id: {
+                    "forecast_charge_limit_w": advice_w,
+                    "forecast_charge_limiting": advice_w is not None,
+                }
             },
         },
     )
@@ -5000,8 +5005,8 @@ async def test_repeated_cycles_write_once_inside_the_interval(
     """The cadence change's whole risk, at the entity level.
 
     The check now runs every site cycle (2 s by default) instead of every 10 s
-    platform poll. The min-interval is wall-clock, so five cycles back to back
-    are still one write.
+    platform poll. The persistence window is wall-clock, so five cycles back to
+    back are still one write: the engagement, and a reduction still waiting.
     """
     await _add_charge_control(hass, inverter_entry)
 

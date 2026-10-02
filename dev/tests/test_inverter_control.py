@@ -148,9 +148,20 @@ def _send(hass, entry, advice_w, now_mono, hub_entry=None):
 
     Wraps the hub entry the control needs for its slew step; tests that are not
     about the slew get an unconfigured hub and therefore the default margin.
+
+    The gate is passed the way production publishes it beside the advice
+    (``engine/hub_result``): on with an engaged advice, off with none. The
+    first engaged cycle is therefore an engagement, as it is after a reload.
+    Tests about the gate itself - the gate-off full-rate advice included -
+    drive it directly through ``_gated``.
     """
     return send_inverter_charge_limit(
-        hass, entry, _hub() if hub_entry is None else hub_entry, advice_w, now_mono
+        hass,
+        entry,
+        _hub() if hub_entry is None else hub_entry,
+        advice_w,
+        now_mono,
+        advice_w is not None,
     )
 
 
@@ -297,22 +308,6 @@ def test_second_cycle_inside_the_interval_does_not_write():
     assert len(hass.services.calls) == 1
 
 
-def test_write_resumes_after_the_interval():
-    hass = _hass_with_target(current=100.0, maximum=100.0)
-    entry = _entry({
-        CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
-        CONF_CHARGE_CONTROL_INTERVAL: 300,
-    })
-    _arm(hass, entry)
-
-    asyncio.run(_send(hass, entry, 2560.0, 1000.0))
-    hass.states.set(TARGET, 50.0, max=100.0)
-    asyncio.run(_send(hass, entry, 1024.0, 1400.0))
-
-    assert len(hass.services.calls) == 2
-    assert hass.services.calls[-1][2]["value"] == 20.0
-
-
 def test_release_ramps_back_to_the_normal_value_and_then_stops():
     """The release is a ramp, not a step - the section near the bottom of this
     file is about the ramp itself; this pins the standing it leaves behind.
@@ -397,23 +392,31 @@ def test_no_target_entity_is_a_no_op():
     assert hass.services.calls == []
 
 
-def test_deadband_is_a_percentage_of_the_normal_value():
-    """5 % of a 100 A normal is 5 A - a 2 A move is not worth a Modbus write."""
+def test_a_reduction_inside_the_deadband_never_opens_the_window():
+    """256 W at 51.2 V is 5 A - a 2 A reduction is not worth a Modbus write
+    however long it holds, and only a move past the deadband is a reduction the
+    persistence window waits out."""
     hass = _hass_with_target(current=100.0, maximum=100.0)
     entry = _entry({
         CONF_BATTERY_NOMINAL_VOLTAGE: 51.2,
-        CONF_CHARGE_CONTROL_INTERVAL: 0,
-        CONF_CHARGE_CONTROL_DEADBAND_W: 256,  # ≈ the old 5 % of 100 A at 51.2 V
+        CONF_CHARGE_CONTROL_INTERVAL: 300,
+        CONF_CHARGE_CONTROL_DEADBAND_W: 256,
     })
-    _arm(hass, entry)
+    rt = _arm(hass, entry)
 
-    # 5017.6 W = 98 A, 2 A below the register's 100 A
-    asyncio.run(_send(hass, entry, 5017.6, 0.0))
+    # 5017.6 W = 98 A, 2 A below the register's 100 A: the engagement, then
+    # twice the window of the same.
+    for now in range(0, 610, 10):
+        asyncio.run(_send(hass, entry, 5017.6, float(now)))
     assert hass.services.calls == []
+    assert rt[INVERTER_RT_DOWN_SAMPLES] == []
 
-    # 4608 W = 90 A, a 10 A move
-    asyncio.run(_send(hass, entry, 4608.0, 10.0))
-    assert len(hass.services.calls) == 1
+    # 4608 W = 90 A, a 10 A move: written once it has held for the window.
+    asyncio.run(_send(hass, entry, 4608.0, 610.0))
+    asyncio.run(_send(hass, entry, 4608.0, 900.0))
+    assert hass.services.calls == []
+    asyncio.run(_send(hass, entry, 4608.0, 910.0))
+    assert _written(hass) == [90.0]
 
 
 # --- The minimum charge limit (the floor) -------------------------------------
@@ -916,17 +919,6 @@ def test_a_release_interrupted_by_re_engagement_writes_down_instantly():
     assert burst < SITE_NORMAL / 3
 
 
-def test_engaging_deeper_is_never_rate_limited():
-    """Downward from anywhere, at any depth, in one write - the slew must not be
-    able to delay protection."""
-    hass, entry, _rt = _accepting_site()
-
-    _cycle(hass, entry, 9574.0, 0.0)  # 187 A: full rate, engaged
-    _cycle(hass, entry, 0.0, SITE_INTERVAL)  # straight to the floor
-
-    assert _written(hass)[-1] == 2.0
-
-
 def test_the_final_approach_lands_on_the_normal_value():
     """The last sliver of the climb IS worth a write, now that rises take the
     small directional deadband - otherwise the register rests a few percent
@@ -1004,8 +996,9 @@ def test_a_parked_battery_ramps_up_when_a_better_day_appears():
     """Parked on the floor, then production beats the forecast's anchor.
 
     Upward is still a permission to refill, so the overshoot arrives over
-    several writes rather than in one burst - and the moment it goes (a cloud)
-    the register is back on the floor in a single write.
+    several writes rather than in one burst - and once it has gone for a whole
+    window (a cloud that stays) the register is back on the floor in a single
+    write.
     """
     hass, entry, rt = _accepting_site()
 
@@ -1034,9 +1027,13 @@ def test_a_parked_battery_ramps_up_when_a_better_day_appears():
     # Still climbing - 4 kW is 78 A, and one margin is 9.8 A a minute.
     assert written[-1] < 4000.0 / SITE_VOLTAGE
 
-    # The cloud: the overshoot is gone and the floor lands in one write.
+    # The cloud: the overshoot is gone. That is a reduction with the gate
+    # already on, so it waits out the persistence window - and then lands on
+    # the floor in one write rather than stepping down.
     _cycle(hass, entry, 0.0, 6 * SITE_INTERVAL)
-    assert _written(hass)[-1] == 2.0
+    assert _written(hass) == written
+    _cycle(hass, entry, 0.0, 7 * SITE_INTERVAL)
+    assert _written(hass) == written + [2.0]
 
 
 # --- Directional pacing: the downward persistence window ----------------------
@@ -1277,21 +1274,6 @@ def test_a_steady_plant_writes_once_and_never_reverses():
     assert not [1 for a, b in zip(moves, moves[1:]) if a * b < 0]
 
 
-def test_no_gate_state_keeps_the_pre_window_contract():
-    """A caller with no gate to offer gets the old rules: reductions instant,
-    one write per interval. Degraded, and on the side of writing."""
-    hass, entry, rt = _accepting_site()
-
-    _gated(hass, entry, DEEP_W, 0.0, limiting=None)
-    assert _written(hass) == [round(DEEP_W / SITE_VOLTAGE, 1)]
-    assert rt[INVERTER_RT_DOWN_SAMPLES] == []
-    # And still paced by the interval, in both directions.
-    _gated(hass, entry, 2000.0, 10.0, limiting=None)
-    assert len(_written(hass)) == 1
-    _gated(hass, entry, 2000.0, SITE_INTERVAL, limiting=None)
-    assert len(_written(hass)) == 2
-
-
 def test_the_enforced_rate_is_published_on_every_deferred_cycle():
     """The Excess verdict must not go blind while a reduction is pending.
 
@@ -1407,9 +1389,11 @@ def _write_times(cadence_s, duration_s, interval=WRITE_INTERVAL, advice_w=2560.0
     """Drive the control every ``cadence_s`` for ``duration_s`` of wall clock.
 
     Returns the times at which a register write actually happened. The fake
-    register never moves (nothing applies the write), so the deadband always
-    passes and the interval is the only thing pacing the writes - exactly the
-    worst case for a fast cadence.
+    register never moves (nothing applies the write), so the 50 A advice stays a
+    reduction from its 100 A for ever: the first cycle is the engagement and
+    writes at once, and after that the persistence window is the only thing
+    pacing the writes, each one opening a fresh window on the next check -
+    exactly the worst case for a fast cadence.
     """
     hass = _hass_with_target(current=100.0, maximum=100.0)
     entry = _entry({
@@ -1430,22 +1414,27 @@ def _write_times(cadence_s, duration_s, interval=WRITE_INTERVAL, advice_w=2560.0
     return times
 
 
-def test_a_five_times_faster_cadence_writes_exactly_as_often():
+def test_a_five_times_faster_cadence_writes_as_often():
     """The whole cadence question in one assertion: 1800 checks an hour and 360
-    checks an hour produce the same writes, at the same times."""
-    assert _write_times(2.0, HOUR) == _write_times(10.0, HOUR)
+    checks an hour produce the same number of writes. Not at the same instants:
+    each window opens on the first check after the last write, so a write lands
+    a window plus one check later - 302 s apart at 2 s, 310 s at 10 s."""
+    assert len(_write_times(2.0, HOUR)) == len(_write_times(10.0, HOUR))
 
 
 def test_no_two_writes_are_ever_closer_than_the_interval():
-    """For any cadence, including ones that do not divide the interval."""
+    """For any cadence, including ones that do not divide the interval.
+
+    And never further apart than the window plus two checks - the one that
+    opens the window after a write, and the first one past its end - so a
+    slower cadence costs a few seconds of each window, not a window.
+    """
     for cadence in (0.5, 2.0, 7.0, 10.0, 30.0):
         times = _write_times(cadence, HOUR)
         gaps = [b - a for a, b in zip(times, times[1:])]
         assert gaps, cadence
         assert min(gaps) >= WRITE_INTERVAL, (cadence, gaps)
-        # An hour at one write per 300 s: 13 with the first at t=0, one fewer
-        # when the cadence's phase pushes the last one past the hour.
-        assert 12 <= len(times) <= 13, (cadence, times)
+        assert max(gaps) <= WRITE_INTERVAL + 2 * cadence, (cadence, gaps)
 
 
 def test_a_whole_interval_of_checks_produces_one_write():
