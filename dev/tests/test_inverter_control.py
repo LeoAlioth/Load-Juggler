@@ -1447,6 +1447,113 @@ def test_the_switch_gate_holds_for_every_cycle_of_an_hour():
     assert _write_times(2.0, HOUR, enabled=False) == []
 
 
+# --- A register that does not report back what it was told -------------------
+#
+# Found 2026-10-02 in the test rig: floor at 2 A, an advice of 4 kW, and a
+# register that went on reporting 2 A. The ramp to 78.1 A was followed by 22
+# identical writes of 78.1 A in 44 s. The write decision compared the command
+# with the READ-BACK, and rises are not paced, so a register slow to report a
+# write - or one that clamps or ignores it - was sent the same value on every
+# site cycle; before the persistence window the write interval had capped that
+# at one write per 300 s. These drive an hour at the 2 s default cadence and
+# the 300 s default interval; ``report`` turns what the register has been told
+# (one entry per cycle) into what it reads back.
+
+ADVICE_4KW = 4000.0  # 78.1 A at 51.2 V
+HELD_A = round(ADVICE_4KW / SITE_VOLTAGE, 1)
+POLL_LAG = 15  # cycles - a 30 s integration poll behind a 2 s site cycle
+CLAMP_A = 50.0  # a firmware that holds the register below what it is sent
+
+
+def _unfaithful(report, advice_w=ADVICE_4KW, cadence=2.0):
+    """An hour against a register reading back ``report(told)``, parked on the
+    2 A floor. ``advice_w`` may be a function of time. Returns the write times
+    and values."""
+    advice = advice_w if callable(advice_w) else (lambda _now: advice_w)
+    hass = _hass_with_target(current=2.0, maximum=SITE_NORMAL)
+    entry = _site_entry({CONF_CHARGE_CONTROL_INTERVAL: WRITE_INTERVAL})
+    _arm(hass, entry)
+    told, times = [], []
+    now = 0.0
+    while now < HOUR:
+        written = _written(hass)
+        told.append(written[-1] if written else 2.0)
+        hass.states.set(TARGET, report(told), max=SITE_NORMAL)
+        asyncio.run(_send(hass, entry, advice(now), now))
+        if len(_written(hass)) > len(written):
+            times.append(now)
+        now += cadence
+    return times, _written(hass)
+
+
+def _climb(times, values):
+    """The writes up to the first one landing on 78.1 A, and the rest."""
+    end = values.index(HELD_A) + 1
+    assert times[:end] == [2.0 * n for n in range(end)]  # one per cycle
+    assert values[:end] == sorted(set(values[:end]))  # each a new, higher value
+    return times[end - 1:], values[end:]
+
+
+def _one_retry_per_interval(held_from, retries):
+    """The read-back is believed again once the interval has passed - so a
+    value it refused is retried, once per interval and never sooner."""
+    gaps = [b - a for a, b in zip(held_from, held_from[1:])]
+    assert gaps, held_from
+    assert all(WRITE_INTERVAL <= gap <= WRITE_INTERVAL + 4.0 for gap in gaps), gaps
+    # The climb lands at 14 s, so an hour holds 11 retries.
+    assert retries == [HELD_A] * 11
+
+
+def test_a_register_slow_to_report_a_write_is_not_written_again():
+    """30 s before the read-back shows each write: the climb, and nothing else."""
+    times, values = _unfaithful(lambda told: told[max(len(told) - 1 - POLL_LAG, 0)])
+    _held_from, after = _climb(times, values)
+    assert after == []
+
+
+def test_a_register_that_clamps_the_write_is_retried_once_per_interval():
+    times, values = _unfaithful(lambda told: min(told[-1], CLAMP_A))
+    held_from, after = _climb(times, values)
+    _one_retry_per_interval(held_from, after)
+
+
+def test_a_register_that_refuses_the_write_is_retried_once_per_interval():
+    """The rig's register: it never leaves the 2 A floor."""
+    times, values = _unfaithful(lambda _told: 2.0)
+    held_from, after = _climb(times, values)
+    _one_retry_per_interval(held_from, after)
+
+
+def test_a_moving_advice_does_not_hammer_a_clamped_register():
+    """4 kW and 3 kW on alternate cycles once the climb is done. Both are above
+    the 50 A the register reads back, but 3 kW is BELOW the 78.1 A it was told:
+    a reduction, which waits for its window - and 4 kW clears it every other
+    cycle, so only the interval's retry of 78.1 A is ever written."""
+    def advice(now):
+        return 3000.0 if now > 60.0 and int(now / 2.0) % 2 else ADVICE_4KW
+
+    times, values = _unfaithful(lambda told: min(told[-1], CLAMP_A), advice)
+    held_from, after = _climb(times, values)
+    _one_retry_per_interval(held_from, after)
+
+
+def test_the_gate_engaging_writes_over_a_write_the_register_has_not_shown():
+    """The engagement is protection, and the register's standing is what it
+    reads back: 2 A written 4 s ago does not stand in for a register still at
+    full rate when the cap engages again."""
+    hass = _hass_with_target(current=SITE_NORMAL, maximum=SITE_NORMAL)
+    entry = _site_entry()
+    _arm(hass, entry)
+
+    def cycle(advice_w, now):  # the register ignores every write
+        asyncio.run(_send(hass, entry, advice_w, now))
+
+    cycle(0.0, 0.0)  # engaging: the 2 A floor
+    cycle(None, 2.0)  # released - and the ramp back up waits for its interval
+    cycle(0.0, 4.0)  # engaging again
+    assert _written(hass) == [2.0, 2.0]
+
+
 # --- The battery SOC ceiling fan-out ------------------------------------------
 #
 # The SOC twin of everything above, and structurally different in two ways that
