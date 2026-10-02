@@ -119,12 +119,50 @@ BRANDS = {
         ("envoy_122233344455_current_net_power_consumption_l{}", "123"),
         ("envoy_122233344455_current_net_power_consumption_l{}", "123"),
     ),
+    # sfstar/hass-victron names a unit 0/100/225 device victron_<register>;
     # voltage registered first
     "Victron": (
         {"Grid": _ph("victron_grid_l{}_voltage", "V") + _ph("victron_grid_l{}_current", "A")
             + _ph("victron_grid_l{}_power", "W") + _ph("victron_grid_l{}_energy_forward", "kWh")},
         ("victron_grid_l{}_power", "123"),
         ("victron_grid_l{}_power", "123"),
+    ),
+    # ... any other unit victron<register><unit> - a grid meter on unit 30
+    "Victron, grid meter on unit 30": (
+        {"grid": _ph("victrongrid_l{}_power30", "W") + _ph("victrongrid_l{}_energy_forward30", "kWh")
+            + _ph("victrongrid_l{}_voltage30", "V") + _ph("victrongrid_l{}_current30", "A")},
+        ("victrongrid_l{}_current30", "123"),
+        ("victrongrid_l{}_power30", "123"),
+    ),
+    # ... and victron_<register>_<unit> before February 2026
+    "Victron, unit 30, older entity ids": (
+        {"grid": _ph("victron_grid_l{}_power_30", "W") + _ph("victron_grid_l{}_voltage_30", "V")
+            + _ph("victron_grid_l{}_current_30", "A")},
+        ("victron_grid_l{}_current_30", "123"),
+        ("victron_grid_l{}_power_30", "123"),
+    ),
+    # ha-solarman deye_string, its default device name: "Grid L1 Current" is
+    # the inverter's output (0x004C), spelled as Victron's; no per-phase meter
+    "Deye string inverter": (
+        {"Inverter": [("inverter_pv_power", "W"), ("inverter_pv1_power", "W"),
+                      ("inverter_pv1_voltage", "V"), ("inverter_pv1_current", "A"),
+                      ("inverter_today_production", "kWh"), ("inverter_total_production", "kWh")]
+            + _ph("inverter_grid_l{}_voltage", "V", ("12", "23", "31"))
+            + _ph("inverter_grid_l{}_voltage", "V") + _ph("inverter_grid_l{}_current", "A")
+            + [("inverter_output_ac_power", "W"), ("inverter_input_power", "W"),
+               ("inverter_output_apparent_power", "VA"), ("inverter_power", "W"),
+               ("inverter_output_reactive_power", "var"), ("inverter_load_power", "W"),
+               ("inverter_grid_power", "W")]},
+        None,
+        None,
+    ),
+    # the same inverter on a Victron's AC output: the Victron's grid meter
+    "Deye string inverter, Victron grid meter beside": (
+        {"Inverter": _ph("inverter_grid_l{}_voltage", "V") + _ph("inverter_grid_l{}_current", "A")
+            + [("inverter_output_ac_power", "W"), ("inverter_grid_power", "W")],
+         "grid": _ph("victrongrid_l{}_power30", "W") + _ph("victrongrid_l{}_current30", "A")},
+        ("victrongrid_l{}_current30", "123"),
+        ("victrongrid_l{}_power30", "123"),
     ),
     # Solarman sofar_g3hyd (both integrations): the grid meter is the PCC;
     # StephanJoubert's publishes the reactive power as W
@@ -145,13 +183,15 @@ BRANDS = {
         ("sofar_active_power_pcc_l{}", "123"),
         ("sofar_active_power_pcc_l{}", "123"),
     ),
-    # ha-solarman sofar_hybrid (HYD-ES): "Grid L1 Current", which is the
-    # Victron entry's spelling; no power per phase
+    # ha-solarman sofar_hybrid (HYD-ES, single phase): "Grid L1 Current" is
+    # the inverter's own (0x0207, Sofar's "Grid A current"; L2/L3 read
+    # registers Sofar marks reserved), spelled as Victron's; the meter is the
+    # one "Grid power" - no per-phase grid reading
     "Sofar HYD-ES": (
         {"Sofar": _ph("sofar_grid_l{}_voltage", "V") + _ph("sofar_grid_l{}_current", "A")
             + [("sofar_grid_power", "W")]},
-        ("sofar_grid_l{}_current", "123"),
-        ("sofar_grid_l{}_current", "123"),
+        None,
+        None,
     ),
     # mkaiser's Modbus YAML: registered, but no device
     "Sungrow": (

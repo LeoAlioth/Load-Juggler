@@ -120,13 +120,18 @@ GRID_CT = [
         },
         "unit": "W",
     },
-    # Victron - sfstar/hass-victron over Modbus TCP (Cerbo GX / Venus GX).
+    # Victron - sfstar/hass-victron over Modbus TCP (Cerbo GX / Venus GX). It
+    # sets the ids itself: victron_grid_l1_current on unit 0/100/225,
+    # victrongrid_l1_current30 on any other (a grid meter's unit is 30, 31,
+    # ...), victron_grid_l1_current_30 before February 2026. Anchored on the
+    # victron prefix: ha-solarman's "Grid L1 Current" is spelled the same and
+    # is an inverter's own output current (deye_string, sofar_hybrid, ...).
     {
         "name": "Victron",
         "patterns": {
-            "phase_a": r'sensor\..*_grid_l1_current$',
-            "phase_b": r'sensor\..*_grid_l2_current$',
-            "phase_c": r'sensor\..*_grid_l3_current$',
+            "phase_a": r'sensor\.victron_?grid_l1_current(?:_?\d+)?$',
+            "phase_b": r'sensor\.victron_?grid_l2_current(?:_?\d+)?$',
+            "phase_c": r'sensor\.victron_?grid_l3_current(?:_?\d+)?$',
         },
         "unit": "A",
     },
@@ -134,7 +139,8 @@ GRID_CT = [
     # in both Solarman integrations' sofar_g3hyd (OEM platforms included:
     # ZCS, Turbo Energy, ...), "Active power PCC L1" in HA core's sofar (kW).
     # The power is signed, the current not. ha-solarman's sofar_hybrid
-    # (HYD-ES) publishes "Grid L1 Current", which the Victron entry matches.
+    # (HYD-ES, single phase) has no per-phase grid reading: its meter is the
+    # one "Grid power"; "Grid L1 Current" is the inverter's.
     {
         "name": "Sofar - grid power (PCC)",
         "patterns": {
