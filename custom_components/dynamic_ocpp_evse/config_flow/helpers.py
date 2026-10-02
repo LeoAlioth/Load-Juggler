@@ -72,6 +72,7 @@ from ..const import (
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
 )
+from ..detection_patterns import PHASE_PATTERNS
 from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
 from ..phases import beside, match_meter_entities
 from ..registry import get_inverters_for_hub
@@ -314,6 +315,20 @@ def _auto_detect_phase_entities(
     return dict.fromkeys(_PHASE_SLOTS)
 
 
+def _device_rejects(hass, eid: str, pattern_sets: list[dict] = PHASE_PATTERNS) -> bool:
+    """A pattern set that matches ``eid`` tests its device, and the device is
+    not the meter (detection_patterns' ``device``): ids a meter shares with
+    another device - ha-solarman's "Grid L1 Power" on an Afore string inverter.
+    The registry is read only for an entity such a pattern matches."""
+    tests = [s["device"] for s in pattern_sets
+             if "device" in s and any(re.match(p, eid) for p in s["patterns"].values())]
+    if not tests:
+        return False
+    entry = async_get_entity_registry(hass).async_get(eid)
+    device = entry and entry.device_id and async_get_device_registry(hass).async_get(entry.device_id)
+    return not all(test(device or None) for test in tests)
+
+
 def _device_rows(hass, entity_registry, device_id: str) -> list[dict]:
     """A device's sensors that have a state, in the shape
     phases.match_meter_entities reads: the kind from the device class, or
@@ -341,8 +356,11 @@ def _power_beside(hass, triple: dict[str, str | None]) -> dict[str, str | None]:
     asked for its power reading on that phase whose name runs alongside
     (phases.beside). All three or none, so the triple stays one unit; a
     triple that is already watts, or has an entity without a device (a YAML
-    sensor), comes back as it is.
+    sensor), comes back as it is. A triple on a device its pattern's test
+    turns down (_device_rejects) is none.
     """
+    if any(eid and _device_rejects(hass, eid) for eid in triple.values()):
+        return dict.fromkeys(_PHASE_SLOTS)
     entity_registry = async_get_entity_registry(hass)
     watts = {}
     for slot, eid in triple.items():
@@ -357,9 +375,12 @@ def _power_beside(hass, triple: dict[str, str | None]) -> dict[str, str | None]:
 
 
 def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> dict[str, str | None]:
-    """No pattern set matched all three phases: the phases the first set to
-    match any did, completed from that entity's own device - a single-phase
-    site's one CT, never a triple stitched together from several meters.
+    """No pattern set matched all three phases, or the one that did was on a
+    device its test turns down (_device_rejects): the first complete set left
+    once such entities are dropped, as _power_beside offers it; else the
+    phases the first set to match any did, completed from that entity's own
+    device - a single-phase site's one CT, never a triple stitched together
+    from several meters.
 
     The device's readings are matched as a grid connection's
     (phases.match_meter_entities, role "grid" - only that device's rows,
@@ -368,6 +389,10 @@ def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> 
     its amps, the amps otherwise, and what the pattern found when the
     device covers fewer phases than that or there is no device.
     """
+    entity_ids = [eid for eid in entity_ids if not _device_rejects(hass, eid, pattern_sets)]
+    complete = _power_beside(hass, _auto_detect_phase_entities(entity_ids, pattern_sets))
+    if all(complete.values()):
+        return complete
     for pattern_set in pattern_sets:
         found = {slot: _first_match(entity_ids, pattern_set["patterns"][slot])
                  for slot in _PHASE_SLOTS}
