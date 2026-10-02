@@ -134,12 +134,13 @@ template:
       # named ONE BY ONE and deliberately so.
       #
       # This used to match them with `states.sensor | selectattr('object_id',
-      # 'match', ...)`, which was tidy and completely broken: iterating a domain
-      # and filtering on an attribute gives Home Assistant no trackable entity
-      # dependency, so it rendered these once at startup and NEVER AGAIN. The
-      # grid CTs are derived from them, so the whole simulated site silently
-      # froze at whatever was drawing when HA booted - a tank that switched on
-      # later simply did not exist to the meter.
+      # 'match', ...)`. On 2026-09-08 that went stale (34 minutes behind), and
+      # since the grid CTs are derived from these the whole simulated site froze
+      # at whatever was drawing when HA booted - a tank that switched on later
+      # did not exist to the meter. Iterating a domain was blamed (no trackable
+      # dependency, rendered once), but on HA 2026.9.1 the form re-renders - a
+      # new matching sensor joins within 1.5 s - so the real cause is unknown
+      # (dev/ha-test/README.md, "Two traps").
       #
       # `states('...')` is a tracked access, so each of these updates the
       # instant its source does. Adding a device means adding a line here; the
@@ -158,9 +159,7 @@ template:
       # one axis - the per-phase split answers "which leg", this answers "how
       # much of the surplus did the loads actually take". Reads the phase
       # totals rather than the nine device sensors so it cannot drift from
-      # them, and by explicit entity id so each access is tracked (a template
-      # that ITERATES a domain gets no dependency and renders once - that bug
-      # left these aggregates 34 minutes stale).
+      # them, and by explicit entity id so each access is tracked.
       - name: Sim managed load total
         unique_id: sim_managed_load_total
         device_class: power
