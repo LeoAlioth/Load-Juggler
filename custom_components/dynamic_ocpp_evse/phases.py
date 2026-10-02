@@ -134,8 +134,13 @@ def phase_of(text: str) -> Optional[str]:
 
 def _score(entity_id: str, name: str, role: str = "load") -> Optional[int]:
     t = _tokens(f"{entity_id} {name}")
+    # Rejected by what the reading is called itself, not by its device: with
+    # has_entity_name the id starts with the device's name, and the readings
+    # of an "ET340 Energy Meter" are not energy readings (Victron GX,
+    # 2026-10-02). With no name of its own, the id is all there is.
+    own = _tokens(name) if name else t
     for bad in REJECT:
-        if re.search(rf"(?:^|_){bad}(?:$|_)", t):
+        if re.search(rf"(?:^|_){bad}(?:$|_)", own):
             return None
     penalty, bonus = ROLES.get(role, ROLES["load"])
     score = 1000 - len(entity_id)
