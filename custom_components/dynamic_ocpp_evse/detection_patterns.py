@@ -14,6 +14,18 @@ device is the meter. The page drops a match whose device fails it.
 
 To add a brand, add its entries to GRID_CT at its priority, its name first.
 """
+import re
+
+
+def _victron_gx(device_type: str):
+    """A device test: victron_gx's, or ha-victron-mqtt's, device of that type.
+    Both (the victron_mqtt library) identify a device as
+    <installation>_<device type>_<instance> - grid_30, system_0."""
+    own = re.compile(rf"_{device_type}_\d+$")
+    return lambda device: device is not None and any(
+        domain in ("victron_gx", "victron_mqtt") and own.search(identifier)
+        for domain, identifier in device.identifiers)
+
 
 GRID_CT = [
     # SolarEdge - the SolarEdge Modbus Multi integration. Meter entities carry
@@ -142,6 +154,36 @@ GRID_CT = [
             "phase_c": r'sensor\.victron_?grid_l3_current(?:_?\d+)?$',
         },
         "unit": "A",
+    },
+    # Victron GX - HA core's victron_gx and tomer-w/ha-victron-mqtt, over the
+    # GX's MQTT. A grid meter publishes "Power on L1" / "Current on L1" (W, A;
+    # the power + from the grid, - feeding in) on a device named after its
+    # product and instance - sensor.et340_energy_meter_id_30_power_on_l1 - or
+    # its custom name. An AC load or heat pump meter says the same, so the
+    # device's identifier (grid_30) decides. The watts themselves, not amps
+    # for _power_beside to upgrade: phases' REJECT turns down every reading
+    # whose id says "energy", so on an "... Energy Meter" it finds no watts.
+    {
+        "name": "Victron GX - grid meter",
+        "patterns": {
+            "phase_a": r'sensor\..*_power_on_l1$',
+            "phase_b": r'sensor\..*_power_on_l2$',
+            "phase_c": r'sensor\..*_power_on_l3$',
+        },
+        "unit": "W",
+        "device": _victron_gx("grid"),
+    },
+    # ... and the GX's own "Grid power L1" (system device, "Victron Venus"):
+    # the grid meter's reading when there is one, so after it.
+    {
+        "name": "Victron GX - system",
+        "patterns": {
+            "phase_a": r'sensor\..*_grid_power_l1$',
+            "phase_b": r'sensor\..*_grid_power_l2$',
+            "phase_c": r'sensor\..*_grid_power_l3$',
+        },
+        "unit": "W",
+        "device": _victron_gx("system"),
     },
     # Sofar Solar - the grid meter's readings at the PCC: "ActivePower_PCC_R"
     # in both Solarman integrations' sofar_g3hyd (OEM platforms included:
