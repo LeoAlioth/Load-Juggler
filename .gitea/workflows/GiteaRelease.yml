@@ -8,7 +8,7 @@ env:
   ZIP: dynamic-ocpp-evse.zip          # the release asset - hacs.json's filename
   GH_REPO: LeoAlioth/Load-Juggler     # the GitHub repository HACS reads
   RELEASE_NAME: Load Juggler          # releases are titled "<this> <tag>"
-  PYTHON_VERSION: "3.13"
+  PYTHON_VERSION: "3.14"
   TEST_CMD: python -m pip install --upgrade pip && pip install -r requirements_dev.txt && pytest dev/tests/ -v
 
 on:

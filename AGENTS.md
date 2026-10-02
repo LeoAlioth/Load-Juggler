@@ -341,7 +341,7 @@ features/       - Cross-cutting tests (test_available, test_plugs, test_phase_ma
 
 Integration tests use `pytest-homeassistant-custom-component` and are collected by the same plain
 pytest run as everything else. The one local way to run it is the uv venv in `dev/tests/README.md`
-(Python 3.13, what CI runs); there is no Docker test image.
+(Python 3.14, what CI runs); there is no Docker test image.
 
 **Integration test files:**
 

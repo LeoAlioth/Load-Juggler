@@ -91,11 +91,15 @@ def via_device_id(hass, hub_entry_id):
     device_info created them. A child that set up first would otherwise
     resolve to None and land at the top level of the device page, silently,
     until a reload (Anze's log, 2026-09-18).
+
+    Both ``via_device_id`` and ``async_get_device_by_identifier`` arrived in
+    HA 2026.8, which is why hacs.json asks for it; ``async_get_device`` is
+    deprecated from 2026.9 (identifiers are unique per config entry now).
     """
     if hass is None or not hub_entry_id:
         return None
     registry = dr.async_get(hass)
-    device = registry.async_get_device(identifiers={(DOMAIN, hub_entry_id)})
+    device = registry.async_get_device_by_identifier((DOMAIN, hub_entry_id), hub_entry_id)
     if device is None:
         # the hub's own entities have not been added yet - make the shell it
         # would have made, which is exactly what via_device did implicitly

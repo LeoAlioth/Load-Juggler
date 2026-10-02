@@ -11,7 +11,7 @@ Home Assistant needs a recent Python - newer than the system one on a Mac - so
 let `uv` fetch a standalone build rather than hunting for an interpreter:
 
 ```bash
-uv venv .venv --python 3.13 && uv pip install -r requirements_dev.txt
+uv venv .venv --python 3.14 && uv pip install -r requirements_dev.txt
 ```
 
 They run natively on macOS. The instructions here used to send you through WSL

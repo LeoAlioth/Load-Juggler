@@ -27,7 +27,10 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+from homeassistant.helpers.device_registry import (
+    async_entries_for_config_entry,
+    async_get as async_get_device_registry,
+)
 from homeassistant.helpers.entity_registry import (
     async_get as async_get_entity_registry,
 )
@@ -417,15 +420,18 @@ def ocpp_device_for_charge_point(hass, charge_point_id: str | None) -> str | Non
         return None
     best_id = None
     best_rank = None
-    # .values(), because .devices is a MAPPING of device id -> entry and
-    # iterating it yields the ids. This was briefly "fixed" to iterate the
-    # mapping directly, on the strength of DeviceRegistry.__iter__ returning
-    # entries - which is about a different object, and DeviceRegistry is not
-    # iterable at all. Every charge point then arrived here as a string and
-    # the whole ocpp discovery path raised, silently to anyone not running
-    # the tests. Home Assistant deprecates nothing here: BaseRegistryItems
-    # defines .values() precisely to avoid __iter__ overhead (2026-09-22).
-    for device in async_get_device_registry(hass).devices.values():
+    # Walked per ocpp config entry, which owns every device carrying an
+    # ("ocpp", ...) identifier - never through ``.devices``. That container
+    # changed shape under us: up to HA 2026.8 a mapping whose iteration yields
+    # device ids (iterating it once turned every charge point into a string,
+    # 2026-09-18), from 2026.9 a container of entries whose ``.values()`` is
+    # deprecated. No spelling of it works on every core hacs.json allows.
+    registry = async_get_device_registry(hass)
+    for device in (
+        device
+        for ocpp_entry in hass.config_entries.async_entries(OCPP_INTEGRATION_DOMAIN)
+        for device in async_entries_for_config_entry(registry, ocpp_entry.entry_id)
+    ):
         # ANY identifier may be the match - the charge point device carries its
         # cp_id alongside its cpid, and this is a membership question, so it
         # never needed to single one out.
