@@ -142,6 +142,60 @@ BRANDS = {
         ("victron_grid_l{}_current_30", "123"),
         ("victron_grid_l{}_power_30", "123"),
     ),
+    # HA core's victron_gx (and ha-victron-mqtt): a grid meter's device is
+    # named after its product and instance, "Power on L1" signed
+    "Victron GX grid meter": (
+        {"ET340 Energy Meter (ID: 30)": _ph("et340_energy_meter_id_30_voltage_on_l{}", "V")
+            + _ph("et340_energy_meter_id_30_current_on_l{}", "A")
+            + _ph("et340_energy_meter_id_30_power_on_l{}", "W")
+            + _ph("et340_energy_meter_id_30_grid_consumption_on_l{}", "kWh")
+            + _ph("et340_energy_meter_id_30_feed_in_on_l{}", "kWh")
+            + _ph("et340_energy_meter_id_30_voltage_l{}", "V", ("1_to_l2", "2_to_l3", "3_to_l1"))
+            + [("et340_energy_meter_id_30_current", "A"), ("et340_energy_meter_id_30_power", "W"),
+               ("et340_energy_meter_id_30_frequency", "Hz")]},
+        ("et340_energy_meter_id_30_power_on_l{}", "123"),
+        ("et340_energy_meter_id_30_power_on_l{}", "123"),
+    ),
+    # ... ha-victron-mqtt, a grid meter given a custom name on the GX
+    "Victron GX grid meter, ha-victron-mqtt": (
+        {"Grid meter": _ph("grid_meter_voltage_on_l{}", "V") + _ph("grid_meter_current_on_l{}", "A")
+            + _ph("grid_meter_power_on_l{}", "W")},
+        ("grid_meter_power_on_l{}", "123"),
+        ("grid_meter_power_on_l{}", "123"),
+    ),
+    # ... the GX's own device, "Victron Venus": "Grid power L1"
+    "Victron GX system": (
+        {"Victron Venus": _ph("victron_venus_consumption_current_l{}", "A")
+            + _ph("victron_venus_consumption_power_l{}", "W")
+            + _ph("victron_venus_grid_current_l{}", "A") + _ph("victron_venus_grid_power_l{}", "W")
+            + _ph("victron_venus_pv_on_grid_power_l{}", "W") + [("victron_venus_grid_phases", "phases")]},
+        ("victron_venus_grid_power_l{}", "123"),
+        ("victron_venus_grid_power_l{}", "123"),
+    ),
+    # ... both: the meter's own
+    "Victron GX grid meter and system": (
+        {"Victron Venus": _ph("victron_venus_grid_current_l{}", "A") + _ph("victron_venus_grid_power_l{}", "W"),
+         "ET340 Energy Meter (ID: 30)": _ph("et340_energy_meter_id_30_current_on_l{}", "A")
+            + _ph("et340_energy_meter_id_30_power_on_l{}", "W")},
+        ("et340_energy_meter_id_30_power_on_l{}", "123"),
+        ("et340_energy_meter_id_30_power_on_l{}", "123"),
+    ),
+    # ... an AC load meter of the same product says the same, on its own
+    # instance: only the device's identifier (acload_31) tells
+    "Victron GX grid meter, AC load meter beside": (
+        {"ET340 Energy Meter (ID: 31)": _ph("et340_energy_meter_id_31_current_on_l{}", "A")
+            + _ph("et340_energy_meter_id_31_power_on_l{}", "W"),
+         "ET340 Energy Meter (ID: 30)": _ph("et340_energy_meter_id_30_current_on_l{}", "A")
+            + _ph("et340_energy_meter_id_30_power_on_l{}", "W")},
+        ("et340_energy_meter_id_31_power_on_l{}", "123"),
+        ("et340_energy_meter_id_30_power_on_l{}", "123"),
+    ),
+    # another integration's charger in the same words is not a Victron meter
+    "Charger saying Power on L1": (
+        {"Wallbox": _ph("wallbox_current_on_l{}", "A") + _ph("wallbox_power_on_l{}", "W")},
+        ("wallbox_power_on_l{}", "123"),
+        None,
+    ),
     # ha-solarman deye_string, its default device name: "Grid L1 Current" is
     # the inverter's output (0x004C), spelled as Victron's; no per-phase meter
     "Deye string inverter": (
@@ -313,8 +367,13 @@ PARTIAL = {
 }
 
 # What the device registry holds beside a device's name: ha-solarman's model
-# is its definition's (info, else the file name's)
+# is its definition's (info, else the file name's); victron_gx identifies a
+# device as <installation>_<device type>_<instance>
 _DEVICE_INFO = {
+    "ET340 Energy Meter (ID: 30)": {"identifiers": {("victron_gx", "c0619ab1a2b3_grid_30")}},
+    "ET340 Energy Meter (ID: 31)": {"identifiers": {("victron_gx", "c0619ab1a2b3_acload_31")}},
+    "Victron Venus": {"identifiers": {("victron_gx", "c0619ab1a2b3_system_0")}},
+    "Grid meter": {"identifiers": {("victron_mqtt", "c0619ab1a2b3_grid_30")}},
     "KStar": {"model": "Hybrid Inverter"},
     "MegaRevo": {"model": "R-3H"},
     "Afore": {"model": "HYBRID"},
