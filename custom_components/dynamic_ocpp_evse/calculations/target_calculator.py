@@ -34,6 +34,7 @@ from ..const import (
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    EXCESS_URGENCY_TIER,
     WIRING_TOPOLOGY_SERIES,
 )
 
@@ -1255,6 +1256,28 @@ def excess_load_draw_power(site: SiteContext) -> float:
     )
 
 
+def _outranking_draw_power(site: SiteContext) -> float:
+    """Watts drawn right now by the managed loads ranked ABOVE the Excess tier.
+
+    Standard, Continuous, Solar Priority, Solar Only - every load the
+    distribution serves before the Excess tier. Their draw is production the
+    site has already chosen to place, so the Excess verdict must read it as
+    placed, not hand it back as if our loads were off (see ``excess_margin``).
+    A boosting tank is demoted to the Excess tier and so is NOT counted here:
+    the verdict that engaged it must not be suppressed by its own draw.
+
+    Pure function - unit-testable.
+    """
+    return (
+        sum(
+            sum(c.get_site_phase_draw())
+            for c in site.loads
+            if c.dynamic_control and c.mode_priority < EXCESS_URGENCY_TIER
+        )
+        * site.voltage
+    )
+
+
 def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     """Watts by which the site is over the point where Excess mode triggers.
 
@@ -1263,8 +1286,22 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     Both sinks are summed, so one number decides Excess for every load -
 
         margin = (export - battery discharge + battery charge power
-                  + our own managed draws)
+                  + our own managed draws - draws ranked above Excess)
                - (export allowance + battery charge allowance - hysteresis)
+
+    ONLY THE EXCESS TIER IS HANDED BACK. The reconstruction below takes every
+    managed load off; the loads ranked above Excess are then put back, because
+    a Solar Priority car or a Continuous pump is a place the site has CHOSEN to
+    put its production, served before any Excess load. Handing their draw back
+    too read it as surplus the battery could not take. Kozolec, 3 Oct 2026
+    (off-grid, 3 kW charge allowance, SOC 16 %): the pack charging 1963 W plus
+    the Solar Priority pond EVSE's 2185 W and the filter's 51 W read +1699 W
+    against the latched 2500 W - Excess on, the tank boosting to 75 C - while
+    the EVSE alone had already taken the whole 1199 W the reconstruction
+    called surplus; across the morning the pack drained from 32 % to 10 %.
+    The excess POOL keeps the full load-off figure: the distribution hands it
+    out in rank order, so those loads take their share of it first anyway
+    (``_calculate_excess_available``).
 
     The export term is GROSS and clamped per phase: an export limit is physical
     and contractual per exported flow, so a site pushing 30 A out on two phases
@@ -1282,19 +1319,20 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     signed subtraction cover every inverter work mode, grid-tied and off-grid
     alike.
 
-    Every figure is read as the site would read it *with our own loads off* -
-    that is what makes the number stable enough to decide with: a load that is
-    running must not suppress the verdict that engaged it. Grid-tied, the
+    Every figure is read as the site would read it *with its Excess-tier loads
+    off* - that is what makes the number stable enough to decide with: a load
+    that is running must not suppress the verdict that engaged it. Grid-tied, the
     feedback loop has already taken the draws off the grid readings, and the
     managed-draw term finishes the job by handing the freed power back to the
     battery's charge headroom (see the term itself); off-grid, where there are
     no readings at all, it is added wholesale.
 
-    - where ``margin >= 0`` means Excess is on. The value is the excess pool in
-    watts ONLY when read with ``hysteresis=0``: called with the latch's band it
-    answers the verdict and overstates the pool by exactly that band, which is
-    why ``_calculate_excess_available`` gates on one reading and sizes on the
-    other. Callers need nothing else; the breakdown goes to the debug log.
+    - where ``margin >= 0`` means Excess is on. The value is what the Excess
+    tier has left, in watts, ONLY when read with ``hysteresis=0``: called with
+    the latch's band it answers the verdict and overstates that by exactly the
+    band, which is why ``_calculate_excess_available`` gates on one reading and
+    sizes on the other. Callers need nothing else; the breakdown goes to the
+    debug log.
 
     A sink contributes its allowance only while it can actually absorb:
 
@@ -1436,13 +1474,17 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     unused_sun = (_off_grid_unused_sun(site) or 0.0) * site.voltage
 
     allowance = max(0.0, export_allowance + charge_allowance - hysteresis)
-    absorbed = export - discharge + charge_power + battery_restored + unused_sun
+    outranking = _outranking_draw_power(site)
+    absorbed = (
+        export - discharge + charge_power + battery_restored + unused_sun
+        - outranking
+    )
     margin = absorbed - allowance
 
     _LOGGER.debug(
         "Excess margin %+.0fW: placing %.0fW (export %.0fW - battery discharge"
         " %.0fW + battery charge %.0fW + freed to battery %.0fW of %.0fW"
-        " managed draw) vs allowance %.0fW"
+        " managed draw - %.0fW drawn above the Excess tier) vs allowance %.0fW"
         " (export %.0fW + battery %.0fW - hysteresis %.0fW)",
         margin,
         absorbed,
@@ -1451,6 +1493,7 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
         charge_power,
         battery_restored,
         managed_draw,
+        outranking,
         allowance,
         export_allowance,
         charge_allowance,
@@ -1496,7 +1539,10 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     if not _excess_verdict(site) or site.voltage <= 0:
         return PhaseConstraints.zeros(netting=True)
 
-    margin = excess_margin(site, 0.0)
+    # The SIZE is the whole load-off surplus, the draws ranked above Excess
+    # included: the distribution deducts those loads first, in rank order, so
+    # leaving them in the margin too would take them off twice.
+    margin = excess_margin(site, 0.0) + _outranking_draw_power(site)
     total = margin / site.voltage
 
     if site.inverter_supports_asymmetric or site.is_off_grid:

@@ -26,6 +26,7 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     DEFAULT_TANK_AWAY_TEMPERATURE,
+    DEFAULT_TANK_BOOST_TEMPERATURE,
     TANK_MODE_FREEZE_PROTECTION,
     resolve_tank_mode_priority,
     tank_boost_is_opportunistic,
@@ -556,6 +557,7 @@ def build_site_from_scenario(scenario, excess_on=False):
         # production builder in engine/hub_calculation.py.
         mode_priority = _mode.priority
         mode_behavior = _mode.behavior
+        thermostat_idle = False
         if device_type == "hot_water_tank":
             # The setpoint label, as control/hot_water_tank.py resolves it:
             # Freeze Protection and Normal both ride surplus up to the boost
@@ -591,6 +593,21 @@ def build_site_from_scenario(scenario, excess_on=False):
                 away_temp if _mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
             ):
                 mode_behavior = BEHAVIOR_BINARY_EXCESS
+            # The thermostat, as production reads it (hvac_action "idle" ->
+            # "Available", engine/load_builders.py): a tank already at the
+            # setpoint its label asks for is satisfied and draws nothing. Without
+            # it a tank sitting at its normal temperature heated forever at its
+            # own tier, and that draw - production a must-run load has placed -
+            # held the Excess verdict off for good.
+            if setpoint_label and current_temp is not None:
+                setpoint = {
+                    "away": away_temp,
+                    "normal": normal_temp,
+                    "boost": load_data.get(
+                        "boost_temperature", DEFAULT_TANK_BOOST_TEMPERATURE
+                    ),
+                }[setpoint_label]
+                thermostat_idle = current_temp >= setpoint
 
         load = LoadContext(
             load_id=f"load_{idx}",
@@ -606,8 +623,12 @@ def build_site_from_scenario(scenario, excess_on=False):
             l1_phase=load_data.get("l1_phase", "A"),
             l2_phase=load_data.get("l2_phase", "B"),
             l3_phase=load_data.get("l3_phase", "C"),
-            connector_status=load_data.get("connector_status",
-                                              "Available" if load_data.get("active") is False else "Charging"),
+            connector_status=load_data.get(
+                "connector_status",
+                "Available"
+                if load_data.get("active") is False or thermostat_idle
+                else "Charging",
+            ),
             l1_current=load_data.get("l1_current", 0),
             l2_current=load_data.get("l2_current", 0),
             l3_current=load_data.get("l3_current", 0),
@@ -766,6 +787,8 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
             cap = draw_cap.get(load.entity_id)
             if cap is not None:
                 simulated = min(simulated, cap)
+            if load.device_type == "hot_water_tank" and load.connector_status != "Charging":
+                simulated = 0.0  # a satisfied thermostat draws nothing
             set_load_phase_currents(load, simulated)
 
             eid = load.entity_id

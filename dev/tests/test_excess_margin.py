@@ -5,8 +5,11 @@ Machine-authored tests - not yet human-reviewed.
 Excess means the site can no longer place its own production anywhere else. One
 number decides it for every Excess-mode load:
 
-    margin = (grid export + battery charge power + our own managed draws)
+    margin = (grid export + battery charge power + our Excess-tier draws)
            - (export allowance + battery charge allowance - hysteresis)
+
+A load ranked above the Excess tier is not handed back: its draw is production
+the site has already placed (see the outranking section at the end).
 
 ``margin >= 0`` means Excess is on. The value is the excess pool in watts only when
 read with ``hysteresis=0`` - with the latch's band it answers the VERDICT and
@@ -19,10 +22,13 @@ verdict it engaged on - off-grid, where export is always 0, that makes the
 margin the load-off surplus by conservation.
 """
 
+import pytest
+
 from custom_components.dynamic_ocpp_evse.calculations import (
     excess_margin,
     reconstructed_export_power,
 )
+from custom_components.dynamic_ocpp_evse.const import EXCESS_URGENCY_TIER
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
     PhaseValues,
@@ -37,7 +43,9 @@ HYSTERESIS = 500.0
 
 
 def _load(draw_w, voltage=230.0):
-    """A managed load drawing ``draw_w`` on phase A."""
+    """An Excess-tier managed load drawing ``draw_w`` on phase A - the loads
+    the verdict governs, and so the only ones it hands back (see the
+    outranking section at the end)."""
     return LoadContext(
         load_id="load",
         entity_id="load",
@@ -47,6 +55,7 @@ def _load(draw_w, voltage=230.0):
         active_phases_mask="A",
         l1_current=draw_w / voltage,
         l1_phase="A",
+        mode_priority=EXCESS_URGENCY_TIER,
     )
 
 
@@ -402,3 +411,87 @@ def test_a_balanced_site_reads_the_same_either_way():
     site = _site_3ph(4000.0, 4000.0, 4000.0, export_limit=0.0)
     assert round(excess_margin(site), 1) == 12000.0
     assert round(reconstructed_export_power(site), 1) == 12000.0
+
+
+# --- Loads ranked above the Excess tier are not surplus ---------------------
+#
+# Kozolec, 3 Oct 2026 (off-grid Victron, 9.5 kWh, 3 kW charge allowance, SOC
+# 16 % against an 88 % target): the hot water tank boosted to 75 C every
+# morning on the Excess verdict while the pack sat empty or drained. The
+# verdict read every managed draw as power "freed" by our loads - including the
+# Solar Priority pond EVSE (2185 W) and the Continuous pond filter (51 W),
+# which OUTRANK the Excess tier and had already taken the surplus. The
+# distribution knew (the excess pool, 1199 W, was entirely claimed by the
+# EVSE); the plain verdict, which the tank's setpoint reads, did not.
+
+KOZOLEC_ALLOWANCE = 3000.0
+EVSE_W = 9.5 * 230.0       # pond EVSE, Solar Priority plug - tier 2
+FILTER_W = 51.2            # pond filter, Continuous plug - tier 1
+TANK_W = 1911.0            # boiler element
+
+
+def _tiered(draw_w, tier, voltage=230.0):
+    """A managed load drawing ``draw_w`` on phase A at urgency ``tier``."""
+    return LoadContext(
+        load_id=f"tier{tier}_{draw_w}",
+        entity_id=f"tier{tier}_{draw_w}",
+        min_current=0,
+        max_current=draw_w / voltage,
+        phases=1,
+        active_phases_mask="A",
+        l1_current=draw_w / voltage,
+        l1_phase="A",
+        mode_priority=tier,
+    )
+
+
+def _kozolec(battery_power, tank_w=0.0, tank_tier=2):
+    """The diagnostics site: off-grid, the EVSE and filter running, the tank at
+    its Solar Priority tier (2) unless boosting (the Excess tier, 4)."""
+    loads = [_tiered(EVSE_W, 2), _tiered(FILTER_W, 1), _tiered(tank_w, tank_tier)]
+    return _site(
+        battery_power=battery_power, soc=16, off_grid=True,
+        charge_limit=KOZOLEC_ALLOWANCE, loads=loads,
+    )
+
+
+def test_kozolec_the_evse_eating_the_surplus_reads_excess_off():
+    """The published reading, 3 Oct 08:59:46: battery_power −1963.1 W (the EMA;
+    positive is discharging, so the pack read CHARGING 1963 W at that instant -
+    the tank was off in its flap), excess_on latched, so the 500 W hysteresis.
+
+    It read +1699 W: 1963 W charge + 2236 W of EVSE + filter draw handed back
+    as if the battery could take it, against 3000 − 500 W. Those two loads
+    outrank Excess; their draw is production the site has already placed, so
+    the margin is the battery's 1963 W against 2500 W: off, by 537 W."""
+    site = _kozolec(battery_power=-1963.1)
+    assert excess_margin(site, HYSTERESIS) == pytest.approx(1963.1 - 2500.0)
+    assert excess_margin(site) == pytest.approx(1963.1 - KOZOLEC_ALLOWANCE)
+
+
+def test_kozolec_a_draining_pack_cannot_hold_the_verdict():
+    """The 36 minutes of 07:09-07:45 UTC, the tank boosting throughout while
+    SOC fell 26 -> 14 %: 4.7 kW of sun, a 2 kW house, the EVSE, filter and
+    boosting tank on top, so the pack discharges 1447 W. By conservation the
+    old margin was the load-off surplus - 4.7 − 2.0 = 2.7 kW against the
+    latched 2.5 kW - and read +200 W while the pack drained."""
+    discharge = 2000.0 + EVSE_W + FILTER_W + TANK_W - 4700.0
+    site = _kozolec(battery_power=discharge, tank_w=TANK_W, tank_tier=4)
+    assert excess_margin(site, HYSTERESIS) < 0
+    assert excess_margin(site, HYSTERESIS) == pytest.approx(
+        -discharge + TANK_W - 2500.0
+    )
+
+
+def test_a_boosting_tank_still_holds_its_own_verdict():
+    """The probe survives for the tier the verdict governs: the boosting tank
+    is handed back, so starting it moves nothing. Pack at its 3 kW allowance
+    with the tank off; with it on the pack takes 1089 W and the margin is the
+    same 0 (+500 W latched) either way."""
+    idle = _kozolec(battery_power=-KOZOLEC_ALLOWANCE)
+    running = _kozolec(
+        battery_power=-(KOZOLEC_ALLOWANCE - TANK_W), tank_w=TANK_W, tank_tier=4
+    )
+    assert excess_margin(idle) == pytest.approx(0.0)
+    assert excess_margin(running) == pytest.approx(0.0)
+    assert excess_margin(running, HYSTERESIS) == pytest.approx(HYSTERESIS)

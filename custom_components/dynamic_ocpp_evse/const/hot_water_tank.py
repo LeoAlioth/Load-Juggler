@@ -4,7 +4,12 @@ The thermostat (a climate or water_heater entity) owns all temperature regulatio
 power and writes the setpoint.
 """
 
-from .common import BEHAVIOR_FULL_POWER, BEHAVIOR_SOLAR_PRIORITY, OperatingMode
+from .common import (
+    BEHAVIOR_FULL_POWER,
+    BEHAVIOR_SOLAR_PRIORITY,
+    EXCESS_URGENCY_TIER,
+    OperatingMode,
+)
 
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate or water_heater entity (read + control)
 CONF_HEATING_ELEMENT_POWER = "heating_element_power"      # Element rating in watts
@@ -47,7 +52,7 @@ OPERATING_MODES_HOT_WATER_TANK = [
 # Urgency tier a tank competes at while it is riding surplus (boost setpoint).
 # Matches the Excess tier used by EVSEs and plugs: heating past the mode's own
 # floor temperature is opportunistic, so it must not outrank must-run loads.
-TANK_SURPLUS_URGENCY_TIER = 4
+TANK_SURPLUS_URGENCY_TIER = EXCESS_URGENCY_TIER
 DEFAULT_OPERATING_MODE_HOT_WATER_TANK = TANK_MODE_NORMAL
 
 

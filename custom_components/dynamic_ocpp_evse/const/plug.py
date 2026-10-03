@@ -5,6 +5,7 @@ from .common import (
     BEHAVIOR_BINARY_ABOVE_TARGET,
     BEHAVIOR_BINARY_EXCESS,
     BEHAVIOR_FULL_POWER,
+    EXCESS_URGENCY_TIER,
     OperatingMode,
 )
 
@@ -35,7 +36,7 @@ PLUG_MODE_SOLAR_ONLY = OperatingMode(
     behavior=BEHAVIOR_BINARY_ABOVE_TARGET,
 )
 PLUG_MODE_EXCESS = OperatingMode(
-    key="Excess", label="Excess", priority=4, icon="mdi:solar-power-variant",
+    key="Excess", label="Excess", priority=EXCESS_URGENCY_TIER, icon="mdi:solar-power-variant",
     behavior=BEHAVIOR_BINARY_EXCESS,
 )
 OPERATING_MODES_PLUG = [
