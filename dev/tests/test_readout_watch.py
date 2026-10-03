@@ -19,10 +19,15 @@ CTs. What the tests pin:
     stuck episode is ever learned as "normal";
   * blind mode ends only after two new values, and assumes the limit in force
     on the legs that were carrying current;
+  * a reading last reported before the connector entered Charging is assumed
+    over - the limit in force on every leg - until one reported since, which
+    is trusted even at 0;
   * a blind charger's footprint is the larger of its allocation and its last
     command: its permits stay inside the breaker like a metered charger's, and
     a cut that has not landed yet frees less than a metered charger's would.
 """
+
+from datetime import datetime, timedelta, timezone
 
 from custom_components.dynamic_ocpp_evse.engine import readout_watch as rw
 from custom_components.dynamic_ocpp_evse.calculations.models import (
@@ -561,3 +566,58 @@ def test_a_blind_charger_being_cut_frees_less_than_a_metered_one():
     # Once the cut has landed, both sit inside the breaker.
     assert household + sum(blind.values()) <= breaker
     assert household + sum(metered.values()) <= breaker
+
+
+# ── Before the first reading: a reading that predates the charging ─────────
+#
+# The field case (2026-10-03): meter values every 120 s, a 0 written at the
+# SuspendedEV before the car started, and the car taking 16 A at once. Until a
+# reading reported since the connector entered Charging arrives, the draw is
+# the limit in force on every leg the charger has.
+
+T0 = datetime(2026, 10, 3, 17, 9, tzinfo=timezone.utc)
+
+
+def _before_first(status="Charging", commanded=16.0, legs=3,
+                  reported=-0.000002, charging=0.0):
+    """``reported`` / ``charging``: seconds from T0 (the first microseconds
+    apart, as one push of the ocpp integration writes them)."""
+    return rw.assumed_before_first_reading(
+        status, commanded, legs,
+        None if reported is None else T0 + timedelta(seconds=reported),
+        None if charging is None else T0 + timedelta(seconds=charging),
+    )
+
+
+def test_a_reading_from_before_the_charging_is_assumed_over():
+    assert _before_first() == (16.0, 16.0, 16.0)
+    # ...from minutes before, as much as from the same push.
+    assert _before_first(reported=-180.0) == (16.0, 16.0, 16.0)
+
+
+def test_the_assumption_is_on_every_leg_the_charger_has():
+    assert _before_first(legs=1) == (16.0, 0.0, 0.0)
+    assert _before_first(legs=2, commanded=10.0) == (10.0, 10.0, 0.0)
+
+
+def test_a_reading_reported_since_is_trusted_whatever_it_says():
+    """The next report ends it - a re-reported 0 included: last_reported, not
+    last_changed, so a car that really takes nothing is believed."""
+    assert _before_first(reported=120.0) is None
+
+
+def test_a_reading_reported_at_the_same_instant_is_trusted():
+    """States restored together after a restart are not doubted."""
+    assert _before_first(reported=0.0) is None
+
+
+def test_only_while_the_connector_is_charging():
+    for status in ("Preparing", "SuspendedEV", "SuspendedEVSE", "Finishing",
+                   "Available", None):
+        assert _before_first(status=status) is None, status
+
+
+def test_nothing_is_assumed_without_a_limit_in_force_or_the_timestamps():
+    assert _before_first(commanded=None) is None
+    assert _before_first(reported=None) is None
+    assert _before_first(charging=None) is None

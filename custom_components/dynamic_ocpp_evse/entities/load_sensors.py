@@ -173,7 +173,8 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
     While the charger's readout is judged stuck (engine/readout_watch.py) the
     status says so in words - "Charging (readout stuck - controlled on assumed
     current)" - and carries the readout_* attributes; both clear the cycle the
-    episode ends. Composed here, on every site cycle, rather than in the load
+    episode ends. Likewise "Charging (waiting for first reading - assumed
+    current)" while the charger's reading predates the charging. Composed here, on every site cycle, rather than in the load
     processor, which only re-derives its status on command cycles. So is the
     off-grid sun probe's backoff (entities/sun_probe.py): "... (no spare sun
     on 3 tries, next try 14:32)" while it waits, and sun_probe_* attributes.

@@ -64,7 +64,9 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   the limit in force for 2x its learned reporting gap, OR the
 │   │                              #   reconstructed household steps with our commands to it (both
 │   │                              #   ways, repeatedly) while it reads nothing; load_builders then
-│   │                              #   controls it blind (assumed draw = the accepted command)
+│   │                              #   controls it blind (assumed draw = the accepted command).
+│   │                              #   The same assumption, with no verdict, while the reading was
+│   │                              #   last reported before the connector entered Charging
 │   ├── hub_result.py              # _compute_forecast_advice(), _build_hub_result() (the published dict)
 │   ├── fleet.py                   # Multi-inverter fleet aggregation (solar_total, weighted_soc, inverter_limits)
 │   ├── auto_detect.py             # Grid CT inversion + phase mapping auto-detection
