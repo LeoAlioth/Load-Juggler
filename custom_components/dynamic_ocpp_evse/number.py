@@ -274,7 +274,9 @@ class TankTemperatureSlider(LoadSlider):
     (Anze, 2026-09-25) - an entry from before keeps its saved value as the
     starting one. Bounded by the thermostat's own min_temp / max_temp, which
     both climate and water_heater entities publish, and moved into them when
-    they change; 10-90 °C until the thermostat reports.
+    they change; 10-90 °C until the thermostat reports. Load Juggler itself
+    lowers one, through its set service, to a target the device does not keep
+    (control/hot_water_tank._adopt_kept_target).
     """
 
     def __init__(self, hass, config_entry, *args):
