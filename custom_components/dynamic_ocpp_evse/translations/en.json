@@ -276,7 +276,7 @@
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for entities created by this integration.",
-                    "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater does not report whether it is heating: its power sensor measures it, and without one it is taken as drawing the heating element power while the tank is colder than its target.",
+                    "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater has no standard way of reporting whether it is heating: its power sensor measures it; without one Load Juggler reads the device's own status where it publishes one (a MELCloud heat pump does), and otherwise takes the tank as drawing the heating element power while it is colder than its target.",
                     "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "connected_to_phase": "Which electrical phase(s) the heating element is wired to.",
                     "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
@@ -711,7 +711,7 @@
                     "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
-                    "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater does not report whether it is heating: its power sensor measures it, and without one it is taken as drawing the heating element power while the tank is colder than its target.",
+                    "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater has no standard way of reporting whether it is heating: its power sensor measures it; without one Load Juggler reads the device's own status where it publishes one (a MELCloud heat pump does), and otherwise takes the tank as drawing the heating element power while it is colder than its target.",
                     "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "tank_prioritize_below_normal": "When on, a Solar Priority tank that has dropped below its Normal temperature is promoted to the Normal urgency tier, so it wins contention against other Solar Priority loads. It does not change where the power comes from - the tank still never uses the grid and still stops at the battery's minimum SOC.",
                     "connected_to_phase": "Which electrical phase(s) the heating element is wired to.",
@@ -863,6 +863,12 @@
                 "battery": "Battery",
                 "battery_control": "Battery charge management (writes to the inverter)"
             }
+        }
+    },
+    "issues": {
+        "tank_target_not_kept": {
+            "title": "Load Juggler - {tank}: the device keeps {kept} °C, not {asked} °C",
+            "description": "Load Juggler asked {device} for {asked} °C ({setting}), but the device keeps a lower target of its own: after each write it went back to {kept} °C. Load Juggler has lowered the tank's {lowered} to {value} °C, so it no longer writes a target the device will not hold.\n\nIf the device has a limit of its own - such as its maximum hot water temperature - raise it there first, then raise {setting} again to get the higher temperature back."
         }
     }
 }

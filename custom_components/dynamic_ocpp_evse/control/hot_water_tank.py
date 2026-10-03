@@ -6,10 +6,17 @@ power (on/off) and writes the setpoint chosen by the tank's operating mode.
 """
 
 import logging
+import math
+
+from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.translation import async_get_translations
 
 from ..const import (
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_ENTITY_ID,
+    CONF_NAME,
+    DOMAIN,
     CONF_SOLAR_GRACE_PERIOD,
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_SOLAR_GRACE_PERIOD,
@@ -145,6 +152,61 @@ def hold_tank_label(
     return wanted, now, None
 
 
+# A target the device does not keep: the readbacks that may say so.
+KEPT_SETTLE_S = 300.0
+KEPT_READBACKS = 3
+
+
+def judge_kept_target(rec, asked, readback, stamp, now,
+                      settle_s=KEPT_SETTLE_S, needed=KEPT_READBACKS):
+    """Whether the device keeps a lower target than the one asked of it.
+
+    Returns ``(rec, kept)``: the record of this ask the caller keeps between
+    cycles (``None`` starts one), and the device's own value once it has
+    answered ``asked`` with the same lower one on ``needed`` separate
+    readbacks, else None.
+
+    A MELCloud heat pump asked for 60 C on boost read back 55 at each of its
+    15-minute cloud polls and kept heating to 55 (a user's site, 2-3 Oct 2026):
+    our write echoes back at once, the unit's own ceiling only with the next
+    poll. So a readback counts only when
+
+    - it is lower than asked - a higher one is the device's or the user's own
+      choice, not a ceiling;
+    - the ask has stood ``settle_s`` - our write's echo, or a cloud poll not yet
+      through, reads anything;
+    - it is a new readback (``stamp``: the state's ``last_reported``), and
+      ``settle_s`` after the last one counted - a frozen state, or one cloud
+      poll seen on two cycles, is one answer;
+    - it is the same value as the ones before it - a lag shows the previous
+      ask once, a ceiling the same value every time.
+
+    A readback of ``asked`` itself resets nothing: a cloud device echoes our
+    write until its next poll whatever the unit does with it. The record
+    starts over when the ask changes.
+
+    Pure function - unit-testable.
+    """
+    # ponytail: one record, so a label flipping back inside three readbacks
+    # (45 min on a 15-min cloud) starts over; per-label records if that bites.
+    if rec is None or rec["asked"] != asked:
+        rec = {"asked": asked, "since": now, "kept": None, "seen": 0,
+               "stamp": None, "at": None}
+    if (
+        readback is None
+        or readback > asked - 0.05
+        or now - rec["since"] < settle_s
+        or stamp is None
+        or stamp == rec["stamp"]
+        or (rec["at"] is not None and now - rec["at"] < settle_s)
+    ):
+        return rec, None
+    if rec["kept"] is None or abs(readback - rec["kept"]) > 0.05:
+        rec.update(kept=readback, seen=0)
+    rec.update(seen=rec["seen"] + 1, stamp=stamp, at=now)
+    return rec, rec["kept"] if rec["seen"] >= needed else None
+
+
 async def send_hot_water_tank_command(
     sensor, limit: float, hub_data: dict, now_mono: float
 ) -> None:
@@ -252,6 +314,37 @@ async def send_hot_water_tank_command(
 
     heating_permitted = limit > 0
 
+    # A target the device does not keep (judge_kept_target): asking it again
+    # each poll is a cloud write for nothing, so the setting comes down to what
+    # the device holds. Judged only while heating is permitted - a water
+    # heater is otherwise held at its lowest target, not at a setting.
+    if heating_permitted and climate_state is not None:
+        try:
+            readback = float(climate_state.attributes["temperature"])
+            # A target below the device's own minimum is none it can be set to.
+            if readback < float(climate_state.attributes.get("min_temp") or 0):
+                readback = None
+        except (KeyError, TypeError, ValueError):
+            readback = None
+        load_rt["_tank_kept"], kept = judge_kept_target(
+            load_rt.get("_tank_kept"),
+            setpoint,
+            readback,
+            getattr(climate_state, "last_reported", None),
+            now_mono,
+        )
+        if kept is not None:
+            setpoint = await _adopt_kept_target(
+                sensor,
+                {"away": away, "normal": normal, "boost": boost},
+                label,
+                setpoint,
+                kept,
+                climate_entity,
+            )
+    else:
+        load_rt.pop("_tank_kept", None)
+
     # Publish state for the tank status sensor.
     if load_rt is not None:
         load_rt["tank_setpoint"] = setpoint
@@ -301,6 +394,70 @@ async def send_hot_water_tank_command(
         )
 
     stamp_command(sensor, now_mono)
+
+
+async def _adopt_kept_target(sensor, settings, label, asked, kept, device):
+    """Lower the asked setting to the target the device keeps, and say so.
+
+    ``settings`` are the tank's away / normal / boost temperatures, lowest
+    first. The asked one comes down to ``kept`` - and so does any below it that
+    sat above ``kept``, so away <= normal <= boost still holds; the ones above
+    it are judged when they are asked. In whole degrees, the sliders' step,
+    rounded down: rounded up, the slider would ask above the device again.
+    Through each slider's own set service, so the slider shows it and keeps it
+    across a restart. The notification replaces the tank's previous one.
+    Returns the setpoint to write now.
+    """
+    hass, entry, load_rt = sensor.hass, sensor.config_entry, sensor._runtime()
+    value = math.floor(kept + 0.01)
+    names = list(settings)
+    registry = er.async_get(hass)
+    lowered = []
+    for name in names[: names.index(label) + 1]:
+        if settings[name] <= value:
+            continue
+        key = f"tank_{name}_temperature"
+        load_rt[key] = value
+        lowered.append(f"{name.title()} Temperature")
+        number = registry.async_get_entity_id(
+            "number", DOMAIN, f"{entry.data.get(CONF_ENTITY_ID)}_{key}"
+        )
+        if number:
+            await hass.services.async_call(
+                "number",
+                "set_value",
+                {"entity_id": number, "value": value},
+                blocking=False,
+            )
+
+    fields = {
+        "tank": entry.data.get(CONF_NAME) or sensor._attr_name,
+        "device": device,
+        "asked": f"{asked:g}",
+        "kept": f"{kept:g}",
+        "value": value,
+        "setting": f"{label.title()} Temperature",
+        "lowered": ", ".join(lowered),
+    }
+    _LOGGER.warning(
+        "Hot water tank %(tank)s: %(device)s keeps %(kept)s°C when asked for "
+        "%(asked)s°C - %(lowered)s lowered to %(value)s°C",
+        fields,
+    )
+    strings = await async_get_translations(
+        hass, hass.config.language, "issues", {DOMAIN}
+    )
+    text = f"component.{DOMAIN}.issues.tank_target_not_kept."
+    await hass.services.async_call(
+        "persistent_notification",
+        "create",
+        {
+            "title": strings[text + "title"].format(**fields),
+            "message": strings[text + "description"].format(**fields),
+            "notification_id": f"{DOMAIN}_tank_target_not_kept_{entry.entry_id}",
+        },
+    )
+    return value
 
 
 async def _command_water_heater(hass, entity_id, state, permitted, setpoint):

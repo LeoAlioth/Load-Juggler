@@ -276,7 +276,7 @@
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
-                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje: to izmeri njegov senzor moči, brez njega pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
@@ -711,7 +711,7 @@
                     "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
-                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode ne sporoča, ali greje: to izmeri njegov senzor moči, brez njega pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
@@ -863,6 +863,12 @@
                 "battery": "Baterija",
                 "battery_control": "Upravljanje polnjenja baterije (zapisuje v razsmernik)"
             }
+        }
+    },
+    "issues": {
+        "tank_target_not_kept": {
+            "title": "Load Juggler - {tank}: naprava drži {kept} °C, ne {asked} °C",
+            "description": "Load Juggler je napravi {device} nastavil {asked} °C ({setting}), a naprava drži svojo, nižjo ciljno temperaturo: po vsakem vpisu se je vrnila na {kept} °C. Load Juggler je zato grelniku znižal {lowered} na {value} °C in ne vpisuje več cilja, ki ga naprava ne obdrži.\n\nČe ima naprava svojo omejitev - na primer najvišjo temperaturo tople vode - jo najprej zvišajte tam, nato znova zvišajte {setting}, da se višja temperatura vrne."
         }
     }
 }
