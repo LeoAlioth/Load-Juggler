@@ -17,7 +17,9 @@ OCPP command it sends - against a small model of the world:
   * a grid CT that sees house + car, and a charger status that follows the
     car (Charging while it draws, SuspendedEVSE while held at 0 A);
   * the charger's Current Import reading, which is healthy in a first session
-    (so the watch learns how often it reports) and pinned at 0.0 in a second.
+    (so the watch learns how often it reports) and pinned at 0.0 in a second -
+    or, for the slow-meter tests, moving only with a meter value every 120 s,
+    the way the ocpp integration shows one.
 
 The clock is simulated (every module's ``time.monotonic``), so twenty minutes
 of site cycles run in well under a second.
@@ -100,6 +102,11 @@ class World:
         self.on_new_limit = None   # called when the charger accepts a new limit
         self.extra_a = 0.0
         self._reports = 0
+        # A slow meter, as the ocpp integration (0.12) shows one: a meter value
+        # every ``meter_every`` cycles; None is the healthy/frozen reading.
+        self.meter_every = None
+        self._held = 0.0
+        self._pushed_status = None
 
     @property
     def draw(self):
@@ -140,8 +147,24 @@ class World:
                       {"device_class": "current", "unit_of_measurement": "A"})
             set_state("sensor.grid_allowance", str(ALLOWANCE_W),
                       {"device_class": "power", "unit_of_measurement": "W"})
-        set_state("sensor.evse_status_connector", self.charger_status())
         set_state("switch.evse_charge_control", "on")
+        status = self.charger_status()
+        if self.meter_every is not None:
+            # The integration moves the reading only with a meter value, zeroes
+            # it at a suspension, and at each meter value and each status
+            # change re-writes every sensor - the reading before the status.
+            if status in ("SuspendedEV", "SuspendedEVSE"):
+                self._held = 0.0
+            metered = cycle % self.meter_every == 0
+            if metered:
+                self._held = round(self.draw, 2)
+            if metered or status != self._pushed_status:
+                set_state("sensor.evse_current_import", str(self._held),
+                          {"device_class": "current", "unit_of_measurement": "A"})
+                set_state("sensor.evse_status_connector", status)
+                self._pushed_status = status
+            return
+        set_state("sensor.evse_status_connector", status)
         if self.reading_frozen:
             reading = 0.0
         else:
@@ -444,6 +467,62 @@ async def test_a_car_that_briefly_takes_nothing_is_not_a_stuck_readout(hass, sit
     )
     assert not readout_watch.is_stuck(watch)
     assert _stops(second) == 0
+
+
+# ── A slow meter: the reading predates the charging ───────────────────────
+#
+# The field case (2026-10-03, a go-eCharger V4): nothing is stuck - the
+# meter reports every 120 s - but at each start the reading still holds the 0
+# written at the last suspension, the car's draw is booked as house load, and
+# the charger is cut and paused, again and again, until a meter value happens
+# to land while it runs. Until the first reading since the start, the draw is
+# the limit in force (load_builders._await_first_reading).
+
+METER_EVERY = int(120 / CYCLE_S)
+
+
+async def _slow_meter_session(hass, site, minutes, *patches):
+    world = World(hass, off_grid=site.off_grid)
+    world.meter_every = METER_EVERY
+    hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
+        site.hub.entry_id, {}
+    )[site.evse.entry_id] = sensor_platform.LoadJugglerDeviceSensor(
+        hass, site.evse, site.hub, "evse", "evse"
+    )
+    log = []
+    with clocked(world.accept, *patches) as clock:
+        # The first meter value lands 30 s into the session, not with the start.
+        await _run(hass, site, world, int(minutes * 60 / CYCLE_S), clock, log,
+                   cycle0=METER_EVERY - 15)
+    return log, hass.data[DOMAIN]["loads"][site.evse.entry_id][EVSE_RT_READOUT_WATCH]
+
+
+async def test_a_slow_meter_hunts_when_its_old_reading_is_believed(hass, site):
+    """Control: the reading from before the start taken as it stands - and
+    the household check off, as it was for the field's first fifteen
+    minutes."""
+    log, _ = await _slow_meter_session(
+        hass, site, 15,
+        patch.object(readout_watch, "assumed_before_first_reading",
+                     lambda *a: None),
+        patch.object(hub_calculation, "_watch_readouts_against_household",
+                     lambda *a, **k: None),
+    )
+    assert _stops(log) >= 2, f"expected the charger to hunt, it stopped {_stops(log)} times"
+
+
+async def test_a_slow_meter_charges_through_on_its_assumed_draw(hass, site):
+    """The same world: the charger starts and never stops, at the allowance,
+    with nothing judged stuck - and from the first meter value on, its draw
+    is the reading again."""
+    log, watch = await _slow_meter_session(hass, site, 15)
+    assert _stops(log) == 0, f"stopped {_stops(log)} times"
+    assert not readout_watch.is_stuck(watch)
+    running = [limit for _, limit, _, _ in log[20:] if limit is not None]
+    assert min(running) >= MIN_A
+    assert max(g for _, _, g, _ in log[30:]) <= SETTLED_W
+    assert "awaiting" not in watch
+    assert log[-1][3].extra_state_attributes["readout_assumed_current"] is None
 
 
 # ── Off-grid: the same hunting, through the inverter's capacity ────────────

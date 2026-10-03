@@ -70,6 +70,10 @@ engine/load_builders.py for the rest of blind mode). The watch lets go once the
 reading produces RESUME_VALUES new values - moving, not moved once - or when
 the caller resets it (session over, monitor unreadable, Dynamic Control off).
 
+A reading that is merely SLOW gets the same assumption without a verdict:
+``assumed_before_first_reading``, after ``assumed_legs``, for as long as
+the reading in use was last reported before the connector entered Charging.
+
 Pure Python with no package imports. The caller owns the state dict (the
 load's runtime bucket) and the clock (``now``, monotonic seconds).
 """
@@ -318,6 +322,61 @@ def assumed_legs(state: dict, status: str | None, commanded: float | None) -> tu
         in_force = 0.0
     carrying = state.get("stuck_legs") or (False, False, False)
     return tuple(in_force if leg else 0.0 for leg in carrying)
+
+
+# ── Before the first reading: the reading predates the charging ─────────
+#
+# The field case (2026-10-03, a go-eCharger V4): meter values every
+# 120 s, and the ocpp integration writes 0 into the reading at each
+# SuspendedEV/EVSE. The car starts at 16 A, the reading still holds that 0, the
+# feedback books the car's 11 kW as house load, the allocation collapses
+# within 16 s, the charger is paused - and round it goes, every 3.5 min, until
+# the lockstep path caught it four starts later. A reading taken before
+# charging began says nothing about what the car draws now, so until one
+# taken since arrives the draw is ASSUMED, as in blind mode - but this is not
+# a stuck reading, only a slow one, and it happens at every session start.
+#
+# "Taken since" is HA's last_reported, not last_changed: a value re-reported
+# unchanged is still a new measurement, so a car that really takes nothing is
+# believed at the next report. The ocpp integration (0.12) re-writes every
+# sensor of a charger at each StatusNotification and MeterValues, measurands
+# before the connector status - so the held 0 is re-reported by the very
+# notification that says Charging, microseconds BEFORE the status changes, and
+# still predates it; what makes it fresh is the next push, in practice the
+# next meter value. A reading reported AT the same instant counts as fresh, so
+# states restored together after a restart are not doubted.
+
+# The draw_estimate evidence while the draw is assumed this way.
+READING_PREDATES_CHARGING = "reading_predates_charging"
+
+
+def assumed_before_first_reading(
+    status: str | None,
+    commanded: float | None,
+    legs: int,
+    reported_at,
+    charging_since,
+) -> tuple | None:
+    """The per-leg draw (A) to assume in place of a reading that predates the
+    charging, or None to use the reading.
+
+    ``reported_at`` is when the reading in use was last reported (the oldest,
+    for one sensor per leg), ``charging_since`` when the connector's status
+    last changed - comparable datetimes, None when unknown. ``legs`` is how
+    many legs the charger has. Re-entering Charging after a suspension moves
+    ``charging_since``, and the bar with it.
+
+    The limit in force on every leg; with none known, nothing is assumed, as
+    in ``assumed_legs``.
+    """
+    if status != LEARNING_STATUS or reported_at is None or charging_since is None:
+        return None
+    if reported_at >= charging_since:
+        return None
+    in_force = limit_in_force(status, commanded)
+    if in_force is None:
+        return None
+    return tuple(in_force if i < legs else 0.0 for i in range(3))
 
 
 # ── Frozen LOW: the household follows our own commands ──────────────────

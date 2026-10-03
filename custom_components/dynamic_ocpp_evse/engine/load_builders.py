@@ -137,11 +137,27 @@ def _fmt_legs(legs) -> str:
     return "/".join(f"{v:.1f}" for v in legs)
 
 
-def _watch_readout(hass, entry, load, load_rt, connector_status):
+def _reported_at(hass, entity_ids):
+    """When the reading those entities make up was last reported - the oldest
+    of them, so every leg must be fresh - or None."""
+    stamps = [
+        getattr(hass.states.get(entity_id), "last_reported", None)
+        for entity_id in entity_ids
+        if entity_id
+    ]
+    stamps = [s for s in stamps if s is not None]
+    return min(stamps) if stamps else None
+
+
+def _watch_readout(hass, entry, load, load_rt, connector_status,
+                   reported_at=None, charging_since=None):
     """Run the stuck-readout watch on this EVSE and, while it judges the
     reading stuck, control the load BLIND. The rules, and why they cannot trip
     on a car that is merely steady or drawing less than offered, are in
-    engine/readout_watch.py.
+    engine/readout_watch.py. Short of a verdict, a reading last reported
+    (``reported_at``) before the connector entered Charging
+    (``charging_since``) is replaced the same way until a newer one arrives -
+    ``_await_first_reading``.
 
     This is the per-load half: the reading's own tracker and the frozen-HIGH
     evidence (the reading claims more than the limit in force). The frozen-LOW
@@ -198,7 +214,7 @@ def _watch_readout(hass, entry, load, load_rt, connector_status):
                 now - (started if started is not None else now),
                 reason,
             )
-        for key in ("stuck_at", "assumed"):
+        for key in ("stuck_at", "assumed", "awaiting"):
             watch.pop(key, None)
         watch["normal_gap_s"] = readout_watch.normal_gap(watch)
         return
@@ -231,7 +247,73 @@ def _watch_readout(hass, entry, load, load_rt, connector_status):
         for key in ("stuck_at", "assumed"):
             watch.pop(key, None)
     if readout_watch.is_stuck(watch):
+        watch.pop("awaiting", None)
         _go_blind(load, watch, connector_status, commanded, event == "entered", now)
+    else:
+        _await_first_reading(
+            load, watch, connector_status, commanded, reported_at, charging_since
+        )
+
+
+def _await_first_reading(load, watch, status, commanded, reported_at,
+                         charging_since):
+    """Control the charger on its assumed draw while the reading in use
+    predates the charging (readout_watch.assumed_before_first_reading) - blind
+    mode's assumption and marks, with no verdict and no warning: a charger
+    that reports every few minutes does this at every session start. The
+    watch has already seen the real reading this cycle, so its learning and
+    both evidence paths are untouched; with the assumed draw taken out of the
+    household, the start no longer reads as house load.
+
+    ``watch["awaiting"]`` holds the moment the connector entered Charging for
+    as long as it lasts (entities/readout.py shows it); one info line per
+    session start.
+    """
+    legs = max(1, min(3, int(load.phases or 1)))
+    assumed = readout_watch.assumed_before_first_reading(
+        status, commanded, legs, reported_at, charging_since
+    )
+    if assumed is None:
+        if watch.pop("awaiting", None) is not None:
+            watch.pop("assumed", None)
+            _LOGGER.debug(
+                "EVSE %s: back on its reading - %s A",
+                load.entity_id,
+                _fmt_legs((load.l1_current, load.l2_current, load.l3_current)),
+            )
+        return
+    if watch.get("awaiting") != charging_since:
+        _LOGGER.info(
+            "EVSE %s: charging since %s, but its reading (%s A) was last "
+            "reported at %s, before that - assuming %s A until the first "
+            "reading since",
+            load.entity_id,
+            charging_since,
+            _fmt_legs((load.l1_current, load.l2_current, load.l3_current)),
+            reported_at,
+            _fmt_legs(assumed),
+        )
+    watch["awaiting"] = charging_since
+    _assume(
+        load, watch, assumed, readout_watch.READING_PREDATES_CHARGING,
+        charging_since,
+    )
+
+
+def _assume(load, watch, assumed, evidence, since):
+    """Put ``assumed`` (A per leg) in place of the reading, for this cycle:
+    the draw the feedback subtracts, a footprint of at least that much
+    (``draw_blind``), never a settled draw, and published as an estimate
+    resting on ``evidence`` since ``since``."""
+    load.l1_current, load.l2_current, load.l3_current = assumed
+    load.draw_blind = True
+    load.draw_settled = False
+    load.draw_estimate = {
+        "load": load.entity_id,
+        "evidence": evidence,
+        "since": since,
+    }
+    watch["assumed"] = assumed
 
 
 def _go_blind(load, watch, status, commanded, entered, now):
@@ -298,15 +380,7 @@ def _go_blind(load, watch, status, commanded, entered, now):
                 legs,
                 now_txt,
             )
-    load.l1_current, load.l2_current, load.l3_current = assumed
-    load.draw_blind = True
-    load.draw_settled = False
-    load.draw_estimate = {
-        "load": load.entity_id,
-        "evidence": watch.get("stuck_how"),
-        "since": watch.get("stuck_at"),
-    }
-    watch["assumed"] = assumed
+    _assume(load, watch, assumed, watch.get("stuck_how"), watch.get("stuck_at"))
     _LOGGER.debug(
         "EVSE %s: blind - reading frozen at %s A, assuming %s A",
         load.entity_id,
@@ -450,6 +524,9 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     evse_import_l3 = get_entry_value(entry, CONF_EVSE_CURRENT_IMPORT_L3_ENTITY_ID, None)
     evse_power_import = get_entry_value(entry, CONF_EVSE_POWER_IMPORT_ENTITY_ID, None)
     current_draw = None
+    # The entities the draw was read from: when it was last reported decides
+    # whether it predates the charging (_await_first_reading).
+    draw_entities = ()
 
     # Try per-phase current import entities first (separate sensors for each phase)
     if evse_import_l1 or evse_import_l2 or evse_import_l3:
@@ -469,6 +546,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
             if any(raw is _UNAVAILABLE for raw in raw_vals):
                 load.draw_assumed = True
             current_draw = "current_import_l1l2l3"
+            draw_entities = (evse_import_l1, evse_import_l2, evse_import_l3)
             _LOGGER.debug(
                 "EVSE %s: Using per-phase current import entities: L1=%.1f L2=%.1f L3=%.1f",
                 load_entity_id,
@@ -510,6 +588,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
                         load, entry, load_entity_id, max_current
                     )
                     current_draw = "current_import_total"
+                draw_entities = (evse_import,)
             except (ValueError, TypeError):
                 pass
 
@@ -532,6 +611,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
                     current_per_phase = power_per_phase / voltage
                     _on_phases(load, phases, current_per_phase)
                     current_draw = "power_import"
+                    draw_entities = (evse_power_import,)
                     _LOGGER.debug(
                         "EVSE %s: Using Power Active Import fallback: %.1fW → %.1fA per phase",
                         load_entity_id,
@@ -603,7 +683,11 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     # judge the draw the engine will actually use. Takes the RAW connector
     # status: the SuspendedEV -> Finishing substitution below is the engine's
     # verdict on the session, not a report from the charger.
-    _watch_readout(hass, entry, load, load_rt, connector_status)
+    _watch_readout(
+        hass, entry, load, load_rt, connector_status,
+        reported_at=_reported_at(hass, draw_entities),
+        charging_since=getattr(connector_status_state, "last_changed", None),
+    )
 
     # Draw-settle detection: the measured draw is trusted as the EVSE's real
     # footprint - freeing the unused gap to lower-priority loads - only when
