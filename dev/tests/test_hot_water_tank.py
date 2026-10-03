@@ -7,10 +7,20 @@ the three setpoints, the element power and the hub state, it picks which
 setpoint (away / normal / boost) the climate entity should target.
 """
 
+import asyncio
+
 from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (
     resolve_tank_setpoint,
+    send_hot_water_tank_command,
 )
 from custom_components.dynamic_ocpp_evse.const import (
+    CONF_BINARY_MIN_OFF_TIME,
+    CONF_CLIMATE_ENTITY_ID,
+    CONF_SOLAR_GRACE_PERIOD,
+    CONF_TANK_AWAY_TEMPERATURE,
+    CONF_TANK_BOOST_TEMPERATURE,
+    CONF_TANK_NORMAL_TEMPERATURE,
+    DOMAIN,
     TANK_MODE_FREEZE_PROTECTION,
     TANK_MODE_NORMAL,
     TANK_MODE_SOLAR_PRIORITY,
@@ -20,6 +30,8 @@ from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     tank_boost_is_opportunistic,
     TANK_SURPLUS_URGENCY_TIER,
 )
+
+from .test_water_heater_tank import FakeEntry, FakeHass, FakeSensor, FakeState
 
 AWAY, NORMAL, BOOST = 30.0, 45.0, 65.0
 ELEMENT_POWER = 2000.0
@@ -396,3 +408,94 @@ def test_an_unknown_temperature_is_never_opportunistic():
     # A missing reading must not be what gates a must-run element.
     assert tank_boost_is_opportunistic(FREEZE, "boost", None, 30.0) is False
     assert tank_boost_is_opportunistic(FREEZE, "boost", 35.0, None) is False
+
+
+# ---------------------------------------------------------------------------
+# The setpoint holds: a flipping verdict must not flip the thermostat
+# ---------------------------------------------------------------------------
+#
+# Kozolec, 3 Oct 2026: the tank followed the Excess verdict cycle by cycle, so
+# a verdict sitting at its edge wrote 75 -> 42 -> 75 C on nearly every 5 s
+# cycle - 113 setpoint changes that day, the element's relay switching every
+# 5-20 s. A label change now holds for the tank's minimum off time, and leaving
+# boost is ridden through its solar grace period like any solar load's dip.
+
+CLIMATE = "climate.kozolec_boiler"
+CYCLE_S = 5.0
+HOLD_S = 5 * 60.0  # the tank's binary_min_off_time and solar_grace_period
+
+
+def _kozolec_tank():
+    """The Kozolec tank: Solar Priority, 42 / 75 C, 5 min hold and grace."""
+    hass = FakeHass({CLIMATE: FakeState(
+        "heat", current_temperature=64.2, temperature=42.0, min_temp=7, max_temp=80,
+    )})
+    hass.data[DOMAIN]["loads"]["tank"]["operating_mode"] = TANK_MODE_SOLAR_PRIORITY.key
+    entry = FakeEntry({CONF_CLIMATE_ENTITY_ID: CLIMATE})
+    entry.options = {
+        CONF_TANK_AWAY_TEMPERATURE: 15.0,
+        CONF_TANK_NORMAL_TEMPERATURE: 42.0,
+        CONF_TANK_BOOST_TEMPERATURE: 75.0,
+        CONF_BINARY_MIN_OFF_TIME: 5.0,
+        CONF_SOLAR_GRACE_PERIOD: 5.0,
+    }
+    return hass, FakeSensor(hass, entry)
+
+
+def _setpoints(verdicts, soc=16.0):
+    """Drive the command path once per 5 s cycle with ``verdicts``; returns
+    ``[(t, setpoint written)]``."""
+    hass, sensor = _kozolec_tank()
+    written = []
+    for i, excess in enumerate(verdicts):
+        t = i * CYCLE_S
+        hass.services.calls.clear()
+        hub = _hub(soc=soc, soc_min=10, soc_target=88, excess=excess)
+        asyncio.run(send_hot_water_tank_command(sensor, 8.3, hub, t))
+        for domain, service, data in hass.services.calls:
+            if service == "set_temperature":
+                written.append((t, data["temperature"]))
+    return written
+
+
+def _changes(written):
+    return [
+        (t, sp) for (t, sp), (_, prev) in zip(written[1:], written) if sp != prev
+    ]
+
+
+def test_a_verdict_flipping_every_cycle_moves_the_setpoint_at_most_once_per_hold():
+    """Twenty minutes of a verdict flipping on every cycle: one change at most,
+    and never two inside one hold window. It used to be 239."""
+    written = _setpoints([i % 2 == 0 for i in range(240)])
+    changes = _changes(written)
+    assert len(changes) <= 20 * 60 / HOLD_S
+    for (t1, _), (t2, _) in zip(changes, changes[1:]):
+        assert t2 - t1 >= HOLD_S
+
+
+def test_a_sustained_change_still_goes_through_after_the_hold():
+    """Boost from the start; the verdict then drops for good at 10 min, and
+    returns for good at 20 min. Boost rides the dip for the grace period and
+    then goes to normal; normal holds for the minimum time and then boosts."""
+    verdicts = [True] * 120 + [False] * 120 + [True] * 120
+    written = _setpoints(verdicts)
+    assert written[0] == (0.0, 75.0)
+    assert _changes(written) == [
+        (600.0 + HOLD_S, 42.0),            # dip ridden through the grace
+        (600.0 + 2 * HOLD_S, 75.0),        # back up once normal has held
+    ]
+
+
+def test_the_minimum_soc_floor_is_never_held():
+    """The away setpoint below the battery's minimum SOC protects the house's
+    reserve, not surplus: it acts on the cycle it happens, mid-hold or not."""
+    hass, sensor = _kozolec_tank()
+    calls = hass.services.calls
+    asyncio.run(send_hot_water_tank_command(
+        sensor, 8.3, _hub(soc=16, soc_min=10, soc_target=88, excess=True), 0.0))
+    calls.clear()
+    asyncio.run(send_hot_water_tank_command(
+        sensor, 8.3, _hub(soc=9, soc_min=10, soc_target=88, excess=True), CYCLE_S))
+    assert ("climate", "set_temperature",
+            {"entity_id": CLIMATE, "temperature": 15.0}) in calls

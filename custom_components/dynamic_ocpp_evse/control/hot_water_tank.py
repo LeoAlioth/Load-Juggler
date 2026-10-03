@@ -8,7 +8,11 @@ power (on/off) and writes the setpoint chosen by the tank's operating mode.
 import logging
 
 from ..const import (
+    CONF_BINARY_MIN_OFF_TIME,
     CONF_CLIMATE_ENTITY_ID,
+    CONF_SOLAR_GRACE_PERIOD,
+    DEFAULT_BINARY_MIN_OFF_TIME,
+    DEFAULT_SOLAR_GRACE_PERIOD,
     CONF_HEATING_ELEMENT_POWER,
     DEFAULT_HEATING_ELEMENT_POWER,
     CONF_TANK_AWAY_TEMPERATURE,
@@ -103,6 +107,44 @@ def resolve_tank_setpoint(
     return (boost, "boost") if surplus_available else (normal, "normal")
 
 
+def hold_tank_label(
+    wanted, held, since, dip_since, now, min_switch_s, grace_s, protective=False
+):
+    """Hold the setpoint label against a verdict that flips.
+
+    Returns ``(label, since, dip_since)``: the label to write, when it was
+    last changed, and when a drop out of boost began (None when none is under
+    way). The caller keeps the last two between cycles.
+
+    The setpoint used to follow the hub's Excess verdict cycle by cycle, and a
+    verdict at its edge flipped the thermostat 75 -> 42 -> 75 C on nearly every
+    cycle, the element's relay with it (Kozolec, 3 Oct 2026: 113 setpoint
+    changes in a day, the relay switching every 5-20 s). It now holds the way a
+    binary load's permit does (entities/load.py):
+
+    - any change waits until the label has held ``min_switch_s`` - the tank's
+      minimum off time, its "how often may this switch" setting;
+    - leaving boost also waits until the drop has lasted ``grace_s`` - the solar
+      grace period every solar load rides a dip through; the verdict coming
+      back inside it starts the wait over;
+    - a ``protective`` change - the battery's minimum SOC - acts at once,
+      exactly as the SOC floor cuts through every grace hold.
+
+    Pure function - unit-testable.
+    """
+    if held is None or wanted == held:
+        return wanted, now if held is None else since, None
+    if protective:
+        return wanted, now, None
+    if held == "boost":
+        dip_since = now if dip_since is None else dip_since
+        if now - dip_since < grace_s:
+            return held, since, dip_since
+    if since is not None and now - since < min_switch_s:
+        return held, since, dip_since
+    return wanted, now, None
+
+
 async def send_hot_water_tank_command(
     sensor, limit: float, hub_data: dict, now_mono: float
 ) -> None:
@@ -143,9 +185,34 @@ async def send_hot_water_tank_command(
         DEFAULT_HEATING_ELEMENT_POWER,
     )
 
-    setpoint, label = resolve_tank_setpoint(
+    _, wanted = resolve_tank_setpoint(
         mode, away, normal, boost, element_power, hub_data
     )
+    # Held against a flipping verdict (hold_tank_label). A mode the user has
+    # just picked starts afresh: choosing a mode is an explicit instruction,
+    # as it is for the permit's own dwell.
+    entry = sensor.config_entry
+    label, load_rt["_tank_label_since"], load_rt["_tank_boost_dip_since"] = (
+        hold_tank_label(
+            wanted,
+            load_rt.get("tank_setpoint_label")
+            if load_rt.get("_tank_label_mode") == mode
+            else None,
+            load_rt.get("_tank_label_since"),
+            load_rt.get("_tank_boost_dip_since"),
+            now_mono,
+            60 * float(get_entry_value(
+                entry, CONF_BINARY_MIN_OFF_TIME, DEFAULT_BINARY_MIN_OFF_TIME
+            ) or 0),
+            60 * float(get_entry_value(
+                entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
+            ) or 0),
+            # Solar Priority's away is the battery's minimum SOC.
+            protective=mode == TANK_MODE_SOLAR_PRIORITY.key and wanted == "away",
+        )
+    )
+    load_rt["_tank_label_mode"] = mode
+    setpoint = {"away": away, "normal": normal, "boost": boost}[label]
 
     # Clamp to the climate entity's own limits. HA hard-rejects an
     # out-of-range set_temperature, and with blocking=False that rejection is
