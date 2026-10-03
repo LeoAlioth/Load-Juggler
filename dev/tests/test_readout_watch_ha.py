@@ -9,6 +9,9 @@ wiring, on the real site calculation with its feedback loop:
   * the limit the charger ACCEPTED is published for the engine - and only once
     the service call has returned - and forgotten when a profile or hard reset
     hands the charger back to its own default;
+  * the profile reset also sends the charger its two reporting intervals at
+    its update frequency, and a key refused - or no configure service at all -
+    never breaks the reset;
   * a reading frozen above what the charger was since told to deliver is
     replaced by the commanded draw, which reconstructs the household exactly
     and keeps a second charger from being sized against phantom headroom
@@ -285,6 +288,91 @@ async def test_a_profile_reset_forgets_the_recorded_command(hass, site):
         )
     script.return_value.async_run.assert_awaited_once()
     assert EVSE_RT_COMMANDED_LIMIT not in _runtime(hass, first)
+
+
+def _ocpp_configure(hass, fail_on=()):
+    """A stand-in for the ocpp integration's configure service: records each
+    call, and raises for the keys in ``fail_on`` as an offline charger or a
+    refused key would."""
+    from homeassistant.core import SupportsResponse
+    from homeassistant.exceptions import HomeAssistantError
+
+    calls = []
+
+    async def configure(call):
+        calls.append(dict(call.data))
+        if call.data["ocpp_key"] in fail_on:
+            raise HomeAssistantError("charger said no")
+        return {"reboot_required": False}
+
+    hass.services.async_register(
+        "ocpp", "configure", configure, supports_response=SupportsResponse.OPTIONAL
+    )
+    return calls
+
+
+async def test_a_reset_sends_the_reporting_intervals(hass, site):
+    """Both reporting intervals go to the charger at its update frequency
+    (15 s here) - after the profile reset, which runs as before."""
+    from custom_components.dynamic_ocpp_evse import async_setup
+
+    _, first, _ = site
+    first.add_to_hass(hass)
+    calls = _ocpp_configure(hass)
+    await async_setup(hass, {})
+    with patch("custom_components.dynamic_ocpp_evse.Script") as script:
+        script.return_value.async_run = AsyncMock()
+        await hass.services.async_call(
+            DOMAIN, "reset_ocpp_evse", {"entry_id": first.entry_id}, blocking=True
+        )
+    script.return_value.async_run.assert_awaited_once()
+    assert calls == [
+        {"devid": "first_cp", "ocpp_key": "MeterValueSampleInterval", "value": "15"},
+        {"devid": "first_cp", "ocpp_key": "ClockAlignedDataInterval", "value": "15"},
+    ]
+
+
+async def test_a_refused_interval_does_not_break_the_reset(hass, site, caplog):
+    """One key refused: the other is still sent, the reset completes, and the
+    refusal is a warning in the log."""
+    from custom_components.dynamic_ocpp_evse import async_setup
+
+    _, first, _ = site
+    first.add_to_hass(hass)
+    calls = _ocpp_configure(hass, fail_on={"MeterValueSampleInterval"})
+    await async_setup(hass, {})
+    with patch("custom_components.dynamic_ocpp_evse.Script") as script:
+        script.return_value.async_run = AsyncMock()
+        with caplog.at_level(logging.WARNING):
+            await hass.services.async_call(
+                DOMAIN, "reset_ocpp_evse", {"entry_id": first.entry_id},
+                blocking=True,
+            )
+    script.return_value.async_run.assert_awaited_once()
+    assert [c["ocpp_key"] for c in calls] == [
+        "MeterValueSampleInterval", "ClockAlignedDataInterval",
+    ]
+    refused = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "MeterValueSampleInterval" in r.getMessage()
+    ]
+    assert len(refused) == 1
+
+
+async def test_a_reset_without_the_configure_service_still_resets(hass, site):
+    """No ocpp configure service at all (the integration not loaded): the
+    profile reset still runs and the service call does not fail."""
+    from custom_components.dynamic_ocpp_evse import async_setup
+
+    _, first, _ = site
+    first.add_to_hass(hass)
+    await async_setup(hass, {})
+    with patch("custom_components.dynamic_ocpp_evse.Script") as script:
+        script.return_value.async_run = AsyncMock()
+        await hass.services.async_call(
+            DOMAIN, "reset_ocpp_evse", {"entry_id": first.entry_id}, blocking=True
+        )
+    script.return_value.async_run.assert_awaited_once()
 
 
 async def test_a_hard_reset_forgets_the_recorded_command(hass, site):

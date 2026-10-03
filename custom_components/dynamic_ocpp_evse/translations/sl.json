@@ -791,7 +791,7 @@
     "services": {
         "reset_ocpp_evse": {
             "name": "Ponastavi OCPP EVSE",
-            "description": "Počisti profile polnjenja in ponastavi polnilno postajo na minimalni tok.",
+            "description": "Počisti profile polnjenja in ponastavi polnilno postajo na minimalni tok. Polnilni postaji pošlje tudi intervala poročanja (MeterValueSampleInterval in ClockAlignedDataInterval), nastavljena na njeno frekvenco posodabljanja: integracija ocpp ob vsaki povezavi polnilne postaje v ta ključa zapiše svoja intervala (Meter interval in Idle interval), zato ponastavitev znova uveljavi vrednost Load Juggler.",
             "fields": {
                 "entry_id": {
                     "name": "ID konfiguracije polnilne postaje",
