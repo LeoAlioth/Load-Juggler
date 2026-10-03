@@ -1,5 +1,13 @@
 # Release Notes
 
+## 2.1.6
+
+### Bug Fixes
+
+- **A hot water tank no longer boosts from a nearly empty battery**: the Excess verdict read what every managed load draws as surplus the battery could not take - including loads served before the Excess tier, such as a Solar Priority charger or a Continuous pump, which had already taken it. On an off-grid site at 16% SOC with a 3 kW charge allowance, the battery charging 1963 W plus a Solar Priority charger's 2185 W and a pond filter's 51 W read as 1699 W of excess, so a Solar Priority tank went to its 75 °C boost setpoint every morning while the battery fell from 32% to 10%. Only the loads at the Excess tier - Excess-mode chargers, plugs and stations, and a tank while it boosts - are now read as if they were off; what a higher-ranked load draws counts as production already placed, and the Overview's *Excess trigger* margin is lower by it. How much an Excess load is given once Excess is on is unchanged.
+
+---
+
 ## 2.1.5
 
 ### Requires Home Assistant 2026.8

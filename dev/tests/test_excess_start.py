@@ -231,12 +231,15 @@ def _tank(eid="tank", watts=2100.0, priority=2, heating=True, phase="A"):
 def test_a_lower_ranked_evse_starts_on_what_the_tank_leaves():
     """Anže's example: a 2.5 kW surplus, a 2.1 kW tank ahead of a 1.4 kW-minimum
     EVSE. The tank takes its 2.1 kW, 400 W are left, and the EVSE still starts at
-    its 6 A floor - the leftover is positive, that is all the rule asks."""
+    its 6 A floor - the leftover is positive, that is all the rule asks.
+
+    The margin reads those 400 W, not the 2.5 kW load-off surplus: the tank
+    outranks the Excess tier, so its draw is production already placed."""
     tank = _tank(heating=True)
     evse = _evse("evse", min_current=6.0, priority=3)
     # Physical CT: the reconstructed surplus of 2500 W minus the tank's draw.
     margin = _prepare(_site(THRESHOLD + 2500.0 - 2100.0, loads=[tank, evse]))
-    assert _close(margin, 2500.0, tol=1.0)
+    assert _close(margin, 400.0, tol=1.0)
     assert _close(tank.allocated_current, 2100.0 / V)
     assert _close(evse.allocated_current, 6.0)
 

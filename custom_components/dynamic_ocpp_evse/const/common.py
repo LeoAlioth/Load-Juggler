@@ -409,6 +409,11 @@ DEFAULT_BINARY_MIN_OFF_TIME = 5  # minutes
 BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > target SOC
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 
+# The urgency tier the Excess modes compete at - the last one served. A load
+# ranked above it has first call on the surplus, so the Excess verdict reads
+# its draw as production already placed (calculations.excess_margin).
+EXCESS_URGENCY_TIER = 4
+
 
 @dataclass(frozen=True)
 class OperatingMode:

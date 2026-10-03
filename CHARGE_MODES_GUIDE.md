@@ -428,7 +428,7 @@ battery is a second sink alongside grid export, so both are summed into a single
 comparison - one number decides Excess for every load:
 
 ```
-margin = (solar export + battery charge power + our own managed load draws)
+margin = (solar export + battery charge power + our Excess-tier load draws)
        - (export allowance + battery charge allowance)
 
 Excess is on when  margin >= 0   - and the margin IS the excess pool, in watts
@@ -509,9 +509,15 @@ charge the battery wanted.
 **Hysteresis.** Once Excess engages, `capacity` drops by 500 W until it
 disengages, so a load doesn't chatter at the trigger point.
 
-**Managed draws are added back.** Our own loads' consumption is restored before
-the comparison, so a load already running on excess does not disqualify itself by
-consuming the surplus that started it. Grid-tied the feedback loop does this by
+**Excess-tier draws are added back.** The consumption of our loads at the
+Excess tier - Excess-mode chargers, plugs and stations, and a tank while it
+boosts - is restored before the comparison, so a load already running on excess
+does not disqualify itself by consuming the surplus that started it. A load
+ranked *above* Excess (Standard, Continuous, Solar Priority, Solar Only) is not
+restored: it is served first, so what it draws is production the site has
+already placed, not surplus. A Solar Priority car taking 2.2 kW of a 1.2 kW
+surplus leaves the Excess tier nothing, and the verdict says so - before 2.1.6
+it counted the car's draw as surplus and boosted a tank from an empty battery. Grid-tied the feedback loop does this by
 adding the draws back into export, which makes the margin equal *production minus
 household* - invariant to our loads, and invariant to whether the inverter serves
 them by cutting export or by throttling battery charging. In meter terms a load
