@@ -439,11 +439,15 @@ A sink contributes its allowance only while it can actually absorb:
 | Sink | Allowance | Zeroed when |
 | ---- | --------- | ----------- |
 | Grid export | **Grid Export Limit − Excess Trigger Margin** | The site is off-grid - nothing can leave. (No limit configured = infinite allowance: the grid absorbs everything, so grid-side Excess never triggers.) |
-| Battery charging | **Battery Max Charge Power** - or the lower rate the inverter's **Battery Charge Control** is actually enforcing | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
+| Battery charging | **Battery Max Charge Power** - or the lower rate the inverter's **Battery Charge Control** is actually enforcing; off-grid **less the Excess Trigger Margin** | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
 
 The margin (default 500 W) exists because an inverter curtails slightly *under*
 the export limit - a trigger exactly at the limit would never fire. Enter your
-real physical/contract limit; the trigger takes care of itself.
+real physical/contract limit; the trigger takes care of itself. A battery's BMS
+holds charging just under its limit the same way, so an off-grid site - where the
+battery is the only sink - takes the same margin off the battery's allowance
+instead: enter the battery's real maximum charge power. Grid-tied, the margin is
+applied once, through the export limit.
 
 **Only solar export counts.** The export in that sum is the site's own
 *production* leaving the meter, so the battery's discharge is subtracted from

@@ -298,6 +298,12 @@ class SiteContext:
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
+    # How far below a sink's limit the Excess trigger sits (the hub's trigger
+    # margin): a sink at its limit is held slightly under it, so a trigger
+    # exactly AT it never fires. Grid-tied it is already in
+    # excess_export_threshold; off-grid it comes off the battery's charge
+    # allowance (target_calculator.excess_margin). 0 = none.
+    excess_trigger_margin: float = 0.0
     # Deadband subtracted from the excess absorption capacity while Excess is
     # engaged, so a load doesn't chatter at the trigger point. The engine owns
     # the latch and sets this; the calculator stays stateless.

@@ -87,7 +87,7 @@
                     "max_import_power_entity_id": "Napredno - uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230 V v Evropi, 120 V v Severni Ameriki.",
                     "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
-                    "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess. Razsmerniki režejo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
+                    "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess - brez omrežja koliko pod največjo močjo polnjenja baterije. Razsmerniki in BMS baterije se ustavijo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
                     "excess_hysteresis": "Koliko sme presežek pasti pod sprožilec, preden se vklopljeni porabnik izklopi. Odmik sprožilca določa, kje se način Excess vklopi; ta nastavitev pa širino pasu, v katerem ostane vklopljen, da porabnik ne utripa, ko presežek niha okoli sprožilca.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja porabnikom.",
                     "auto_detect_phase_mapping": "Spremlja tokove porabnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste porabnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
@@ -490,7 +490,7 @@
                 },
                 "data_description": {
                     "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
-                    "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess. Razsmerniki režejo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
+                    "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess - brez omrežja koliko pod največjo močjo polnjenja baterije. Razsmerniki in BMS baterije se ustavijo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
                     "excess_hysteresis": "Koliko sme presežek pasti pod sprožilec, preden se vklopljeni porabnik izklopi. Odmik sprožilca določa, kje se način Excess vklopi; ta nastavitev pa širino pasu, v katerem ostane vklopljen, da porabnik ne utripa, ko presežek niha okoli sprožilca."
                 }
             },
