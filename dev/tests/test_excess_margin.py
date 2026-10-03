@@ -495,3 +495,30 @@ def test_a_boosting_tank_still_holds_its_own_verdict():
     assert excess_margin(idle) == pytest.approx(0.0)
     assert excess_margin(running) == pytest.approx(0.0)
     assert excess_margin(running, HYSTERESIS) == pytest.approx(HYSTERESIS)
+
+
+# --- The trigger margin on an off-grid battery -------------------------------
+#
+# Kozolec (Anze, 2026-10-03): the BMS holds charging at about 3.5 kW. Entered as
+# 3500 W, a battery charging just under its limit never read as taking all it
+# may, and Excess could not engage; it had been entered as 3000 W to make Excess
+# fire at all. Off-grid, the trigger margin comes off the battery's allowance,
+# as it comes off a grid-tied site's export limit.
+
+def _offgrid_bms(battery_power, margin):
+    site = _site(battery_power=battery_power, soc=60, off_grid=True, charge_limit=3500.0)
+    site.excess_trigger_margin = margin
+    return site
+
+
+def test_off_grid_battery_just_under_its_bms_limit_triggers_excess():
+    assert excess_margin(_offgrid_bms(-3400.0, 500.0)) == pytest.approx(400.0)
+    assert excess_margin(_offgrid_bms(-2900.0, 500.0)) == pytest.approx(-100.0)
+    # without the margin it could only engage AT the limit, which the BMS never lets it reach
+    assert excess_margin(_offgrid_bms(-3400.0, 0.0)) == pytest.approx(-100.0)
+
+
+def test_grid_tied_battery_takes_the_margin_once_through_the_export_limit():
+    site = _site(export=EXPORT_LIMIT, battery_power=-CHARGE_LIMIT, soc=60)
+    site.excess_trigger_margin = 500.0
+    assert excess_margin(site) == pytest.approx(0.0)

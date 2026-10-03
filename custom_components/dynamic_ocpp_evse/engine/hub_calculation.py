@@ -372,8 +372,10 @@ def _read_hub_config(hub_entry):
     """The hub's own scalar settings, read once per cycle.
 
     Returns ``(voltage, main_breaker_rating, excess_hysteresis,
-    excess_threshold)`` - the site electricals plus the Excess trigger
-    point and release band derived from the configured export limit.
+    excess_threshold, excess_trigger_margin)`` - the site electricals plus the
+    Excess trigger point and release band derived from the configured export
+    limit, and the trigger margin itself for the battery side of an off-grid
+    site, which has no export limit to carry it.
     """
     # --- Read hub config values ---
     voltage = (
@@ -407,7 +409,7 @@ def _read_hub_config(hub_entry):
         excess_threshold = max(0.0, grid_export_limit - excess_trigger_margin)
     else:
         excess_threshold = float("inf")
-    return voltage, main_breaker_rating, excess_hysteresis, excess_threshold
+    return voltage, main_breaker_rating, excess_hysteresis, excess_threshold, float(excess_trigger_margin or 0)
 
 
 def _read_site_phases(hass, hub_entry, voltage):
@@ -1233,6 +1235,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         main_breaker_rating,
         excess_hysteresis,
         excess_threshold,
+        excess_trigger_margin,
     ) = _read_hub_config(hub_entry)
 
     raw_phases, has_grid_cts = _read_site_phases(hass, hub_entry, voltage)
@@ -1480,6 +1483,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         inverter_output_total=_f(inverter_output_total),
         net_grid_power=float(net_grid_power),
         excess_export_threshold=excess_threshold,
+        excess_trigger_margin=excess_trigger_margin,
         allow_grid_charging=allow_grid_charging,
         power_buffer=power_buffer,
         distribution_mode=distribution_mode,

@@ -1289,6 +1289,9 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
                   + our own managed draws - draws ranked above Excess)
                - (export allowance + battery charge allowance - hysteresis)
 
+    (off-grid the battery's allowance is less the trigger margin - see the
+    term itself.)
+
     ONLY THE EXCESS TIER IS HANDED BACK. The reconstruction below takes every
     managed load off; the loads ranked above Excess are then put back, because
     a Solar Priority car or a Continuous pump is a place the site has CHOSEN to
@@ -1398,6 +1401,16 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     # narrower allowance is a smaller headroom in exactly the same way a
     # partly-charged battery is, so the draw add-back keeps cancelling.
     charge_allowance = _charge_allowance(site)
+    # The trigger margin, once for the sinks together: a sink at its limit is
+    # held slightly under it - an inverter curtailing at the export limit, a
+    # BMS at its charge limit - so a trigger exactly AT the limit never fires.
+    # Grid-tied the export threshold already sits the margin below the export
+    # limit; off-grid the battery is the only sink, so the margin comes off its
+    # allowance. Kozolec (Anze, 2026-10-03): its BMS holds charging at about
+    # 3.5 kW, and entered as 3500 W the battery never read as taking all it
+    # may - it had been set to 3000 W to make Excess fire at all.
+    if site.is_off_grid and charge_allowance > 0:
+        charge_allowance = max(0.0, charge_allowance - (site.excess_trigger_margin or 0.0))
     # NET, not gross: this is the SURPLUS question. With A and B importing 1 A
     # each and C exporting 2 A the site has nothing spare - a load put on C
     # would simply import - so the signed sum is 0 and Excess is off. The
