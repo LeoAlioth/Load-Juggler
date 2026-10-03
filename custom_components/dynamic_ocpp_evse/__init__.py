@@ -504,6 +504,42 @@ async def async_setup(hass: HomeAssistant, config: dict):
         script = Script(hass, sequence, "Reset OCPP EVSE", DOMAIN)
         await script.async_run(context=call.context)
 
+        # The charger's reporting intervals, set to this load's update
+        # frequency: MeterValueSampleInterval paces the meter values of a
+        # transaction, ClockAlignedDataInterval the ones a charger sends
+        # without one (the go-eCharger of the 2026-10-03 field case runs no
+        # transaction: 120 s between readings). The ocpp integration writes
+        # its own Meter interval / Idle interval options to these two keys on
+        # every connect, so a reset re-applies Load Juggler's. Its configure
+        # reads the key first and writes only a different value. Each key on
+        # its own: one the charger does not know or refuses, or a charger that
+        # is offline, is logged and the reset carries on.
+        interval = str(int(get_entry_value(
+            entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+        )))
+        for key in ("MeterValueSampleInterval", "ClockAlignedDataInterval"):
+            try:
+                response = await hass.services.async_call(
+                    "ocpp",
+                    "configure",
+                    {"devid": ocpp_device_id, "ocpp_key": key, "value": interval},
+                    blocking=True,
+                    return_response=True,
+                )
+            except Exception as err:
+                _LOGGER.warning(
+                    "%s: could not set the charger's %s to %s s: %s",
+                    entry.title, key, interval, err,
+                )
+                continue
+            _LOGGER.info(
+                "%s: sent the charger %s = %s s%s",
+                entry.title, key, interval,
+                " (the charger needs a reboot to apply it)"
+                if isinstance(response, dict) and response.get("reboot_required")
+                else "",
+            )
+
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
 
     def _own_entity(entry_id: str, platform: str, suffix: str):

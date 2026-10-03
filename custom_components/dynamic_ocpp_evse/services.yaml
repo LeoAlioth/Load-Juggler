@@ -1,6 +1,7 @@
 reset_ocpp_evse:
   name: Reset OCPP EVSE
-  description: Clear charging profiles and reset the charger to minimum current.
+  description: >-
+    Clear charging profiles and reset the charger to minimum current. Also sends the charger its reporting intervals (MeterValueSampleInterval and ClockAlignedDataInterval), set to the charger's update frequency: the ocpp integration writes its own Meter interval and Idle interval to these keys every time the charger connects, so a reset applies Load Juggler's again.
   fields:
     entry_id:
       name: Charger Config Entry ID
