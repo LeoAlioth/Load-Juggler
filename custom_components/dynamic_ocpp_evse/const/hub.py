@@ -129,3 +129,9 @@ DISTRIBUTION_MODES = [
     DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
 ]
 DEFAULT_DISTRIBUTION_MODE = DISTRIBUTION_MODE_PRIORITY
+# Optimized trims a load for the next one's minimum only with current left over
+# beyond the load's own maximum. To START the next load that leftover must be
+# at least this (A); a next load already running keeps its minimum down to any
+# leftover above 0. Without the band, a supply hovering at the first load's
+# maximum flipped two 6-16 A chargers between 16/0 and 11/6 A.
+OPTIMIZED_START_MARGIN = 1.0
