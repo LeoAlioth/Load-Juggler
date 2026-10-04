@@ -849,6 +849,9 @@ async def test_charge_pause_starts_when_below_minimum(
     hass.data[DOMAIN]["loads"][mock_charger_entry.entry_id]["operating_mode"] = "Solar Only"
 
     charger_sensor._had_runnable_permit = True
+    # ...and the shortage was there on the cycle before too: a pause takes
+    # two site cycles of it in a row, and these tests drive one decision.
+    charger_sensor._short_last_cycle = True
 
     await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
 
@@ -943,6 +946,9 @@ async def test_charge_pause_holds_at_zero(
     """
     # Override to Solar Only mode - charger gets 0A allocation
     hass.data[DOMAIN]["loads"][mock_charger_entry.entry_id]["operating_mode"] = "Solar Only"
+    # The shortage was there on the cycle before too (a pause takes two site
+    # cycles of it in a row), so this one cycle decides.
+    charger_sensor._short_last_cycle = True
 
     await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
 
@@ -2540,6 +2546,9 @@ async def test_charge_pause_cancelled_on_mode_change(
     # Without it they would be exercising the cold start, which no longer
     # arms the pause (test_a_cold_start_does_not_arm_the_charge_pause).
     charger_sensor._had_runnable_permit = True
+    # ...and the shortage was there on the cycle before too: a pause takes
+    # two site cycles of it in a row, and these tests drive one decision.
+    charger_sensor._short_last_cycle = True
 
     # First update: Solar Only mode, no surplus → pause starts
     await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
@@ -2577,6 +2586,9 @@ async def test_charge_pause_remaining_seconds_attribute(
     # Without it they would be exercising the cold start, which no longer
     # arms the pause (test_a_cold_start_does_not_arm_the_charge_pause).
     charger_sensor._had_runnable_permit = True
+    # ...and the shortage was there on the cycle before too: a pause takes
+    # two site cycles of it in a row, and these tests drive one decision.
+    charger_sensor._short_last_cycle = True
 
     await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
 

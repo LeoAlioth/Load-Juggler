@@ -71,8 +71,9 @@ reading produces RESUME_VALUES new values - moving, not moved once - or when
 the caller resets it (session over, monitor unreadable, Dynamic Control off).
 
 A reading that is merely SLOW gets the same assumption without a verdict:
-``assumed_before_first_reading``, after ``assumed_legs``, for as long as
-the reading in use was last reported before the connector entered Charging.
+``assumed_before_new_reading``, after ``assumed_legs``, for as long as the
+reading in use was last reported before the limit in force last changed - the
+connector entering Charging, or a command that moved it.
 
 Pure Python with no package imports. The caller owns the state dict (the
 load's runtime bucket) and the clock (``now``, monotonic seconds).
@@ -324,17 +325,27 @@ def assumed_legs(state: dict, status: str | None, commanded: float | None) -> tu
     return tuple(in_force if leg else 0.0 for leg in carrying)
 
 
-# ── Before the first reading: the reading predates the charging ─────────
+# ── Before a new reading: the reading predates the limit in force ───────
 #
-# The field case (2026-10-03, a go-eCharger V4): meter values every
+# A reading describes the draw under the limit in force when it was taken.
+# Until one taken since arrives, the draw under a new limit is ASSUMED, as in
+# blind mode - but nothing is stuck, the reading is only slow.
+#
+# The first field case (2026-10-03, a go-eCharger V4): meter values every
 # 120 s, and the ocpp integration writes 0 into the reading at each
 # SuspendedEV/EVSE. The car starts at 16 A, the reading still holds that 0, the
 # feedback books the car's 11 kW as house load, the allocation collapses
 # within 16 s, the charger is paused - and round it goes, every 3.5 min, until
-# the lockstep path caught it four starts later. A reading taken before
-# charging began says nothing about what the car draws now, so until one
-# taken since arrives the draw is ASSUMED, as in blind mode - but this is not
-# a stuck reading, only a slow one, and it happens at every session start.
+# the lockstep path caught it four starts later.
+#
+# The second (2026-10-04, two of them on a 20 A breaker, Priority mode, meter
+# values and commands both every 30 s): the priority-1 car followed every
+# command, its reading lagged each one by up to 26 s, and the feedback booked
+# every step as house load the other way - raised 7 -> 15 A, the house
+# "rose" 8 A and the next command fell to 8 A; cut, the house "fell" and the
+# next one rose again - 7/15/8/14/8/11 A, the breaker past 20 A after every
+# rise, and each phantom rise left no room for the priority-2 car's 6 A
+# minimum, so it was cut and paused for 3 minutes, again and again.
 #
 # "Taken since" is HA's last_reported, not last_changed: a value re-reported
 # unchanged is still a new measurement, so a car that really takes nothing is
@@ -345,38 +356,92 @@ def assumed_legs(state: dict, status: str | None, commanded: float | None) -> tu
 # still predates it; what makes it fresh is the next push, in practice the
 # next meter value. A reading reported AT the same instant counts as fresh, so
 # states restored together after a restart are not doubted.
+#
+# A command's moment is when the engine first saw it accepted - one site cycle
+# late at most, so a reading taken within that cycle is assumed over once
+# more, which errs toward the command it was about to show anyway.
 
 # The draw_estimate evidence while the draw is assumed this way.
-READING_PREDATES_CHARGING = "reading_predates_charging"
+READING_PREDATES_LIMIT = "reading_predates_limit"
+
+# How many recent commands the watch remembers, to find the one a reading was
+# taken under when readings come slower than commands. A memory length, like
+# GAP_MEMORY: a reading older than all of them is used as it stands.
+COMMAND_MEMORY = 4
 
 
-def assumed_before_first_reading(
+def track_commands(state: dict, commanded: float | None, now) -> None:
+    """Record each change of the commanded limit, at ``now`` (wall clock,
+    comparable with a reading's last_reported), in ``state["commands"]`` as
+    ``(at, limit)``. The first limit seen has ``at`` None - in force since
+    before the watch knows. An unknown limit forgets them all."""
+    commands = state.setdefault("commands", [])
+    if commanded is None:
+        commands.clear()
+    elif not commands or commands[-1][1] != commanded:
+        commands.append((now if commands else None, float(commanded)))
+        del commands[:-COMMAND_MEMORY]
+
+
+def _commanded_at(commands, when) -> float | None:
+    """The commanded limit in force at ``when``, or None if it predates them."""
+    for at, limit in reversed(commands):
+        if at is None or at <= when:
+            return limit
+    return None
+
+
+def assumed_before_new_reading(
     status: str | None,
     commanded: float | None,
     legs: int,
+    reading,
     reported_at,
     charging_since,
+    commands,
+    margin: float,
 ) -> tuple | None:
-    """The per-leg draw (A) to assume in place of a reading that predates the
-    charging, or None to use the reading.
+    """``(assumed, since)`` for a reading taken under a limit no longer in
+    force - the per-leg draw (A) to use in its place, and when the limit it
+    predates came in - or None to use the reading.
 
-    ``reported_at`` is when the reading in use was last reported (the oldest,
-    for one sensor per leg), ``charging_since`` when the connector's status
-    last changed - comparable datetimes, None when unknown. ``legs`` is how
-    many legs the charger has. Re-entering Charging after a suspension moves
-    ``charging_since``, and the bar with it.
+    The limit in force changes when the connector enters Charging - from a
+    no-energy status, so from 0 A (``charging_since``) - and when a command
+    moves it (``commands``, see ``track_commands``). ``reported_at`` is when
+    the reading was last reported (the oldest, for one sensor per leg). Per
+    leg, what the reading showed under the limit it was taken at says which
+    way the car goes:
 
-    The limit in force on every leg; with none known, nothing is assumed, as
-    in ``assumed_legs``.
+    * it took that limit, to within ``margin``: the car follows its limit, so
+      it now takes the limit in force;
+    * it took less: the car holds itself there, so it takes the same - or the
+      limit in force, if that is lower.
+
+    None while the connector is not Charging, with no limit in force or no
+    timestamp known, and when the assumption moves no leg by more than
+    ``margin`` - a car at its own ceiling, or a command that hardly moved.
+    Legs past the charger's ``legs`` carry 0 A.
     """
-    if status != LEARNING_STATUS or reported_at is None or charging_since is None:
-        return None
-    if reported_at >= charging_since:
+    if status != LEARNING_STATUS or reported_at is None:
         return None
     in_force = limit_in_force(status, commanded)
     if in_force is None:
         return None
-    return tuple(in_force if i < legs else 0.0 for i in range(3))
+    if charging_since is not None and reported_at < charging_since:
+        before, since = 0.0, charging_since
+    elif commands and commands[-1][0] is not None and reported_at < commands[-1][0]:
+        before, since = _commanded_at(commands, reported_at), commands[-1][0]
+        if before is None:
+            return None
+    else:
+        return None
+    assumed = tuple(
+        (in_force if r >= before - margin else min(r, in_force)) if i < legs else 0.0
+        for i, r in enumerate(reading)
+    )
+    if all(abs(a - r) <= margin for a, r in zip(assumed, reading)):
+        return None
+    return assumed, since
 
 
 # ── Frozen LOW: the household follows our own commands ──────────────────

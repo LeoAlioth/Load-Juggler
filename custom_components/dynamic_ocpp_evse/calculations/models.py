@@ -123,9 +123,9 @@ class LoadContext:
     # was last told, on the legs the verdict chose. Unlike draw_assumed (an
     # invented 0) this is a real estimate, so it IS published - as one: see
     # draw_estimate below and engine/hub_result.py. Set the same way, with no
-    # verdict, while the reading predates the charging - it was last reported
-    # before the connector entered Charging (readout_watch.
-    # assumed_before_first_reading).
+    # verdict, while the reading predates the limit in force - it was last
+    # reported before the connector entered Charging or before a command that
+    # moved the car (readout_watch.assumed_before_new_reading).
     #
     # Its footprint is the LARGER of its allocation and that assumed draw (see
     # _pool_deduction): while the permit rises, it reserves the permit, as an
@@ -135,7 +135,7 @@ class LoadContext:
     draw_blind: bool = False
     # While draw_blind: what the estimate rests on, for the figures published
     # from it - ``{"load": entity id, "evidence": "above_limit" |
-    # "household_lockstep" | "reading_predates_charging", "since": UTC
+    # "household_lockstep" | "reading_predates_limit", "since": UTC
     # datetime}``. Set by the HA layer.
     draw_estimate: dict | None = None
 

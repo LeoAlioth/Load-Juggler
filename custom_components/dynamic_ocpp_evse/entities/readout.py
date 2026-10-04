@@ -17,10 +17,11 @@ says how they are marked:
 * ``status_with_readout_note`` - the plain-words note on the charger's status.
 
 The same assumption, without a verdict, covers a charger whose reading
-predates the charging - taken before the connector entered Charging, so it
-says nothing about the car yet (``awaiting``, engine/load_builders.py
-_await_first_reading): its figures are estimates too, with that evidence, and
-its status says it is waiting for the first reading.
+predates the limit in force - taken before the connector entered Charging or
+before a command that moved its car, so it says nothing about the draw now
+(``awaiting``, engine/load_builders.py _await_new_reading): its figures are
+estimates too, with that evidence, and its status says it is waiting for a
+new reading.
 
 Everything reads the watch's own state dict (the load's runtime bucket), which
 the engine keeps; nothing here decides anything. Pure: no Home Assistant, so
@@ -29,15 +30,15 @@ the Overview page and the tests can use it as-is.
 
 from __future__ import annotations
 
-from ..engine.readout_watch import READING_PREDATES_CHARGING
+from ..engine.readout_watch import READING_PREDATES_LIMIT
 
 # Appended to the charger's status for as long as the episode lasts, so the
 # entity a user looks at says it in words: "Charging (readout stuck -
 # controlled on assumed current)".
 READOUT_STUCK_NOTE = "readout stuck - controlled on assumed current"
-# ...and while the reading predates the charging: "Charging (waiting for
-# first reading - assumed current)".
-READING_AWAITED_NOTE = "waiting for first reading - assumed current"
+# ...and while the reading predates the limit in force: "Charging (waiting
+# for a new reading - assumed current)".
+READING_AWAITED_NOTE = "waiting for a new reading - assumed current"
 
 
 def _stuck(watch) -> bool:
@@ -53,7 +54,7 @@ def _estimate(watch) -> tuple:
     if _stuck(watch):
         return watch.get("stuck_how"), watch.get("stuck_at")
     if _awaiting(watch):
-        return READING_PREDATES_CHARGING, watch.get("awaiting")
+        return READING_PREDATES_LIMIT, watch.get("awaiting")
     return None, None
 
 
@@ -68,7 +69,7 @@ def readout_attributes(watch) -> dict:
     * ``readout_stuck_since`` - when that episode began (UTC);
     * ``readout_stuck_value`` - the frozen per-leg reading, L1/L2/L3 in A;
     * ``readout_assumed_current`` - the per-leg draw the engine uses instead,
-      also while the reading predates the charging;
+      also while the reading predates the limit in force;
     * ``readout_normal_gap_seconds`` - the longest this reading has recently
       gone between two values while charging, which sets how long a
       contradiction must last before it counts. None while still learning.
@@ -129,7 +130,7 @@ def hub_estimate_attributes(draw_estimated) -> dict:
 
 def status_with_readout_note(status, watch):
     """The charger's status, with the stuck-readout note while blind and the
-    awaited-reading note while its reading predates the charging."""
+    awaited-reading note while its reading predates the limit in force."""
     if not status:
         return status
     if _stuck(watch):
