@@ -14,6 +14,7 @@ from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (
     send_hot_water_tank_command,
 )
 from custom_components.dynamic_ocpp_evse.const import (
+    BEHAVIOR_BINARY_EXCESS,
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CLIMATE_ENTITY_ID,
     CONF_SOLAR_GRACE_PERIOD,
@@ -30,6 +31,10 @@ from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     tank_boost_is_opportunistic,
     TANK_SURPLUS_URGENCY_TIER,
 )
+from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+    _build_hot_water_tank_load,
+)
+from custom_components.dynamic_ocpp_evse.entities.load import min_off_hold
 
 from .test_water_heater_tank import FakeEntry, FakeHass, FakeSensor, FakeState
 
@@ -499,3 +504,138 @@ def test_the_minimum_soc_floor_is_never_held():
         sensor, 8.3, _hub(soc=9, soc_min=10, soc_target=88, excess=True), CYCLE_S))
     assert ("climate", "set_temperature",
             {"entity_id": CLIMATE, "temperature": 15.0}) in calls
+
+
+# ---------------------------------------------------------------------------
+# Leaving boost goes straight to the floor, never through away or off
+# ---------------------------------------------------------------------------
+#
+# Andrej's site, 4 Oct 2026: water_heater.tc (Normal mode, 42 / 46 C) went
+# 46 -> 40 at 13:49 and 40 -> 42 at 13:54 - its lowest target for five minutes
+# between boost and normal - and 46 -> 40 -> 46 -> 40 through 11:21-12:13. Home's
+# workshop boiler went 80 heat -> off -> 80 heat -> off. The label held at boost,
+# so the allocator still sized the tank as opportunistic and withdrew its power
+# with the surplus, and a tank denied power was switched off however warm it was.
+
+TICK_S = 15.0
+
+
+def _tank(entity_id, mode, temp, away, normal, boost, min_temp):
+    device = FakeState(
+        "off" if entity_id.startswith("climate.") else "auto",
+        current_temperature=temp, temperature=normal, min_temp=min_temp, max_temp=80,
+    )
+    hass = FakeHass({entity_id: device})
+    hass.data[DOMAIN]["loads"]["tank"]["operating_mode"] = mode
+    entry = FakeEntry({CONF_CLIMATE_ENTITY_ID: entity_id})
+    entry.options = {
+        CONF_TANK_AWAY_TEMPERATURE: away,
+        CONF_TANK_NORMAL_TEMPERATURE: normal,
+        CONF_TANK_BOOST_TEMPERATURE: boost,
+        CONF_BINARY_MIN_OFF_TIME: 5.0,
+        CONF_SOLAR_GRACE_PERIOD: 5.0,
+    }
+    return hass, device, FakeSensor(hass, entry)
+
+
+def _replay(entity_id, surplus, mode=TANK_MODE_NORMAL.key, temp=44.0,
+            away=40.0, normal=42.0, boost=46.0, min_temp=40):
+    """One 15 s cycle per ``surplus`` verdict: the builder sizes the tank from
+    the label last written, the allocator grants a must-run tank its rating and
+    an opportunistic one its rating only on the surplus, the minimum off time
+    holds a shed permit, and the command path writes. Returns what the device
+    was set to, change by change - a temperature, or "off" - and the labels."""
+    hass, device, sensor = _tank(entity_id, mode, temp, away, normal, boost, min_temp)
+    off_since, shown, labels = None, [], []
+    for i, excess in enumerate(surplus):
+        t = i * TICK_S
+        load = _build_hot_water_tank_load(hass, sensor.config_entry, 230.0, "tank_1", 1)
+        granted = (
+            0.0 if load.mode_behavior == BEHAVIOR_BINARY_EXCESS and not excess
+            else load.max_current
+        )
+        permit, off_since, _ = min_off_hold(granted, off_since, t, 300.0)
+        hass.services.calls.clear()
+        asyncio.run(send_hot_water_tank_command(
+            sensor, permit, {"excess_available": excess}, t))
+        for _domain, service, data in hass.services.calls:
+            if service == "set_temperature":
+                device.attributes["temperature"] = data["temperature"]
+            elif service == "set_hvac_mode":
+                device.state = data["hvac_mode"]
+        now = "off" if device.state == "off" else device.attributes["temperature"]
+        if not shown or shown[-1] != now:
+            shown.append(now)
+        labels.append(hass.data[DOMAIN]["loads"]["tank"]["tank_setpoint_label"])
+    return shown, labels
+
+
+MIN = 60 / TICK_S  # cycles a minute
+
+
+def _minutes(*spans):
+    return [v for minutes, v in spans for _ in range(int(minutes * MIN))]
+
+
+def test_a_water_heater_leaving_boost_goes_straight_to_normal():
+    shown, _ = _replay("water_heater.tc", _minutes((10, True), (15, False)))
+    assert shown == [46.0, 42.0]
+
+
+def test_a_thermostat_leaving_boost_goes_straight_to_normal_not_off():
+    shown, _ = _replay("climate.workshop_boiler", _minutes((10, True), (15, False)),
+                       temp=60.0, away=10.0, boost=80.0, min_temp=7)
+    assert shown == [80.0, 42.0]
+
+
+def test_a_dip_inside_the_grace_comes_back_to_boost_without_passing_away():
+    # The label rides the dip at boost; the device waits at its floor - the
+    # surplus it was boosting on is gone - and boosts again once it is back.
+    shown, labels = _replay("water_heater.tc",
+                            _minutes((10, True), (2, False), (10, True)))
+    assert shown == [46.0, 42.0, 46.0]
+    assert set(labels) == {"boost"}
+
+
+def test_freeze_protection_leaves_boost_for_its_own_floor_away():
+    shown, _ = _replay("climate.workshop_boiler", _minutes((10, True), (15, False)),
+                       mode=FREEZE, temp=60.0, away=30.0, boost=80.0, min_temp=7)
+    assert shown == [80.0, 30.0]
+
+
+def _denied(entity_id, temp, hub=None, mode=TANK_MODE_NORMAL.key):
+    hass, _device, sensor = _tank(entity_id, mode, temp, 30.0, 42.0, 65.0, 7)
+    asyncio.run(send_hot_water_tank_command(sensor, 0.0, hub or {}, 0.0))
+    return [(service, data) for _domain, service, data in hass.services.calls]
+
+
+def test_a_tank_denied_power_above_its_floor_waits_at_the_floor():
+    assert _denied("climate.tank", 50.0) == [
+        ("set_temperature", {"entity_id": "climate.tank", "temperature": 42.0}),
+        ("set_hvac_mode", {"entity_id": "climate.tank", "hvac_mode": "heat"}),
+    ]
+
+
+def test_a_tank_denied_power_below_its_floor_is_switched_off():
+    # Genuinely no power for a tank that would heat: it must stop drawing.
+    assert _denied("climate.tank", 38.0) == [
+        ("set_hvac_mode", {"entity_id": "climate.tank", "hvac_mode": "off"}),
+    ]
+    assert _denied("water_heater.tank", 38.0) == [
+        ("set_temperature", {"entity_id": "water_heater.tank", "temperature": 7}),
+    ]
+
+
+def test_a_tank_denied_power_with_no_temperature_is_switched_off():
+    # An unknown temperature must not be what keeps a denied element heating.
+    assert _denied("climate.tank", None) == [
+        ("set_hvac_mode", {"entity_id": "climate.tank", "hvac_mode": "off"}),
+    ]
+
+
+def test_solar_priority_below_the_minimum_soc_waits_at_away():
+    # The battery's minimum SOC is away's own condition: away, never normal.
+    calls = _denied("climate.tank", 50.0, _hub(soc=5, soc_min=10, soc_target=80),
+                    TANK_MODE_SOLAR_PRIORITY.key)
+    assert calls[0] == (
+        "set_temperature", {"entity_id": "climate.tank", "temperature": 30.0})
