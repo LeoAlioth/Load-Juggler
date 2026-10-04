@@ -173,6 +173,9 @@ def test_a_water_heater_switched_off_reads_off():
 
 
 def _command(heater, limit):
+    # Colder than its 45 C normal floor, so a denied tank would heat: held at
+    # the lowest target. One at its floor waits there (test_hot_water_tank).
+    heater.attributes["current_temperature"] = 40
     hass = FakeHass({WH: heater})
     asyncio.run(
         send_hot_water_tank_command(FakeSensor(hass, _entry()), limit, {}, 0.0)

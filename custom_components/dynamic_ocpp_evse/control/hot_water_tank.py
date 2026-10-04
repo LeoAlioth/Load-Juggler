@@ -274,14 +274,48 @@ async def send_hot_water_tank_command(
         )
     )
     load_rt["_tank_label_mode"] = mode
-    setpoint = {"away": away, "normal": normal, "boost": boost}[label]
+    settings = {"away": away, "normal": normal, "boost": boost}
+    heating_permitted = limit > 0
+    climate_state = sensor.hass.states.get(climate_entity)
+
+    # Denied power, a tank already at its floor - away in Freeze Protection
+    # and below the battery's minimum SOC, normal otherwise - waits AT that
+    # floor rather than off: it draws nothing there either way, and off is
+    # kept for a tank that would heat. A boost ending went through off or the
+    # lowest target first, because the label rides the dip at boost while the
+    # allocator sizes a boosting tank by the surplus alone and withdraws its
+    # power at once, and the minimum off time then held it there (Andrej's
+    # site, 4 Oct 2026: water_heater.tc 46 -> 40 at 13:49, 40 -> 42 at 13:54,
+    # and 46 -> 40 -> 46 -> 40 through 11:21-12:13; Home's workshop boiler
+    # 80 heat -> off -> 80 heat -> off, its normal 42 never shown). Off for
+    # the minimum off time since e7a4228 (7 Sep), for the grace too once
+    # 5de0d45 (3 Oct) held the label at boost through it.
+    # ponytail: a denied tank that cools past its thermostat's hysteresis heats
+    # until the next cycle reads it below the floor - a cloud poll late on a
+    # MELCloud; gate on the device's own heating word if that bites.
+    target, at_floor = label, False
+    if not heating_permitted:
+        floor = (
+            "away"
+            if mode == TANK_MODE_FREEZE_PROTECTION.key or label == "away"
+            else "normal"
+        )
+        try:
+            at_floor = (
+                float(climate_state.attributes["current_temperature"])
+                >= settings[floor]
+            )
+        except (AttributeError, KeyError, TypeError, ValueError):
+            pass
+        if at_floor:
+            target = floor
+    setpoint = settings[target]
 
     # Clamp to the climate entity's own limits. HA hard-rejects an
     # out-of-range set_temperature, and with blocking=False that rejection is
     # invisible here - the thermostat would silently keep its previous target
     # (e.g. a 90 °C boost against a 75 °C max_temp leaves it at the away
     # setpoint and the tank never heats). Warn once per offending setpoint.
-    climate_state = sensor.hass.states.get(climate_entity)
     if climate_state is not None:
         clamped = setpoint
         max_temp = climate_state.attributes.get("max_temp")
@@ -301,7 +335,7 @@ async def send_hot_water_tank_command(
                     "supported range (%s–%s°C) - clamped to %.0f°C. Adjust the "
                     "setpoint slider or the thermostat's limits.",
                     sensor._attr_name,
-                    label,
+                    target,
                     setpoint,
                     climate_entity,
                     min_temp,
@@ -312,12 +346,10 @@ async def send_hot_water_tank_command(
         else:
             load_rt.pop("_tank_clamp_warned_for", None)
 
-    heating_permitted = limit > 0
-
     # A target the device does not keep (judge_kept_target): asking it again
     # each poll is a cloud write for nothing, so the setting comes down to what
-    # the device holds. Judged only while heating is permitted - a water
-    # heater is otherwise held at its lowest target, not at a setting.
+    # the device holds. Judged only while heating is permitted - a denied
+    # tank waits at its floor or is held off, neither of them an ask.
     if heating_permitted and climate_state is not None:
         try:
             readback = float(climate_state.attributes["temperature"])
@@ -336,7 +368,7 @@ async def send_hot_water_tank_command(
         if kept is not None:
             setpoint = await _adopt_kept_target(
                 sensor,
-                {"away": away, "normal": normal, "boost": boost},
+                settings,
                 label,
                 setpoint,
                 kept,
@@ -356,7 +388,7 @@ async def send_hot_water_tank_command(
         sensor._attr_name,
         mode,
         setpoint,
-        label,
+        target,
         "permitted" if heating_permitted else "forbidden",
     )
 
@@ -364,9 +396,13 @@ async def send_hot_water_tank_command(
     try:
         if climate_entity.startswith("water_heater."):
             await _command_water_heater(
-                sensor.hass, climate_entity, climate_state, heating_permitted, setpoint
+                sensor.hass,
+                climate_entity,
+                climate_state,
+                heating_permitted or at_floor,
+                setpoint,
             )
-        elif heating_permitted:
+        elif heating_permitted or at_floor:
             await sensor.hass.services.async_call(
                 "climate",
                 "set_temperature",
@@ -462,7 +498,7 @@ async def _adopt_kept_target(sensor, settings, label, asked, kept, device):
 
 async def _command_water_heater(hass, entity_id, state, permitted, setpoint):
     """A water heater is gated by its target temperature alone: the setpoint
-    while the tank may heat, its lowest target while it may not.
+    while the tank may heat or waits at its floor, its lowest target otherwise.
 
     Never ``turn_off``: what that switches off is the integration's choice, and
     MELCloud's powers down the whole heat pump, space heating included
