@@ -109,6 +109,7 @@ With 11A: only one minimum fits -> Charger 1 takes it all, 11A / 0A
 - Process chargers in priority order; each gets up to its maximum
 - When current is left over beyond a charger's maximum, but less than the next charger's minimum, the charger is trimmed - never below its own minimum - so the next one reaches its minimum
 - With nothing left over beyond its maximum, a charger takes it all and the next gets nothing; it is never trimmed for a charger that still could not start
+- To start the next charger, at least 1 A must be left over beyond the higher priority charger's maximum; once it runs, it keeps its minimum until nothing is left over. A supply hovering just above the first charger's maximum therefore does not switch the second one on and off
 
 **When to use:**
 
@@ -127,6 +128,8 @@ Processing:
   Charger 2: Needs 6A, 2A left -> Charger 1 trimmed by 4A to 12A
   Final: 12A / 6A
 
+With 17A: 1A left over -> 11A / 6A (Charger 2 starts here)
+With 16.5A: 10.5A / 6A if Charger 2 is running, 16.5A / 0A if it is not
 With 16A: nothing left beyond Charger 1's 16A -> 16A / 0A
 With 12A: nothing left over -> 12A / 0A (Priority would give 6A / 6A)
 ```

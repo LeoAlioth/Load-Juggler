@@ -35,6 +35,8 @@ from ..const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     EXCESS_URGENCY_TIER,
+    LEG_DRAWING_CURRENT,
+    OPTIMIZED_START_MARGIN,
     WIRING_TOPOLOGY_SERIES,
 )
 
@@ -2462,9 +2464,11 @@ def _distribute_per_phase_optimized(
     OPTIMIZED mode: each load up to its maximum, in (urgency, priority) order.
     When that leaves the next load some room, but less than its minimum, the
     load is trimmed - never under its own minimum - so the next one reaches
-    its minimum. With no room left beyond the load's own maximum, or when
-    trimming it to its minimum would still not start the next one, it is not
-    trimmed: a trim that starts nothing only wastes current. Source-aware.
+    its minimum: OPTIMIZED_START_MARGIN of room to start the next load, any
+    room to keep it running. With no room left beyond the load's own maximum,
+    or when trimming it to its minimum would still not start the next one, it
+    is not trimmed: a trim that starts nothing only wastes current.
+    Source-aware.
     """
     remaining, solar_rem, excess_rem = physical_pool, solar_pool, excess_pool
     sorted_loads = _sort_loads(site.loads)
@@ -2506,8 +2510,16 @@ def _distribute_per_phase_optimized(
                     # Trimmed only with room left over beyond this load's own
                     # maximum, and only when the trim starts the next load: on
                     # 11 A for two 6 A minimums it used to cut the first car
-                    # to 6 A and leave the second at 0 - 5 A unused.
-                    if next_effective > 0 and 0 < shortfall <= wanted - load.min_current:
+                    # to 6 A and leave the second at 0 - 5 A unused. Starting
+                    # the next load takes OPTIMIZED_START_MARGIN of that room,
+                    # keeping it running any room at all, so a supply at this
+                    # load's maximum does not flip the two.
+                    running = _measured_draw(next_load) > LEG_DRAWING_CURRENT
+                    left_over = (
+                        next_effective > 0 if running
+                        else next_effective >= OPTIMIZED_START_MARGIN
+                    )
+                    if left_over and 0 < shortfall <= wanted - load.min_current:
                         wanted -= shortfall
                         reduced = True
 
