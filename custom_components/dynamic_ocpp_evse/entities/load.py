@@ -182,6 +182,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # Has this load ever held a RUNNABLE permit in this process? The charge
         # pause may only arm once it has - see the pause branch for why.
         self._had_runnable_permit = False
+        # Did the last site cycle see a shortage (permit and raw permit both
+        # under the minimum)? The pause takes two in a row - see its branch.
+        self._short_last_cycle = False
         self._grace_started_at = None
         # Binary-load grace state: the last permit the engine actually granted
         # (what the hold re-offers) and a latch so a spent grace window cannot
@@ -676,6 +679,12 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             self.config_entry.entry_id
         ] = load_phase_masks.get(self.config_entry.entry_id, "")
 
+        # Kept on every cycle, command or not, so the pause below can ask
+        # whether the shortage it sees was there on the cycle before too.
+        short = max(self._available_current, raw_permit) < min_charge_current
+        short_confirmed = short and self._short_last_cycle
+        self._short_last_cycle = short
+
         command_interval = get_entry_value(
             self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
         )
@@ -729,7 +738,27 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self._attr_name,
                 limit,
             )
-        elif self._available_current < min_charge_current:
+        elif short:
+            # A shortage the engine still sees as the command goes out: the
+            # permit is under the minimum, and so is the raw permit - on this
+            # site cycle and the one before. The smoothed permit alone is no
+            # evidence of one: it climbs back to the minimum over some 25 s
+            # after any dip, so a dip of a cycle or two that was over well
+            # before the command still found it a few tenths short, and the
+            # car was paused for the whole dwell (Andrej's second charger,
+            # 2026-10-04). With the engine offering the minimum again, the
+            # branch below runs the load at it. And one cycle's raw 0 is one
+            # reading: on the first, the decision waits for the next cycle -
+            # the command slot stays open, so a shortage that holds is acted
+            # on one site cycle later and one that does not costs nothing.
+            if not short_confirmed:
+                _LOGGER.debug(
+                    "Permit under the minimum for %s on this cycle only -"
+                    " deciding on the next",
+                    self._attr_name,
+                )
+                return
+            #
             # The pause bounds cycle FREQUENCY (see the minimum-off-time
             # comment below for why that is the quantity that matters), and a
             # cycle needs a previous ON: a load that has never held a runnable
@@ -750,8 +779,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # Reaching here means the permit is runnable, which is what lets a
             # later collapse arm the pause at all (see above). Set before the
             # dwell test, so a load that is currently serving one still counts
-            # as having held a permit.
+            # as having held a permit. Runnable means at least the minimum:
+            # the smoothed permit may still be climbing back to it.
             self._had_runnable_permit = True
+            runnable = round(max(self._available_current, min_charge_current), 1)
             pause_duration_s = (
                 get_entry_value(
                     self.config_entry,
@@ -766,9 +797,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                     limit = 0
                 else:
                     self._pause_started_at = None
-                    limit = round(self._available_current, 1)
+                    limit = runnable
             else:
-                limit = round(self._available_current, 1)
+                limit = runnable
 
         connector_state = self.hass.states.get(self._connector_status_entity)
         connector_status = units.state_or_unknown(connector_state)

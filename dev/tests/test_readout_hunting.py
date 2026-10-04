@@ -503,7 +503,7 @@ async def test_a_slow_meter_hunts_when_its_old_reading_is_believed(hass, site):
     minutes."""
     log, _ = await _slow_meter_session(
         hass, site, 15,
-        patch.object(readout_watch, "assumed_before_first_reading",
+        patch.object(readout_watch, "assumed_before_new_reading",
                      lambda *a: None),
         patch.object(hub_calculation, "_watch_readouts_against_household",
                      lambda *a, **k: None),

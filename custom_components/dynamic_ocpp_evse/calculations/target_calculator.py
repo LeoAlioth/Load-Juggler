@@ -2478,6 +2478,7 @@ def _distribute_per_phase_optimized(
 
         phys_avail = remaining.get_available(mask)
         wanted = min(load.max_current, src_max, phys_avail)
+        reduced = False
 
         # Check if we should reduce to help next load
         if i < len(sorted_loads) - 1:
@@ -2501,13 +2502,30 @@ def _distribute_per_phase_optimized(
                         reduction_needed = next_load.min_current - next_effective
                         can_reduce = max(0, wanted - load.min_current)
                         wanted -= min(reduction_needed, can_reduce)
+                        reduced = True
 
+        # Judged on the allocation as it is given, rounded - as Strict does.
+        # The reduction above leaves the next load EXACTLY its minimum, so
+        # the unrounded figure sat on the boundary: a float's width under it
+        # (18.3 - 12.3 A), or the load ahead rounded up by 0.04 A, and the
+        # next load got 0 instead of its minimum - every few cycles, each one
+        # a stop for a running car (Andrej's second charger, 2026-10-04).
+        wanted = round(wanted, 1)
         if wanted < load.min_current:
             load.allocated_current = 0
             continue
 
-        load.allocated_current = round(wanted, 1)
+        load.allocated_current = wanted
         draw = _pool_deduction(load, load.allocated_current)
+        if reduced:
+            # Cut to leave the next load its minimum, this load books no more
+            # than it was cut to - as Priority books no more than a minimum in
+            # its first pass. A charger whose draw is assumed (its reading
+            # predates the limit in force, or is stuck) otherwise books the
+            # higher limit it still holds until the cut lands, which took the
+            # minimum straight back: the next car got 0 and paused for 3
+            # minutes over a cut that landed seconds later.
+            draw = min(draw, wanted)
         remaining = remaining.deduct(draw, mask)
         solar_rem, excess_rem = _deduct_from_sources(
             draw, mask, solar_rem, excess_rem

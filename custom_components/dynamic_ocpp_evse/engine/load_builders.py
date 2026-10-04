@@ -156,8 +156,8 @@ def _watch_readout(hass, entry, load, load_rt, connector_status,
     on a car that is merely steady or drawing less than offered, are in
     engine/readout_watch.py. Short of a verdict, a reading last reported
     (``reported_at``) before the connector entered Charging
-    (``charging_since``) is replaced the same way until a newer one arrives -
-    ``_await_first_reading``.
+    (``charging_since``), or before a command that moved the limit, is replaced
+    the same way until a newer one arrives - ``_await_new_reading``.
 
     This is the per-load half: the reading's own tracker and the frozen-HIGH
     evidence (the reading claims more than the limit in force). The frozen-LOW
@@ -235,6 +235,7 @@ def _watch_readout(hass, entry, load, load_rt, connector_status,
     )
     watch["normal_gap_s"] = readout_watch.normal_gap(watch)
     watch["cycle"] = {"status": connector_status, "commanded": commanded}
+    readout_watch.track_commands(watch, commanded, datetime.now(timezone.utc))
 
     if event == "left":
         _LOGGER.info(
@@ -250,54 +251,56 @@ def _watch_readout(hass, entry, load, load_rt, connector_status,
         watch.pop("awaiting", None)
         _go_blind(load, watch, connector_status, commanded, event == "entered", now)
     else:
-        _await_first_reading(
-            load, watch, connector_status, commanded, reported_at, charging_since
+        _await_new_reading(
+            load, watch, connector_status, commanded, reported_at,
+            charging_since, margin,
         )
 
 
-def _await_first_reading(load, watch, status, commanded, reported_at,
-                         charging_since):
+def _await_new_reading(load, watch, status, commanded, reported_at,
+                       charging_since, margin):
     """Control the charger on its assumed draw while the reading in use
-    predates the charging (readout_watch.assumed_before_first_reading) - blind
-    mode's assumption and marks, with no verdict and no warning: a charger
-    that reports every few minutes does this at every session start. The
-    watch has already seen the real reading this cycle, so its learning and
-    both evidence paths are untouched; with the assumed draw taken out of the
-    household, the start no longer reads as house load.
+    predates the limit in force (readout_watch.assumed_before_new_reading) -
+    blind mode's assumption and marks, with no verdict and no warning: a
+    charger whose meter reports every 30 s or more does this at every session
+    start and after every command that moves its car. The watch has already
+    seen the real reading this cycle, so its learning and both evidence paths
+    are untouched; with the assumed draw taken out of the household, neither
+    the start nor a step reads as house load.
 
-    ``watch["awaiting"]`` holds the moment the connector entered Charging for
-    as long as it lasts (entities/readout.py shows it); one info line per
-    session start.
+    ``watch["awaiting"]`` holds the moment that limit came in for as long as
+    it lasts (entities/readout.py shows it); one info line per session start,
+    a debug line per command.
     """
-    legs = max(1, min(3, int(load.phases or 1)))
-    assumed = readout_watch.assumed_before_first_reading(
-        status, commanded, legs, reported_at, charging_since
+    reading = (load.l1_current, load.l2_current, load.l3_current)
+    found = readout_watch.assumed_before_new_reading(
+        status, commanded, max(1, min(3, int(load.phases or 1))), reading,
+        reported_at, charging_since, watch.get("commands"), margin,
     )
-    if assumed is None:
+    if found is None:
         if watch.pop("awaiting", None) is not None:
             watch.pop("assumed", None)
             _LOGGER.debug(
                 "EVSE %s: back on its reading - %s A",
                 load.entity_id,
-                _fmt_legs((load.l1_current, load.l2_current, load.l3_current)),
+                _fmt_legs(reading),
             )
         return
-    if watch.get("awaiting") != charging_since:
-        _LOGGER.info(
-            "EVSE %s: charging since %s, but its reading (%s A) was last "
-            "reported at %s, before that - assuming %s A until the first "
-            "reading since",
+    assumed, since = found
+    if watch.get("awaiting") != since:
+        _LOGGER.log(
+            logging.INFO if since == charging_since else logging.DEBUG,
+            "EVSE %s: %s since %s, but its reading (%s A) was last reported "
+            "at %s, before that - assuming %s A until the first reading since",
             load.entity_id,
-            charging_since,
-            _fmt_legs((load.l1_current, load.l2_current, load.l3_current)),
+            "charging" if since == charging_since else "limit %.1f A" % commanded,
+            since,
+            _fmt_legs(reading),
             reported_at,
             _fmt_legs(assumed),
         )
-    watch["awaiting"] = charging_since
-    _assume(
-        load, watch, assumed, readout_watch.READING_PREDATES_CHARGING,
-        charging_since,
-    )
+    watch["awaiting"] = since
+    _assume(load, watch, assumed, readout_watch.READING_PREDATES_LIMIT, since)
 
 
 def _assume(load, watch, assumed, evidence, since):
@@ -525,7 +528,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     evse_power_import = get_entry_value(entry, CONF_EVSE_POWER_IMPORT_ENTITY_ID, None)
     current_draw = None
     # The entities the draw was read from: when it was last reported decides
-    # whether it predates the charging (_await_first_reading).
+    # whether it predates the limit in force (_await_new_reading).
     draw_entities = ()
 
     # Try per-phase current import entities first (separate sensors for each phase)

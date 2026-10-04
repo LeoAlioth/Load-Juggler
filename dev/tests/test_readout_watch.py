@@ -568,56 +568,144 @@ def test_a_blind_charger_being_cut_frees_less_than_a_metered_one():
     assert household + sum(metered.values()) <= breaker
 
 
-# ── Before the first reading: a reading that predates the charging ─────────
+# ── Before a new reading: a reading that predates the limit in force ─────
 #
-# The field case (2026-10-03): meter values every 120 s, a 0 written at the
-# SuspendedEV before the car started, and the car taking 16 A at once. Until a
-# reading reported since the connector entered Charging arrives, the draw is
-# the limit in force on every leg the charger has.
+# The field cases: meter values every 120 s, a 0 written at the SuspendedEV
+# before the car started, and the car taking 16 A at once (2026-10-03); and a
+# car that followed every command while its reading, every 30 s, lagged each
+# one (2026-10-04). Until a reading reported since the limit in force came in
+# arrives, the draw is what the old reading says the car does under the new
+# limit: the limit, for a car that took its limit; its own draw, for one that
+# held itself below it.
 
 T0 = datetime(2026, 10, 3, 17, 9, tzinfo=timezone.utc)
+MARGIN = 1.0
 
 
-def _before_first(status="Charging", commanded=16.0, legs=3,
-                  reported=-0.000002, charging=0.0):
-    """``reported`` / ``charging``: seconds from T0 (the first microseconds
-    apart, as one push of the ocpp integration writes them)."""
-    return rw.assumed_before_first_reading(
-        status, commanded, legs,
-        None if reported is None else T0 + timedelta(seconds=reported),
-        None if charging is None else T0 + timedelta(seconds=charging),
+def _at(seconds):
+    return None if seconds is None else T0 + timedelta(seconds=seconds)
+
+
+def _before_new(status="Charging", commanded=16.0, legs=3,
+                reading=(0.0, 0.0, 0.0), reported=-0.000002, charging=0.0,
+                commands=()):
+    """``reported`` / ``charging`` / a command's time: seconds from T0 (the
+    first two microseconds apart, as one push of the ocpp integration writes
+    them); ``commands``: ``(seconds or None, limit)`` as track_commands keeps
+    them. Returns the assumed legs, or None."""
+    found = rw.assumed_before_new_reading(
+        status, commanded, legs, reading, _at(reported), _at(charging),
+        [(_at(t), limit) for t, limit in commands], MARGIN,
     )
+    return None if found is None else found[0]
 
 
 def test_a_reading_from_before_the_charging_is_assumed_over():
-    assert _before_first() == (16.0, 16.0, 16.0)
+    assert _before_new() == (16.0, 16.0, 16.0)
     # ...from minutes before, as much as from the same push.
-    assert _before_first(reported=-180.0) == (16.0, 16.0, 16.0)
+    assert _before_new(reported=-180.0) == (16.0, 16.0, 16.0)
+    found = rw.assumed_before_new_reading(
+        "Charging", 16.0, 3, (0.0,) * 3, _at(-1.0), _at(0.0), [], MARGIN
+    )
+    assert found[1] == _at(0.0), "it predates the charging, which came in at T0"
 
 
 def test_the_assumption_is_on_every_leg_the_charger_has():
-    assert _before_first(legs=1) == (16.0, 0.0, 0.0)
-    assert _before_first(legs=2, commanded=10.0) == (10.0, 10.0, 0.0)
+    assert _before_new(legs=1) == (16.0, 0.0, 0.0)
+    assert _before_new(legs=2, commanded=10.0) == (10.0, 10.0, 0.0)
 
 
 def test_a_reading_reported_since_is_trusted_whatever_it_says():
     """The next report ends it - a re-reported 0 included: last_reported, not
     last_changed, so a car that really takes nothing is believed."""
-    assert _before_first(reported=120.0) is None
+    assert _before_new(reported=120.0) is None
 
 
 def test_a_reading_reported_at_the_same_instant_is_trusted():
     """States restored together after a restart are not doubted."""
-    assert _before_first(reported=0.0) is None
+    assert _before_new(reported=0.0) is None
 
 
 def test_only_while_the_connector_is_charging():
     for status in ("Preparing", "SuspendedEV", "SuspendedEVSE", "Finishing",
                    "Available", None):
-        assert _before_first(status=status) is None, status
+        assert _before_new(status=status) is None, status
 
 
 def test_nothing_is_assumed_without_a_limit_in_force_or_the_timestamps():
-    assert _before_first(commanded=None) is None
-    assert _before_first(reported=None) is None
-    assert _before_first(charging=None) is None
+    assert _before_new(commanded=None) is None
+    assert _before_new(reported=None) is None
+    assert _before_new(charging=None) is None
+
+
+# A car charging since long before, its reading reported 20 s before a
+# command moved its limit from 7.6 A.
+CHARGING_LONG = -600.0
+COMMANDED = ((None, 7.6), (0.0, 15.3))
+
+
+def _since_command(commanded=15.3, reading=(7.0, 7.0, 7.0), reported=-20.0,
+                   commands=COMMANDED, legs=3):
+    return _before_new(commanded=commanded, legs=legs, reading=reading,
+                       reported=reported, charging=CHARGING_LONG,
+                       commands=commands)
+
+
+def test_a_car_that_took_its_limit_is_assumed_to_take_the_new_one():
+    """Raised 7.6 -> 15.3 A with the reading at 7.0 A: the car follows - the
+    field case, whose lag booked 8 A of it as house load."""
+    assert _since_command() == (15.3, 15.3, 15.3)
+    # ...and cut: the charger enforces it.
+    assert _since_command(
+        commanded=7.6, reading=(15.0,) * 3, commands=((None, 15.3), (0.0, 7.6))
+    ) == (7.6, 7.6, 7.6)
+
+
+def test_a_car_holding_itself_below_its_limit_keeps_its_draw():
+    """At 9 A under a 16 A limit the car sets its own pace: a raise changes
+    nothing, a cut below 9 A takes it down to the cut."""
+    held = ((None, 16.0), (0.0, 12.0))
+    assert _since_command(commanded=12.0, reading=(9.0,) * 3, commands=held) is None
+    cut = ((None, 16.0), (0.0, 7.0))
+    assert _since_command(commanded=7.0, reading=(9.0,) * 3, commands=cut) == (7.0,) * 3
+
+
+def test_only_the_legs_that_took_their_limit_follow_it():
+    """A 1-phase car on a 3-phase charger: its idle legs stay at 0."""
+    assert _since_command(reading=(7.0, 0.0, 0.0)) == (15.3, 0.0, 0.0)
+
+
+def test_a_command_that_hardly_moved_leaves_the_reading():
+    """Nothing to assume within the margin a car's draw sits under its limit."""
+    assert _since_command(
+        commanded=7.9, reading=(7.4,) * 3, commands=((None, 7.6), (0.0, 7.9))
+    ) is None
+
+
+def test_the_reading_is_judged_under_the_limit_it_was_taken_at():
+    """Two commands since the reading: it was taken under 7.6 A, not under the
+    15.3 A between."""
+    commands = ((None, 7.6), (-10.0, 15.3), (0.0, 14.0))
+    assert _since_command(commanded=14.0, commands=commands) == (14.0,) * 3
+
+
+def test_a_reading_older_than_the_commands_remembered_is_used_as_it_stands():
+    commands = ((-15.0, 7.6), (0.0, 15.3))
+    assert _since_command(reported=-30.0, commands=commands) is None
+
+
+def test_a_reading_since_the_last_command_is_trusted():
+    assert _since_command(reported=5.0) is None
+
+
+def test_track_commands_keeps_the_changes_and_forgets_on_an_unknown_limit():
+    state = {}
+    rw.track_commands(state, 7.6, _at(0.0))
+    rw.track_commands(state, 7.6, _at(2.0))
+    rw.track_commands(state, 15.3, _at(30.0))
+    assert state["commands"] == [(None, 7.6), (_at(30.0), 15.3)]
+    for i in range(10):
+        rw.track_commands(state, float(i), _at(60.0 + i))
+    assert len(state["commands"]) == rw.COMMAND_MEMORY
+    rw.track_commands(state, None, _at(100.0))
+    assert state["commands"] == []

@@ -761,7 +761,7 @@ async def test_a_reading_from_before_the_charging_is_assumed_over(hass, site, ca
 
     # Control: the reading taken as it stands - the household the field saw.
     with patch.object(
-        readout_watch, "assumed_before_first_reading", lambda *a: None
+        readout_watch, "assumed_before_new_reading", lambda *a: None
     ):
         as_read = _calc(hass, hub_entry, first, second)
     assert as_read["household_power"] == pytest.approx(
@@ -778,7 +778,7 @@ async def test_a_reading_from_before_the_charging_is_assumed_over(hass, site, ca
     charging_since = hass.states.get("sensor.first_status_connector").last_changed
     assert assumed["draw_estimated"][first.entry_id] == {
         "load": "first",
-        "evidence": "reading_predates_charging",
+        "evidence": "reading_predates_limit",
         "since": charging_since,
     }
     watch = rt[EVSE_RT_READOUT_WATCH]
@@ -801,7 +801,7 @@ async def test_a_reading_from_before_the_charging_is_assumed_over(hass, site, ca
     assert status.extra_state_attributes["readout_assumed_current"] == [16.0] * 3
     assert allocated.extra_state_attributes == {
         "estimated": True,
-        "estimate_evidence": "reading_predates_charging",
+        "estimate_evidence": "reading_predates_limit",
         "estimated_since": charging_since,
     }
 
