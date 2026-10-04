@@ -2459,8 +2459,12 @@ def _distribute_per_phase_optimized(
     excess_pool: PhaseConstraints,
 ) -> tuple[PhaseConstraints, PhaseConstraints, PhaseConstraints]:
     """
-    OPTIMIZED mode: Reduce higher priority loads to allow lower priority
-    to charge at minimum. Sorted by (urgency, priority). Source-aware.
+    OPTIMIZED mode: each load up to its maximum, in (urgency, priority) order.
+    When that leaves the next load some room, but less than its minimum, the
+    load is trimmed - never under its own minimum - so the next one reaches
+    its minimum. With no room left beyond the load's own maximum, or when
+    trimming it to its minimum would still not start the next one, it is not
+    trimmed: a trim that starts nothing only wastes current. Source-aware.
     """
     remaining, solar_rem, excess_rem = physical_pool, solar_pool, excess_pool
     sorted_loads = _sort_loads(site.loads)
@@ -2498,10 +2502,13 @@ def _distribute_per_phase_optimized(
                         next_load, site, temp_solar, temp_excess, base=0
                     )
                     next_effective = min(next_phys, next_src)
-                    if next_effective < next_load.min_current:
-                        reduction_needed = next_load.min_current - next_effective
-                        can_reduce = max(0, wanted - load.min_current)
-                        wanted -= min(reduction_needed, can_reduce)
+                    shortfall = next_load.min_current - next_effective
+                    # Trimmed only with room left over beyond this load's own
+                    # maximum, and only when the trim starts the next load: on
+                    # 11 A for two 6 A minimums it used to cut the first car
+                    # to 6 A and leave the second at 0 - 5 A unused.
+                    if next_effective > 0 and 0 < shortfall <= wanted - load.min_current:
+                        wanted -= shortfall
                         reduced = True
 
         # Judged on the allocation as it is given, rounded - as Strict does.

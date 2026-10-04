@@ -87,7 +87,9 @@ TIGHT_ALLOWANCE_W = (sum(HOUSE_A) + 3 * (2 * MIN_A + 0.5)) * V
 
 # Every mode that runs both minimums when the site carries them. Strict does
 # not, by design: the first car takes up to its maximum before the next gets
-# anything (its own test is at the end).
+# anything (its own test is at the end). Optimized does only with room left
+# beyond the first car's maximum - the 18.3 A here, not a tight allowance's
+# 12.5 A (dev/tests/test_distribution_table.py has the whole table).
 MODES = [
     DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED,
@@ -245,7 +247,7 @@ def _site(hass, mode):
         processors[entry.entry_id] = sensor_platform.LoadJugglerDeviceSensor(
             hass, entry, hub, slug, slug
         )
-    return SimpleNamespace(hub=hub, stara=stara, nova=nova)
+    return SimpleNamespace(hub=hub, stara=stara, nova=nova, mode=mode)
 
 
 @pytest.fixture(params=MODES)
@@ -293,10 +295,15 @@ async def test_the_second_charger_charges_through_beside_the_first(
 ):
     """Room for both minimums - on the breaker, and in a block allowance that
     leaves them 0.5 A per phase - so the priority-2 charger, once started, is
-    never stopped."""
+    never stopped. Optimized in the allowance is the exception: its 12.5 A a
+    phase is no more than the first car's maximum, so the first car takes it
+    all and the second never starts."""
     log = await _evening(hass, site, allowance_w=allowance_w)
     nova = [row["nova"] for row in log]
     assert _stops(nova) == 0, f"Nova was stopped {_stops(nova)} times: {nova[::15]}"
+    if site.mode == DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED and allowance_w == TIGHT_ALLOWANCE_W:
+        assert not any(nova), nova[::15]
+        return
     # It started within its first command interval or two and held at least
     # its minimum to the end.
     running = nova[45:]
@@ -344,13 +351,19 @@ async def test_a_dip_between_two_commands_does_not_pause_the_second_charger(hass
     assert _stops(nova) == 0, f"Nova was stopped {_stops(nova)} times: {nova[::15]}"
 
 
-async def test_one_cycle_without_room_at_the_command_does_not_pause_it(hass, site):
+@pytest.mark.parametrize("mode", [DISTRIBUTION_MODE_PRIORITY, DISTRIBUTION_MODE_SHARED])
+async def test_one_cycle_without_room_at_the_command_does_not_pause_it(hass, mode):
     """The other half of the same rule: the engine's permit for the second
     charger is 0 on exactly one site cycle - here a house spike that takes
     the room for its minimum for that cycle alone - and that cycle is the one
     its command goes out on. One reading is not a shortage: the decision
     waits for the next cycle, which offers the minimum again, so the car
-    runs on instead of pausing for 3 minutes."""
+    runs on instead of pausing for 3 minutes.
+
+    Not Optimized: the smoothed house leaves 13.1, 14.6 and 15.7 A on the
+    three cycles after the spike, none of it beyond the first car's 16 A, so
+    Optimized rightly gives the second car 0 on all three and it pauses."""
+    site = _site(hass, mode)
     state = {}
 
     def spike(world):
