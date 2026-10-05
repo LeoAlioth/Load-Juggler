@@ -16,6 +16,22 @@ CONF_PLUG_POWER_MONITOR_ENTITY_ID = "plug_power_monitor_entity_id"  # Optional p
 DEFAULT_PLUG_POWER_RATING = 2000
 DEFAULT_PLUG_MAX_CURRENT = 16
 
+# Restart if it stops drawing: a load behind the plug that cuts out on its own
+# (an EVSE on over-temperature) leaves the relay on and the plug drawing
+# nothing, and a turn_on to a relay already on does nothing. With this on and
+# a power monitor configured, a permitted plug whose switch is on but which
+# draws under PLUG_NO_DRAW_W for the "restart after" span is power-cycled
+# (control/plug.py).
+CONF_PLUG_RESTART_ON_NO_DRAW = "plug_restart_on_no_draw"
+CONF_PLUG_RESTART_AFTER = "plug_restart_after"  # minutes of no draw
+DEFAULT_PLUG_RESTART_ON_NO_DRAW = False
+DEFAULT_PLUG_RESTART_AFTER = 10
+PLUG_NO_DRAW_W = 10  # under this the load counts as not drawing
+PLUG_RESTART_OFF_S = 30  # how long a restart holds the switch off
+PLUG_RESTART_MIN_GAP_S = 30 * 60  # at most one restart per this span
+PLUG_RESTART_MAX_TRIES = 3  # restarts in a row without a draw, then give up
+PLUG_RESTART_RECOVERY_S = 5 * 60  # drawing this long resets the count
+
 # Smart-plug operating modes - priority is the distribution urgency tier (1-4).
 # A binary on/off load; each mode (bar Continuous) never uses the grid and
 # drains the home battery only to a progressively higher floor:

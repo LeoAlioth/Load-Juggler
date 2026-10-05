@@ -75,6 +75,8 @@ from ..const import (
     CONF_PLUG_MAX_CURRENT,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
     CONF_PLUG_POWER_RATING,
+    CONF_PLUG_RESTART_AFTER,
+    CONF_PLUG_RESTART_ON_NO_DRAW,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
     # The Filters page: its keys, and the constants that are its defaults.
@@ -145,6 +147,8 @@ from ..const import (
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_PLUG_MAX_CURRENT,
     DEFAULT_PLUG_POWER_RATING,
+    DEFAULT_PLUG_RESTART_AFTER,
+    DEFAULT_PLUG_RESTART_ON_NO_DRAW,
     DEFAULT_PROFILE_VALIDITY_MODE,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_SOLAR_GRACE_PERIOD,
@@ -973,6 +977,20 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                 (
                     _optional_entity_field(CONF_PLUG_POWER_MONITOR_ENTITY_ID, defaults),
                     selector({"entity": {"domain": ["sensor", "input_number"]}}),
+                ),
+                (
+                    vol.Required(
+                        CONF_PLUG_RESTART_ON_NO_DRAW,
+                        default=defaults.get(
+                            CONF_PLUG_RESTART_ON_NO_DRAW,
+                            DEFAULT_PLUG_RESTART_ON_NO_DRAW,
+                        ),
+                    ),
+                    selector({"boolean": {}}),
+                ),
+                _num(
+                    CONF_PLUG_RESTART_AFTER, defaults, DEFAULT_PLUG_RESTART_AFTER,
+                    1, 120, 1, "min", required=True,
                 ),
                 _num(
                     CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,
