@@ -241,6 +241,13 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
         self._attr_native_value = "Unknown"
         self._attr_icon = "mdi:power-plug-off-outline"
 
+    @property
+    def extra_state_attributes(self):
+        """``restart_count`` while "Restart if it stops drawing" is watching
+        (control/plug.py): restarts in a row without the load drawing."""
+        count = self._runtime().get("plug_restart_count")
+        return {} if count is None else {"restart_count": count}
+
     def _read_site_data(self):
         """Reflect the smart plug's switch state, surfacing error states."""
         if not self._switch_entity:
@@ -256,6 +263,16 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
         self._attr_icon = self._PLUG_ICONS.get(
             self._attr_native_value, "mdi:power-plug-off-outline"
         )
+        # A restart, or the give-up, says so until the load draws again or
+        # its permit goes away; hands off (Dynamic Control off), it is stale.
+        load_rt = self._runtime()
+        note = load_rt.get("plug_restart_status")
+        if (
+            note
+            and self._attr_native_value in ("On", "Off")
+            and load_rt.get("dynamic_control", True)
+        ):
+            self._attr_native_value = note
 
 
 class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):

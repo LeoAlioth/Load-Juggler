@@ -278,6 +278,8 @@ One entry per inverter - everything physically attached to it, including its PV 
 |---|---|---|
 | Plug switch entity | The on/off switch entity | - |
 | Power monitoring entity | Power sensor for the plug (optional, auto-detected) | - |
+| Restart if it stops drawing | Power-cycles the plug - off for 30 s, then on - once it has drawn under 10 W for *Restart after* while Load Juggler wants it on and its switch is on: for a device behind the plug that cuts out on its own (an EV charger on over-temperature) and stays off with the relay on. At most once every 30 minutes; after 3 restarts in a row without the load drawing it stops until the load draws again for 5 minutes or its permit goes away and comes back. The Status sensor shows *Restarted (no draw 10 min)* and a `restart_count` attribute. Needs the power monitoring entity | Off |
+| Restart after | How long the plug must draw under 10 W before it is restarted (minutes) | 10 |
 | Priority | Distribution priority (1=highest) | 1 |
 
 ## Services & Automations
