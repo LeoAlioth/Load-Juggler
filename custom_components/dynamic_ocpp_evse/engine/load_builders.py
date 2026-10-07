@@ -214,7 +214,7 @@ def _watch_readout(hass, entry, load, load_rt, connector_status,
                 now - (started if started is not None else now),
                 reason,
             )
-        for key in ("stuck_at", "assumed", "awaiting"):
+        for key in ("stuck_at", "assumed", "awaiting", "read"):
             watch.pop(key, None)
         watch["normal_gap_s"] = readout_watch.normal_gap(watch)
         return
@@ -249,6 +249,7 @@ def _watch_readout(hass, entry, load, load_rt, connector_status,
             watch.pop(key, None)
     if readout_watch.is_stuck(watch):
         watch.pop("awaiting", None)
+        watch.pop("read", None)
         _go_blind(load, watch, connector_status, commanded, event == "entered", now)
     else:
         _await_new_reading(
@@ -266,7 +267,8 @@ def _await_new_reading(load, watch, status, commanded, reported_at,
     start and after every command that moves its car. The watch has already
     seen the real reading this cycle, so its learning and both evidence paths
     are untouched; with the assumed draw taken out of the household, neither
-    the start nor a step reads as house load.
+    the start nor a step reads as house load. Meanwhile the load is not raised
+    above that limit.
 
     ``watch["awaiting"]`` holds the moment that limit came in for as long as
     it lasts (entities/readout.py shows it); one info line per session start,
@@ -280,6 +282,7 @@ def _await_new_reading(load, watch, status, commanded, reported_at,
     if found is None:
         if watch.pop("awaiting", None) is not None:
             watch.pop("assumed", None)
+            watch.pop("read", None)
             _LOGGER.debug(
                 "EVSE %s: back on its reading - %s A",
                 load.entity_id,
@@ -300,7 +303,18 @@ def _await_new_reading(load, watch, status, commanded, reported_at,
             _fmt_legs(assumed),
         )
     watch["awaiting"] = since
+    # The reading itself, for the frozen-LOW evidence: it judges the reading
+    # against the grid, not the draw assumed in its place.
+    watch["read"] = reading
     _assume(load, watch, assumed, readout_watch.READING_PREDATES_LIMIT, since)
+    # And no raise on the strength of it: the car may still be on its way up
+    # to the limit in force, and its draw assumed at that limit leaves the
+    # house reading low by whatever it has yet to climb - room that is not
+    # there. Raised into it, every raise re-opened the climb and the next one
+    # followed: in the closed loop the limit ran from 21.7 A to the car's
+    # 32 A maximum and the grid 2 kW past its allowance before a reading
+    # caught up. A cut is the car's own limit coming down, and stays allowed.
+    load.max_current = min(load.max_current, float(commanded))
 
 
 def _assume(load, watch, assumed, evidence, since):
@@ -412,6 +426,18 @@ def _watch_readouts_against_household(hass, site, supply_phases, unusable,
     its builder does it, ahead of the settle and SuspendedEV logic.
     """
     draws = managed_phase_draws(site)
+    loads_rt = hass.data.get(DOMAIN, {}).get("loads", {})
+    # A charger awaiting a new reading carries the draw assumed in its place
+    # for as long as the car may still be climbing to its limit - up to a
+    # minute after every raise. Taken out at that, the household would not
+    # step with our commands however frozen the reading is: this evidence is
+    # the READING against the grid, so it is the reading that comes off.
+    for load in site.loads:
+        watch = (loads_rt.get(load.load_id) or {}).get(EVSE_RT_READOUT_WATCH) or {}
+        if load.dynamic_control and watch.get("awaiting") and watch.get("read"):
+            legs = (load.l1_phase, load.l2_phase, load.l3_phase)
+            for phase, read, assumed in zip(legs, watch["read"], watch["assumed"]):
+                draws[_PHASE_LABELS.index(phase)] += read - assumed
     household = {
         phase: (
             None
@@ -420,7 +446,6 @@ def _watch_readouts_against_household(hass, site, supply_phases, unusable,
         )
         for i, phase in enumerate(_PHASE_LABELS)
     }
-    loads_rt = hass.data.get(DOMAIN, {}).get("loads", {})
     now = time.monotonic()
     for load in site.loads:
         if load.device_type != DEVICE_TYPE_EVSE:

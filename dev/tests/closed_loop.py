@@ -157,25 +157,44 @@ _CLOCKED = (
 
 class Clock:
     """``time`` as the modules above see it: monotonic() is ours to advance,
-    everything else is the real module."""
+    everything else is the real module. Given a frozen wall clock, advancing
+    ``now`` moves it too - a reading's last_reported and the moment a command
+    was seen are wall-clock stamps, compared in seconds."""
 
-    def __init__(self, start):
-        self.now = start
+    def __init__(self, start, wall=None):
+        self._now = start
+        self._wall = wall
+
+    @property
+    def now(self):
+        return self._now
+
+    @now.setter
+    def now(self, value):
+        if self._wall is not None and value > self._now:
+            self._wall.tick(value - self._now)
+        self._now = value
 
     def monotonic(self):
-        return self.now
+        return self._now
 
     def __getattr__(self, name):
         return getattr(time, name)
 
 
 @contextmanager
-def clocked(accept, *patches):
+def clocked(accept, *patches, wall=False):
     """The hub cycle's modules on a ``Clock`` from 10 000 s, which it yields,
     and every service call it makes answered by ``accept`` - plus any further
-    ``patches``, all undone on the way out."""
-    clock = Clock(10_000.0)
+    ``patches``, all undone on the way out. ``wall``: the wall clock frozen
+    too and moving with the Clock, for a world that compares wall-clock
+    stamps in seconds (a reading's last_reported against a command)."""
     with ExitStack() as stack:
+        frozen = (
+            stack.enter_context(freeze_time("2026-10-07 15:00:00+00:00"))
+            if wall else None
+        )
+        clock = Clock(10_000.0, frozen)
         for module in _CLOCKED:
             stack.enter_context(patch.object(module, "time", clock))
         stack.enter_context(patch(
