@@ -236,7 +236,7 @@ def _compute_forecast_advice(
         or capacity_kwh <= 0
         or not (device_ids or legacy_entity_ids)
     ):
-        for key in (*_FORECAST_LATCHES, "_forecast_parse_memo"):
+        for key in (*_FORECAST_LATCHES, "_forecast_parse_memo", "_forecast_held"):
             hub_runtime.pop(key, None)
         return None, {}
 
@@ -288,7 +288,12 @@ def _compute_forecast_advice(
     if fleet_max_power:
         power_cap = fleet_max_power + (fleet_charge_cap or 0)
 
-    entity_ids = configured_forecast_sensors(hass, device_ids, legacy_entity_ids)
+    # Entities with a forecast held for them still resolve while their device
+    # reads nothing (see read_forecast_series_pair).
+    held = hub_runtime.get("_forecast_held", ())
+    entity_ids = configured_forecast_sensors(
+        hass, device_ids, legacy_entity_ids, held
+    )
     # Per-array optimism, resolved device → entity so the factor follows the
     # array rather than the site (fleet.forecast_inflation_by_device). Only the
     # CLIP series is inflated; ``series`` below stays raw for the overnight
@@ -296,7 +301,7 @@ def _compute_forecast_advice(
     inflation_by_device = fleet.forecast_inflation_by_device(members)
     inflation_by_entity = {}
     for device_id, pct in inflation_by_device.items():
-        for entity_id in configured_forecast_sensors(hass, [device_id], None):
+        for entity_id in configured_forecast_sensors(hass, [device_id], None, held):
             inflation_by_entity.setdefault(entity_id, pct)
     series, clip_series, by_entity = read_forecast_series_pair(
         hass, entity_ids, hub_runtime, inflation_by_entity
@@ -533,7 +538,7 @@ def _compute_forecast_advice(
         if not m.forecast_device_ids:
             continue
         member_entities = configured_forecast_sensors(
-            hass, list(m.forecast_device_ids), None
+            hass, list(m.forecast_device_ids), None, held
         )
         member_series = merge_forecast_series(
             [by_entity[e] for e in member_entities if e in by_entity]

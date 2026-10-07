@@ -103,6 +103,12 @@ DEFAULT_EXCESS_TRIGGER_MARGIN = 500
 DEFAULT_BASE_CONSUMPTION = 300
 DEFAULT_BATTERY_CAPACITY_KWH = 0
 DEFAULT_FORECAST_SOC_FLOOR = 30
+# How long a forecast source that stops delivering (unavailable, or no usable
+# data) keeps contributing the series it last read - an internet outage takes
+# the forecast integration down with it, and the last forecast it fetched still
+# describes the day (Anze, 2026-10-07: "the last available forecast for up to
+# 24 hours"). Past it the source counts as missing, as before.
+FORECAST_HOLD_S = 24 * 3600
 FORECAST_SOC_HYSTERESIS = 2  # % - serves every forecast latch, so one
 # setting sizes the whole feature's stickiness:
 #  1. the published ceiling rises freely but falls only by more than this band,

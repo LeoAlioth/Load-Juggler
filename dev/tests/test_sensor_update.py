@@ -2943,6 +2943,187 @@ async def test_forecast_max_soc_ratchet(hass):
         assert result["forecast_battery_max_soc"] == 60
 
 
+# ── A forecast that goes missing is held for up to FORECAST_HOLD_S ─────────
+#
+# Kozolec, 5 Oct 2026: the internet was out 04:00-10:20 and the forecast
+# integration with it. A source that stops delivering keeps contributing the
+# series it last read, for up to 24 h after that read. Rig: the ratchet test's
+# hub (threshold 5300 W, 10 kWh pack, floor 30 %) reading a per-array forecast
+# DEVICE, the path every current install takes - an unavailable entity carries
+# no attributes, so the device must still resolve to it while it is held.
+
+# Two 5000 W-over-threshold hours on each of two days, in the test's local
+# afternoon (US/Pacific): 10 kWh to clip, the whole pack, today and tomorrow.
+_HOLD_DAYS = {
+    "2026-08-14T20:00:00+00:00": 10300,
+    "2026-08-14T21:00:00+00:00": 10300,
+    "2026-08-14T22:00:00+00:00": 0,
+    "2026-08-15T20:00:00+00:00": 10300,
+    "2026-08-15T21:00:00+00:00": 10300,
+    "2026-08-15T22:00:00+00:00": 0,
+}
+_FORECAST_KEYS = (
+    "forecast_window_tomorrow",
+    "forecast_clipped_kwh",
+    "forecast_absorbable_kwh",
+    "forecast_room_needed_kwh",
+    "forecast_battery_max_soc",
+    "forecast_headroom_deficit_kwh",
+    "forecast_charge_limit_w",
+)
+
+
+def _hold_rig(hass, slug):
+    """The ratchet rig on a forecast device. Returns (hub, runtime, entity)."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SOLAR_FORECAST_DEVICE_IDS,
+    )
+
+    device_id = _forecast_device(hass, slug, _HOLD_DAYS)
+    entity_id = f"sensor.{slug}_energy_production_today"
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=2,
+        title=slug,
+        data={CONF_NAME: slug, CONF_ENTITY_ID: slug, ENTRY_TYPE: ENTRY_TYPE_HUB},
+        options={
+            CONF_PHASE_A_CURRENT_ENTITY_ID: f"sensor.{slug}_phase_a",
+            CONF_MAIN_BREAKER_RATING: 25,
+            CONF_PHASE_VOLTAGE: 230,
+            CONF_BATTERY_SOC_ENTITY_ID: f"sensor.{slug}_soc",
+            CONF_BATTERY_POWER_ENTITY_ID: f"sensor.{slug}_battery_power",
+            CONF_BATTERY_MAX_CHARGE_POWER: 5000,
+            CONF_BATTERY_MAX_DISCHARGE_POWER: 5000,
+            CONF_GRID_EXPORT_LIMIT: 5000,
+            CONF_BASE_CONSUMPTION: 300,
+            CONF_BATTERY_CAPACITY_KWH: 10,
+            CONF_FORECAST_SOC_FLOOR: 30,
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id],
+        },
+    )
+    runtime = {"loads": []}
+    hass.data[DOMAIN] = {
+        "hubs": {hub.entry_id: runtime},
+        "loads": {},
+        "load_allocations": {},
+    }
+    hass.states.async_set(
+        f"sensor.{slug}_phase_a", "2.0",
+        {"device_class": "current", "unit_of_measurement": "A"},
+    )
+    hass.states.async_set(
+        f"sensor.{slug}_soc", "80",
+        {"device_class": "battery", "unit_of_measurement": "%"},
+    )
+    hass.states.async_set(
+        f"sensor.{slug}_battery_power", "-500",
+        {"device_class": "power", "unit_of_measurement": "W"},
+    )
+    return hub, runtime, entity_id
+
+
+def _set_forecast(hass, entity_id, watts):
+    hass.states.async_set(
+        entity_id, "12.5", {"unit_of_measurement": "kWh", "watts": dict(watts)}
+    )
+
+
+def _forecast_figures(result):
+    return {key: result[key] for key in _FORECAST_KEYS}
+
+
+async def test_a_forecast_missing_for_six_hours_is_held(hass, caplog):
+    """Six hours without the forecast - unavailable, and for one cycle
+    available with no data - and every forecast figure is what the fresh
+    forecast gives at that moment. One info line when the hold starts."""
+    import logging
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, runtime, entity_id = _hold_rig(hass, "hold6h")
+    caplog.set_level(logging.INFO)
+    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
+        assert run_hub_calculation(hass, hub)["forecast_clipped_kwh"] == 10.0
+
+        hass.states.async_set(entity_id, "12.5", {"watts": {}})
+        frozen.tick(3600)
+        assert run_hub_calculation(hass, hub)["forecast_clipped_kwh"] == 10.0
+        hass.states.async_set(entity_id, STATE_UNAVAILABLE, {})
+        for _ in range(5):
+            frozen.tick(3600)
+            held = run_hub_calculation(hass, hub)
+        assert held["forecast_clipped_kwh"] == 10.0
+
+        # The same moment with the forecast back: identical figures.
+        _set_forecast(hass, entity_id, _HOLD_DAYS)
+        fresh = run_hub_calculation(hass, hub)
+    assert _forecast_figures(held) == _forecast_figures(fresh)
+    assert sum("using the one last read" in r.message for r in caplog.records) == 1
+
+
+async def test_a_forecast_missing_for_more_than_a_day_is_dropped(hass, caplog):
+    """Still held 23 h after the last read; past 24 h the source counts as
+    missing - nothing to clip, the ceiling at the destination - exactly as a
+    forecast that never read. One info line when the hold expires."""
+    import logging
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, runtime, entity_id = _hold_rig(hass, "hold25h")
+    caplog.set_level(logging.INFO)
+    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
+        run_hub_calculation(hass, hub)
+        hass.states.async_set(entity_id, STATE_UNAVAILABLE, {})
+        frozen.tick(23 * 3600)
+        assert run_hub_calculation(hass, hub)["forecast_clipped_kwh"] == 10.0
+
+        frozen.tick(2 * 3600)
+        expired = run_hub_calculation(hass, hub)
+        frozen.tick(60)
+        later = run_hub_calculation(hass, hub)
+        # A hub that never read this forecast, at the same moment.
+        runtime.pop("_forecast_held")
+        never = run_hub_calculation(hass, hub)
+    assert expired["forecast_clipped_kwh"] == 0.0
+    assert expired["forecast_battery_max_soc"] == 100
+    assert _forecast_figures(later) == _forecast_figures(never)
+    assert sum("has expired" in r.message for r in caplog.records) == 1
+
+
+async def test_a_fresh_forecast_replaces_the_held_one(hass):
+    """A forecast read while one is held replaces it: the next outage holds
+    the new series, and its 24 h count from the new read."""
+    from datetime import datetime, timezone
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, runtime, entity_id = _hold_rig(hass, "holdnew")
+    # 1000 W over the threshold for one hour on each day: 1 kWh to clip.
+    smaller = {ts: 6300 if "T20:" in ts else 0 for ts in _HOLD_DAYS}
+    with freeze_time("2026-08-14 08:00:00+00:00") as frozen:
+        run_hub_calculation(hass, hub)
+        hass.states.async_set(entity_id, STATE_UNAVAILABLE, {})
+        frozen.tick(3600)
+        assert run_hub_calculation(hass, hub)["forecast_clipped_kwh"] == 10.0
+
+        frozen.tick(3600)
+        _set_forecast(hass, entity_id, smaller)
+        assert run_hub_calculation(hass, hub)["forecast_clipped_kwh"] == 1.0
+
+        hass.states.async_set(entity_id, STATE_UNAVAILABLE, {})
+        frozen.tick(23 * 3600)  # 25 h after the first read, 23 h after this one
+        assert run_hub_calculation(hass, hub)["forecast_clipped_kwh"] == 1.0
+    read_at = runtime["_forecast_held"][entity_id][0]
+    assert read_at == datetime(2026, 8, 14, 10, tzinfo=timezone.utc)
+
+
 async def test_forecast_charge_limit_latch_round_trips_through_hub_runtime(hass):
     """The charge cap's latch state survives between cycles, so an integer SOC
     tick at the engage threshold cannot flap the published limit.
@@ -4541,6 +4722,7 @@ async def test_a_parked_pack_accumulates_nothing_at_all(hass):
         # the ADVICE carries is the three latches and the ceiling ratchet.
         advice_state = [
             "_forecast_charge_limiting",
+            "_forecast_held",
             "_forecast_max_soc",
             "_forecast_parse_memo",
             "_forecast_reservation_due",
