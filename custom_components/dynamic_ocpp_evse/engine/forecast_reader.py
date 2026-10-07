@@ -11,7 +11,11 @@ is never reserved for twice (``forecast_windows``).
 Fail open by design: an unreadable entity or attribute contributes nothing,
 which flows through to "nothing to clip" → SOC ceiling 100 % → charge cap
 released. A dropped sensor must never clamp the battery; visibility comes from
-the hub Status sensor, which names unavailable forecast entities.
+the hub Status sensor, which names unavailable forecast entities. One
+exception: a source that stops delivering keeps contributing the last series
+it read for up to FORECAST_HOLD_S after that read (``read_forecast_series_pair``)
+- an internet outage takes the forecast integration with it, and the forecast
+it last fetched still describes the day.
 """
 
 import logging
@@ -21,6 +25,7 @@ from datetime import timedelta
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
+from ..const import FORECAST_HOLD_S
 from ..calculations import (
     FORECAST_LOOKAHEAD_DAYS,
     merge_forecast_series,
@@ -34,7 +39,7 @@ _LOGGER = logging.getLogger(__name__)
 _FORECAST_TODAY_HINT = "energy_production_today"
 
 
-def resolve_forecast_sensor(hass, device_id):
+def resolve_forecast_sensor(hass, device_id, held=()):
     """Pick the one ``watts``-bearing sensor of a forecast device, or None.
 
     A forecast device (one Open-Meteo Solar Forecast config entry per PV
@@ -42,6 +47,11 @@ def resolve_forecast_sensor(hass, device_id):
     tomorrow, current power. Exactly one must be read per device or the array
     is double-counted. Prefer the "energy production today" sensor; otherwise
     the first watts-bearing sensor in deterministic order.
+
+    ``held`` - the entities with a forecast held for them
+    (``read_forecast_series_pair``) - count as watts-bearing: an unavailable
+    entity carries no attributes at all, so without this the device would
+    resolve to nothing and its held forecast could never be read.
     """
     registry = er.async_get(hass)
     candidates = []
@@ -49,7 +59,9 @@ def resolve_forecast_sensor(hass, device_id):
         if entry.domain != "sensor":
             continue
         state = hass.states.get(entry.entity_id)
-        if state is None or not isinstance(state.attributes.get("watts"), dict):
+        if entry.entity_id not in held and (
+            state is None or not isinstance(state.attributes.get("watts"), dict)
+        ):
             continue
         candidates.append(entry.entity_id)
     if not candidates:
@@ -61,14 +73,15 @@ def resolve_forecast_sensor(hass, device_id):
     return candidates[0]
 
 
-def configured_forecast_sensors(hass, device_ids, legacy_entity_ids=None):
+def configured_forecast_sensors(hass, device_ids, legacy_entity_ids=None, held=()):
     """The sensor entity_ids to read: one per configured forecast device,
     plus any directly-configured legacy entities (pre-device-selector
     installs). A device whose sensors expose no watts data contributes
-    nothing - fail open, visibility via the hub Status sensor."""
+    nothing - fail open, visibility via the hub Status sensor - unless a
+    forecast is held for one of them (``held``, see resolve_forecast_sensor)."""
     entity_ids = []
     for device_id in device_ids or []:
-        entity_id = resolve_forecast_sensor(hass, device_id)
+        entity_id = resolve_forecast_sensor(hass, device_id, held)
         if entity_id is not None:
             entity_ids.append(entity_id)
         else:
@@ -172,31 +185,66 @@ def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity
     an unchanged attribute (a timestamp key would miss two updates landing on
     the same clock tick). The attribute holds 48–200 entries and this runs
     every site refresh (default 2 s), while the forecast integration updates a
-    few times per hour. A memo, not a fallback cache: a missing or unavailable
-    entity contributes nothing (fail open), it does not serve stale data.
+    few times per hour.
+
+    The memo is not the fallback; ``_forecast_held`` is. Each entity's last
+    usable series is kept there with the time it was last read, and an entity
+    that is unavailable or has no usable data contributes that series instead,
+    for up to FORECAST_HOLD_S after that read - the same series a fresh read
+    of it would give, used the same way. Past that it contributes nothing, as
+    any missing entity always did (fail open). In memory only: a restart
+    starts with nothing held. The read time shows in the diagnostics dump.
     '''
     memo = hub_runtime.setdefault("_forecast_parse_memo", {})
-    for stale_id in set(memo) - set(entity_ids):
-        del memo[stale_id]
+    held = hub_runtime.setdefault("_forecast_held", {})
+    for cache in (memo, held):
+        for stale_id in set(cache) - set(entity_ids):
+            del cache[stale_id]
 
+    now = dt_util.utcnow()
     by_entity = {}
     for entity_id in entity_ids:
         state = hass.states.get(entity_id)
+        series = None
         if units.is_unavailable(state):
             memo.pop(entity_id, None)
-            continue
-        cached = memo.get(entity_id)
-        if cached is not None and cached[0] is state:
-            by_entity[entity_id] = cached[1]
-            continue
-        series = _parse_watts(entity_id, state.attributes.get("watts"))
-        memo[entity_id] = (state, series)
-        if series:
-            by_entity[entity_id] = series
         else:
-            _LOGGER.debug(
-                "Forecast entity %s has no usable watts data", entity_id
+            cached = memo.get(entity_id)
+            if cached is not None and cached[0] is state:
+                series = cached[1]
+            else:
+                series = _parse_watts(entity_id, state.attributes.get("watts"))
+                memo[entity_id] = (state, series)
+                if not series:
+                    _LOGGER.debug(
+                        "Forecast entity %s has no usable watts data", entity_id
+                    )
+        if series:
+            held[entity_id] = (now, series, False)
+            by_entity[entity_id] = series
+            continue
+        if entity_id not in held:
+            continue
+        read_at, series, holding = held[entity_id]
+        if (now - read_at).total_seconds() > FORECAST_HOLD_S:
+            del held[entity_id]
+            _LOGGER.info(
+                "Forecast entity %s: the forecast held since %s has expired,"
+                " continuing without it",
+                entity_id,
+                read_at,
             )
+            continue
+        if not holding:
+            _LOGGER.info(
+                "Forecast entity %s has no forecast: using the one last read at"
+                " %s, for up to %d h",
+                entity_id,
+                read_at,
+                FORECAST_HOLD_S // 3600,
+            )
+            held[entity_id] = (read_at, series, True)
+        by_entity[entity_id] = series
 
     raw = merge_forecast_series(list(by_entity.values()))
     if not any((inflation_by_entity or {}).get(e) for e in by_entity):
