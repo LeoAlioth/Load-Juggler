@@ -264,7 +264,7 @@ async def _evening(hass, site, minutes_after_plug_in=15, script=None,
     if script is not None:
         script(world)
     log = []
-    with clocked(world.accept) as clock:
+    with clocked(world.accept, wall=True) as clock:
         for cycle in range(PLUG_IN + int(minutes_after_plug_in * 60 / CYCLE_S)):
             if cycle == PLUG_IN:
                 world.chargers["nova"].plugged = True
@@ -304,10 +304,13 @@ async def test_the_second_charger_charges_through_beside_the_first(
     if site.mode == DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED and allowance_w == TIGHT_ALLOWANCE_W:
         assert not any(nova), nova[::15]
         return
-    # It started within its first command interval or two and held at least
-    # its minimum to the end.
-    running = nova[45:]
+    # It started once the first car's cut had landed - three of its command
+    # intervals at most - and held at least its minimum to the end. (Started
+    # at once, beside a first car still drawing the 15 A it was last told,
+    # the breaker carried 22.8 A until that car's next command.)
+    running = nova[60:]
     assert min(running) >= MIN_A, running[::15]
+    assert max(row["grid"] for row in log) <= BREAKER_A + 1.0
 
 
 @pytest.mark.parametrize("allowance_w", [NO_ALLOWANCE_W, TIGHT_ALLOWANCE_W])

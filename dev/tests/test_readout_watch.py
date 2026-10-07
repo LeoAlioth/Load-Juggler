@@ -694,8 +694,46 @@ def test_a_reading_older_than_the_commands_remembered_is_used_as_it_stands():
     assert _since_command(reported=-30.0, commands=commands) is None
 
 
-def test_a_reading_since_the_last_command_is_trusted():
-    assert _since_command(reported=5.0) is None
+def test_a_reading_since_a_cut_is_trusted():
+    """A car must be down to a cut within 5 s (IEC 61851-1): a reading taken
+    after it is its answer, whatever it says."""
+    cut = ((None, 15.3), (0.0, 7.6))
+    assert _since_command(commanded=7.6, reading=(7.5,) * 3, reported=5.0,
+                          commands=cut) is None
+    assert _since_command(commanded=7.6, reading=(5.0,) * 3, reported=5.0,
+                          commands=cut) is None
+
+
+def test_a_reading_within_the_climb_after_a_raise_is_assumed_over():
+    """The 2026-10-07 field case: a value a few seconds after a raise shows
+    the car on its way up, not its answer - until CAR_RAMP_S have passed."""
+    assert _since_command(reported=5.0) == (15.3,) * 3
+    assert _since_command(reported=rw.CAR_RAMP_S - 1) == (15.3,) * 3
+    assert _since_command(reported=rw.CAR_RAMP_S + 1) is None
+
+
+def test_a_climb_through_two_raises_is_judged_from_the_lowest():
+    """Raised 6 -> 10 A, then 10 -> 16 A before the car got to 10: at 8 A it
+    is still climbing, not holding itself under 10."""
+    commands = ((None, 6.0), (-30.0, 10.0), (0.0, 16.0))
+    assert _since_command(commanded=16.0, reading=(8.0,) * 3, reported=5.0,
+                          commands=commands) == (16.0,) * 3
+
+
+def test_a_car_holding_itself_below_the_limit_before_a_raise_keeps_its_draw():
+    held = ((None, 16.0), (0.0, 20.0))
+    assert _since_command(commanded=20.0, reading=(9.0,) * 3, reported=5.0,
+                          commands=held) is None
+
+
+def test_a_reading_within_the_climb_after_the_charging_began_is_assumed_over():
+    """The car is still ramping from 0 a few seconds into the session; a
+    reading from the very instant is a restart's restore and stands."""
+    def start(reported):
+        return _before_new(reading=(0.3,) * 3, reported=reported, charging=0.0)
+    assert start(4.0) == (16.0,) * 3
+    assert start(rw.CAR_RAMP_S + 1) is None
+    assert start(0.0) is None
 
 
 def test_track_commands_keeps_the_changes_and_forgets_on_an_unknown_limit():

@@ -81,6 +81,8 @@ load's runtime bucket) and the clock (``now``, monotonic seconds).
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 # OCPP 1.6 connector statuses in which a car may be connected but no energy is
 # transferred: waiting to start, suspended by the car or by the charger, or the
 # transaction already stopped. Against these the limit in force is 0 A,
@@ -360,6 +362,21 @@ def assumed_legs(state: dict, status: str | None, commanded: float | None) -> tu
 # A command's moment is when the engine first saw it accepted - one site cycle
 # late at most, so a reading taken within that cycle is assumed over once
 # more, which errs toward the command it was about to show anyway.
+#
+# A reading taken AFTER a raise can still predate the car's answer to it: a
+# car climbs to a higher limit over tens of seconds, while it must come down
+# to a lower one within 5 s (IEC 61851-1). The third field case (2026-10-07,
+# Andrej's Nova, a go-eCharger V4 alone on the site, meter values and commands
+# both every 30 s): a value landed a few seconds after each raise, showing the
+# car a third of the way up; the grid saw it reach the limit, the feedback
+# booked the rest as house load - 4 to 7 kW of it - and the allocation fell
+# back to what the car had been drawing. 16/6/16/6 A every minute or two, a
+# third of the session at 7 A or less on a site with room for 16, and twice a
+# phase read under 6 A and the car was paused for 3 minutes. So a reading
+# taken within CAR_RAMP_S of the charging starting, or of a command, is taken
+# under the LOWEST limit in force over that span - the one the car may still
+# be climbing from. A cut inside the span is the lowest limit itself, so a car
+# that obeyed it is believed at once, as before.
 
 # The draw_estimate evidence while the draw is assumed this way.
 READING_PREDATES_LIMIT = "reading_predates_limit"
@@ -368,6 +385,15 @@ READING_PREDATES_LIMIT = "reading_predates_limit"
 # taken under when readings come slower than commands. A memory length, like
 # GAP_MEMORY: a reading older than all of them is used as it stands.
 COMMAND_MEMORY = 4
+
+# How long a car may take to climb to a raised limit, in seconds: a reading
+# taken within it may show the climb rather than the car's answer. The Nova's
+# car took 45-50 s from the connector entering Charging to its 16 A; the
+# cost of a longer span is one more reading's wait before a car that holds
+# itself below a raise is believed - meanwhile the house reads low by the gap
+# and the charger is booked at its limit, which hands no one current the
+# charger could be drawing.
+CAR_RAMP_S = 60.0
 
 
 def track_commands(state: dict, commanded: float | None, now) -> None:
@@ -383,12 +409,17 @@ def track_commands(state: dict, commanded: float | None, now) -> None:
         del commands[:-COMMAND_MEMORY]
 
 
-def _commanded_at(commands, when) -> float | None:
-    """The commanded limit in force at ``when``, or None if it predates them."""
-    for at, limit in reversed(commands):
-        if at is None or at <= when:
-            return limit
-    return None
+def _limits_between(commands, start, end) -> list[float]:
+    """Every remembered limit in force at some moment from ``start`` to
+    ``end`` - the oldest remembered one standing in for any before it."""
+    found = []
+    for i, (at, limit) in enumerate(commands):
+        if at is not None and at > end:
+            break
+        ends = commands[i + 1][0] if i + 1 < len(commands) else None
+        if ends is None or ends > start:
+            found.append(limit)
+    return found
 
 
 def assumed_before_new_reading(
@@ -408,9 +439,11 @@ def assumed_before_new_reading(
     The limit in force changes when the connector enters Charging - from a
     no-energy status, so from 0 A (``charging_since``) - and when a command
     moves it (``commands``, see ``track_commands``). ``reported_at`` is when
-    the reading was last reported (the oldest, for one sensor per leg). Per
-    leg, what the reading showed under the limit it was taken at says which
-    way the car goes:
+    the reading was last reported (the oldest, for one sensor per leg). A
+    reading reported within CAR_RAMP_S after such a change may show the car
+    still climbing, so it counts as taken under the lowest limit in force over
+    those seconds (0 A when the charging began in them). Per leg, what the
+    reading showed under the limit it was taken at says which way the car goes:
 
     * it took that limit, to within ``margin``: the car follows its limit, so
       it now takes the limit in force;
@@ -427,12 +460,16 @@ def assumed_before_new_reading(
     in_force = limit_in_force(status, commanded)
     if in_force is None:
         return None
-    if charging_since is not None and reported_at < charging_since:
+    ramp_from = reported_at - timedelta(seconds=CAR_RAMP_S)
+    # Reported AT the charging's instant: restored together after a restart.
+    if (charging_since is not None and charging_since > ramp_from
+            and reported_at != charging_since):
         before, since = 0.0, charging_since
-    elif commands and commands[-1][0] is not None and reported_at < commands[-1][0]:
-        before, since = _commanded_at(commands, reported_at), commands[-1][0]
-        if before is None:
+    elif commands and commands[-1][0] is not None and commands[-1][0] > ramp_from:
+        limits = _limits_between(commands, ramp_from, reported_at)
+        if not limits:
             return None
+        before, since = min(limits), commands[-1][0]
     else:
         return None
     assumed = tuple(

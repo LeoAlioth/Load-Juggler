@@ -159,7 +159,11 @@ def _set_world(hass, first_reading, first_true, status="Charging"):
         ("first", first_reading, status),
         ("second", 0.0, "Charging"),
     ):
-        hass.states.async_set(f"sensor.{slug}_status_connector", state)
+        # In that status for ten minutes: past the car's climb to its limit
+        # (readout_watch.CAR_RAMP_S), so the reading is its answer.
+        hass.states.async_set(
+            f"sensor.{slug}_status_connector", state, timestamp=time.time() - 600
+        )
         hass.states.async_set(
             f"sensor.{slug}_current_import", str(reading),
             {
@@ -711,10 +715,11 @@ async def test_the_overview_marks_estimates_and_the_stuck_readout(hass, site):
 # the charger was paused, and round it went every 3.5 minutes.
 
 
-def _ocpp_push(hass, reading, status, first_true):
+def _ocpp_push(hass, reading, status, first_true, after=0.0):
     """One push of the ocpp integration (0.12) for "first", the grid with it:
     at each StatusNotification and MeterValues it re-writes every sensor of
-    the charger, the reading BEFORE the connector status."""
+    the charger, the reading BEFORE the connector status - reported ``after``
+    seconds from now."""
     for phase in "abc":
         hass.states.async_set(
             f"sensor.grid_{phase}", str(HOUSEHOLD + first_true),
@@ -726,6 +731,7 @@ def _ocpp_push(hass, reading, status, first_true):
             "device_class": "current", "unit_of_measurement": "A",
             "l1_current": reading, "l2_current": reading, "l3_current": reading,
         },
+        timestamp=time.time() + after,
     )
     hass.states.async_set("sensor.first_status_connector", status)
 
@@ -824,7 +830,14 @@ async def test_a_zero_reported_again_since_the_charging_is_believed(hass, site):
     _started_on_a_held_zero(hass, first)
     assert _calc(hass, hub_entry, first, second)["draw_estimated"]
 
+    # Re-reported within the car's climb, it may still be the car waking up...
     _ocpp_push(hass, 0.0, "Charging", first_true=0.0)
+    _fresh_filters(hass, hub_entry)
+    assert _calc(hass, hub_entry, first, second)["draw_estimated"]
+
+    # ...past it, it is the car's answer.
+    _ocpp_push(hass, 0.0, "Charging", first_true=0.0,
+               after=readout_watch.CAR_RAMP_S + 1)
     _fresh_filters(hass, hub_entry)
     read = _calc(hass, hub_entry, first, second)
     assert read["load_draw"][first.entry_id] == 0.0
