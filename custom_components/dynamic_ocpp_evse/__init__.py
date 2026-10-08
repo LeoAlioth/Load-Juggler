@@ -471,7 +471,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 "target": {},
                 "data": {"devid": ocpp_device_id}
             },
-            {"delay": {"seconds": 10}},
+            # Short: until the baseline lands the charger holds no profile and
+            # runs on its own default. Andrej's go-eCharger (2026-10-08) took
+            # a charging car to its 16 A fallback within the 10 s this used to
+            # be, the jump read as house load ahead of its next meter value,
+            # and the reset itself paused the car.
+            {"delay": {"seconds": 1}},
             {
                 "action": "ocpp.set_charge_rate",
                 "target": {},
