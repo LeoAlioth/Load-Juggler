@@ -1093,7 +1093,7 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
     inv_notif = check_inversion(
         auto_detect_state,
         smoothed_phases,
-        site.loads,
+        site,
         hub_entry.entry_id,
         get_entry_value(hub_entry, CONF_NAME, "Hub"),
     )

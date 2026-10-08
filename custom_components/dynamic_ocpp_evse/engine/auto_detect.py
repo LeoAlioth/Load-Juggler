@@ -15,27 +15,19 @@ from ..phases import phase_mapping, support
 _LOGGER = logging.getLogger(__name__)
 
 # --- Inversion detection parameters ---
-_INV_MIN_DELTA_A = 1.0      # Minimum load draw change (A) to count as significant
-_INV_MIN_GRID_DELTA_A = 0.5  # Minimum grid change (A) for its sign to be meaningful
-_INV_WINDOW_SIZE = 15       # Rolling window length (samples with significant delta)
-_INV_THRESHOLD = 10         # Inversion signals needed in a full window to fire
-# ...and at least this much wall clock since the FIRST qualifying sample. The
-# window counts qualifying EVENTS, not cycles, so on its own it says nothing
-# about how independent they are: on a 1 s site the 15 samples one EVSE ramp
-# throws off are 15 s of a single event observed 15 times, and 10 of 15 is
-# reached on far less evidence than the same count at 10 s. A minute is long
-# enough for a correctly wired site to have produced the contradicting samples
-# that keep the count down.
-#
-# Deliberately measured from the first sample, NOT as the span of the retained
-# window. A rolling window that must span 60 s can be held under 60 s forever
-# by a site producing 15+ qualifying events a minute - a hunting EVSE on a
-# fast site, which is the very site an inversion is most likely to be
-# suspected on - and that would switch detection off there without a trace.
-# A clock from the first sample can only DELAY the notification, never
-# suppress it. It lives in hub_runtime, so it restarts with Home Assistant,
-# as the window itself does.
-_INV_MIN_OBSERVATION_S = 60.0
+# A grid meter cannot read export on a phase where our loads draw current
+# while nothing on the site generates: no sun, no battery discharging. A
+# reading that does it for _INV_HOLD_S is reversed - physics, not a
+# correlation. It replaced one (2026-10-08): every cycle compared the grid's
+# change with the managed draw's change and counted opposite signs, 10 of 15
+# firing. A charger's reading steps once per meter value (30 s) while the
+# grid's change in that one cycle is house load, or Load Juggler's own answer
+# to it; on Andrej's site 11 of 24 samples read "inverted" over 20 hours, a
+# coin toss, and with 10 of 15 in reach of one, two correctly wired sites were
+# warned after their restarts.
+_INV_MIN_DRAW_A = 3.0     # Our loads' measured draw on the phase (A)
+_INV_GEN_IDLE_W = 50.0    # Solar / battery discharge at or below this is none
+_INV_HOLD_S = 120.0       # How long the export must hold
 
 # --- Phase mapping detection parameters ---
 _PM_MIN_DELTA_A = 0.5       # Minimum draw / grid-phase delta (A) to correlate
@@ -53,102 +45,80 @@ _PM_LINE_ACTIVE_A = 1.0     # Min current (A) to consider a load line active
 # Feature 1: Grid CT Inversion Detection
 # ------------------------------------------------------------------ #
 
-def check_inversion(state: dict, smoothed_phases: list, loads: list,
-                    hub_entry_id: str, hub_name: str) -> dict | None:
-    """Detect inverted grid CTs by correlating load draw vs grid changes.
+def _nothing_generates(site) -> bool:
+    """True when the site is known to produce nothing: its solar is measured
+    (not worked out from the grid meter) and idle, and its battery - if it has
+    one - is not discharging. An unread battery may be."""
+    if not site.solar_is_metered or site.solar_production_total > _INV_GEN_IDLE_W:
+        return False
+    if site.battery_power is None:
+        return site.battery_soc is None
+    return site.battery_power <= _INV_GEN_IDLE_W
 
-    Returns a notification dict or None.
+
+def check_inversion(state: dict, smoothed_phases: list, site,
+                    hub_entry_id: str, hub_name: str, now=None) -> dict | None:
+    """Detect a reversed grid reading: export on a phase where our loads draw
+    while nothing on the site generates, held for _INV_HOLD_S.
+
+    Only measured draws count - a draw assumed in place of a reading
+    (``draw_blind``) is Load Juggler's own guess. Returns a notification dict
+    once per Home Assistant run, or None.
     """
-    inv = state.setdefault("inversion", {
-        "prev_grid_total": None,
-        "prev_load_total": None,
-        "window": [],
-        "first_sample_at": None,
-        "notified": False,
-    })
-
-    if inv["notified"]:
+    inv = state.setdefault("inversion", {"since": {}, "notified": False})
+    if inv["notified"] or site.is_off_grid:
         return None
+    now = time.monotonic() if now is None else now
+    since = inv.setdefault("since", {})
 
-    # Grid total (signed): positive = import, negative = export
-    grid_total = sum(p for p in smoothed_phases if p is not None)
+    draws = [0.0, 0.0, 0.0]
+    if _nothing_generates(site):
+        for load in site.loads:
+            if load.dynamic_control and not load.draw_blind:
+                for i, draw in enumerate(load.get_site_phase_draw()):
+                    draws[i] += draw
 
-    # Total load draw across all site phases
-    load_total = 0.0
-    for c in loads:
-        a, b, cc = c.get_site_phase_draw()
-        load_total += a + b + cc
+    reversed_phases = []
+    for i, label in enumerate(("A", "B", "C")):
+        grid = smoothed_phases[i] if i < len(smoothed_phases) else None
+        if (grid is None or draws[i] < _INV_MIN_DRAW_A
+                or grid > -draws[i] / 2):
+            since.pop(label, None)
+            continue
+        started = since.setdefault(label, now)
+        if now - started >= _INV_HOLD_S:
+            reversed_phases.append((label, grid, draws[i]))
 
-    prev_grid = inv["prev_grid_total"]
-    prev_draw = inv["prev_load_total"]
-
-    result = None
-    try:
-        if prev_grid is not None and prev_draw is not None:
-            delta_grid = grid_total - prev_grid
-            delta_draw = load_total - prev_draw
-
-            # Both sides need a floor. A significant draw change paired with a
-            # near-zero grid change (solar or another load absorbed it) carries
-            # no directional information - its sign is noise, and counting it
-            # would let arbitrarily small grid wobble fill the window.
-            if (abs(delta_draw) >= _INV_MIN_DELTA_A
-                    and abs(delta_grid) >= _INV_MIN_GRID_DELTA_A):
-                if inv.get("first_sample_at") is None:
-                    inv["first_sample_at"] = time.monotonic()
-                if delta_draw * delta_grid < 0:
-                    inv["window"].append(1)   # inversion signal
-                else:
-                    inv["window"].append(-1)  # normal signal
-
-                # Trim to rolling window
-                if len(inv["window"]) > _INV_WINDOW_SIZE:
-                    inv["window"] = inv["window"][-_INV_WINDOW_SIZE:]
-
-                inv_count = sum(1 for s in inv["window"] if s == 1)
-                _LOGGER.debug(
-                    "AutoDetect inversion: delta_draw=%.2fA, delta_grid=%.2fA, "
-                    "signal=%s (%d/%d in window)",
-                    delta_draw, delta_grid,
-                    "INV" if delta_draw * delta_grid < 0 else "OK",
-                    inv_count, len(inv["window"]),
-                )
-
-                started = inv.get("first_sample_at")
-                observed_s = 0.0 if started is None else time.monotonic() - started
-                if (len(inv["window"]) >= _INV_WINDOW_SIZE
-                        and inv_count >= _INV_THRESHOLD
-                        and observed_s >= _INV_MIN_OBSERVATION_S):
-                    inv["notified"] = True
-                    _LOGGER.warning(
-                        "AutoDetect: Grid CT inversion detected for hub '%s' "
-                        "(%d/%d signals over %.0f s)",
-                        hub_name, inv_count, _INV_WINDOW_SIZE, observed_s,
-                    )
-                    result = {
-                        "title": "Load Juggler \u2014 Possible Grid CT Inversion",
-                        "message": (
-                            f"Your grid current sensors for hub '{hub_name}' may be "
-                            "installed backwards (inverted).\n\n"
-                            "When EV charging increased, the measured grid import "
-                            "decreased \u2014 the opposite of what is physically expected.\n\n"
-                            "To fix this, go to:\n"
-                            "Settings \u2192 Devices & Services \u2192 Load Juggler \u2192 "
-                            f"'{hub_name}' \u2192 Configure \u2192 Grid Settings \u2192 "
-                            "enable 'Invert phase readings'.\n\n"
-                            "If already enabled, your CT clamps may still be physically "
-                            "reversed \u2014 check that the arrow on each clamp points "
-                            "toward the grid."
-                        ),
-                        "notification_id": (
-                            f"dynamic_ocpp_evse_grid_inversion_{hub_entry_id}"
-                        ),
-                    }
-    finally:
-        inv["prev_grid_total"] = grid_total
-        inv["prev_load_total"] = load_total
-
-    return result
+    if not reversed_phases:
+        return None
+    inv["notified"] = True
+    labels = ", ".join(label for label, _, _ in reversed_phases)
+    evidence = "; ".join(
+        f"phase {label} read {-grid:.1f} A of export with {draw:.1f} A drawn"
+        for label, grid, draw in reversed_phases
+    )
+    _LOGGER.warning(
+        "AutoDetect: grid reading reversed on hub '%s' - %s, nothing generating, "
+        "for over %.0f s", hub_name, evidence, _INV_HOLD_S,
+    )
+    return {
+        "title": "Load Juggler \u2014 Possible Grid CT Inversion",
+        "message": (
+            f"The grid current sensors for hub '{hub_name}' read export on "
+            f"phase {labels} for over {_INV_HOLD_S / 60:.0f} minutes while "
+            "Load Juggler's loads drew current there and nothing on the site "
+            f"was producing - no solar, no battery discharging ({evidence}). "
+            "A site cannot export power it is not making, so those readings "
+            "are reversed.\n\n"
+            "If every phase is affected, go to:\n"
+            "Settings \u2192 Devices & Services \u2192 Load Juggler \u2192 "
+            f"'{hub_name}' \u2192 Configure \u2192 Grid Settings \u2192 "
+            "'Invert phase readings' and switch it.\n\n"
+            "If only some phases are, the CT clamp on those phases is "
+            "installed backwards - its arrow should point toward the grid."
+        ),
+        "notification_id": f"dynamic_ocpp_evse_grid_inversion_{hub_entry_id}",
+    }
 
 
 # ------------------------------------------------------------------ #
