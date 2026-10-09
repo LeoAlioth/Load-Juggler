@@ -43,7 +43,8 @@ async def detect_charge_rate_unit(sensor, ocpp_device_id: str) -> str | None:
 async def send_ocpp_command(
     sensor, limit: float, hub_entry, now_mono: float,
     effective_status: str | None = None,
-) -> None:
+    hold_s: float | None = None,
+) -> bool:
     """Send OCPP charging profile to an EVSE charger.
 
     ``effective_status`` is the connector status the ENGINE decided on, taken
@@ -83,11 +84,14 @@ async def send_ocpp_command(
         stamp_command(sensor, now_mono)
         return
 
+    # ``hold_s``: a pause's 0 A stays valid that much longer (the rest of the
+    # pause), so it is sent once - see entities/load.py. Returns whether the
+    # profile went out.
     profile_timeout = int(
         get_entry_value(
             sensor.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT
         )
-    )
+    ) + int(hold_s or 0)
     stack_level = int(
         get_entry_value(sensor.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
     )
@@ -249,3 +253,4 @@ async def send_ocpp_command(
     load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
     load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
     stamp_command(sensor, now_mono)
+    return True

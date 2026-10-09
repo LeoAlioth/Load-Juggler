@@ -862,6 +862,62 @@ async def test_charge_pause_starts_when_below_minimum(
     assert charger_sensor.extra_state_attributes["pause_active"] is True
 
 
+async def test_a_pause_sends_its_0a_once_valid_for_the_whole_pause(
+    hass,
+    mock_hub_entry,
+    mock_charger_entry,
+    charger_sensor,
+    mock_call,
+):
+    """A pause's 0 A goes out once, valid for the pause plus the usual 120 s,
+    and the rest of the pause sends nothing - re-sending it every command
+    interval restarted a go-eCharger's charging cycle every 30 s. A charger
+    that draws anyway (a reboot lost the profile) gets it again."""
+    from datetime import datetime
+
+    hass.data[DOMAIN]["loads"][mock_charger_entry.entry_id]["operating_mode"] = "Solar Only"
+    charger_sensor._had_runnable_permit = True
+    charger_sensor._short_last_cycle = True
+
+    def profiles():
+        return [
+            c[0][2]["custom_profile"] for c in mock_call.call_args_list
+            if c[0][0] == "ocpp" and c[0][1] == "set_charge_rate"
+        ]
+
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._pause_started_at is not None
+    (first,) = profiles()
+    assert first["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"] == 0
+    if "validTo" in first:  # absolute validity
+        valid_s = (
+            datetime.strptime(first["validTo"], "%Y-%m-%dT%H:%M:%SZ")
+            - datetime.strptime(first["validFrom"], "%Y-%m-%dT%H:%M:%SZ")
+        ).total_seconds()
+    else:  # relative
+        valid_s = first["chargingSchedule"]["duration"]
+    assert 120 + 175 <= valid_s <= 120 + 180, valid_s  # 3-min pause + 120 s
+
+    # The car obeys: the rest of the pause sends nothing.
+    hass.states.async_set("sensor.wallbox_1_current_import", "0.0", {"unit_of_measurement": "A"})
+    for _ in range(3):
+        charger_sensor._last_command_time -= 10_000
+        await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._pause_started_at is not None
+    assert len(profiles()) == 1
+
+    # The charger draws anyway (a reboot lost the profile): the 0 A goes out
+    # again. The draw is put straight into the hub's published figures - the
+    # engine's own readout guard would take a fixture reading for 0 A.
+    hub_data = await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert len(profiles()) == 1
+    hub_data = {**hub_data, "load_draw": {**hub_data.get("load_draw", {}), mock_charger_entry.entry_id: 10.0}}
+    charger_sensor._last_command_time -= 10_000
+    await charger_sensor.async_process(hub_data)
+    assert len(profiles()) == 2
+    assert profiles()[-1]["chargingSchedule"]["chargingSchedulePeriod"][0]["limit"] == 0
+
+
 async def test_a_cold_start_does_not_arm_the_charge_pause(
     hass,
     mock_hub_entry,
