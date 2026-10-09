@@ -155,6 +155,8 @@ def hold_tank_label(
 # A target the device does not keep: the readbacks that may say so.
 KEPT_SETTLE_S = 300.0
 KEPT_READBACKS = 3
+# How many other asks keep their count - away, normal, boost and a kept one.
+KEPT_ASKS = 4
 
 
 def judge_kept_target(rec, asked, readback, stamp, now,
@@ -182,16 +184,22 @@ def judge_kept_target(rec, asked, readback, stamp, now,
       ask once, a ceiling the same value every time.
 
     A readback of ``asked`` itself resets nothing: a cloud device echoes our
-    write until its next poll whatever the unit does with it. The record
-    starts over when the ask changes.
+    write until its next poll whatever the unit does with it. Each ask keeps
+    its own count (``rec["others"]`` holds the asks not in force), so a label
+    flipping boost -> normal -> boost on a passing cloud finds its readbacks
+    where it left them rather than starting the three polls (45 min) over;
+    its settle time does start again - our write is new.
 
     Pure function - unit-testable.
     """
-    # ponytail: one record, so a label flipping back inside three readbacks
-    # (45 min on a 15-min cloud) starts over; per-label records if that bites.
     if rec is None or rec["asked"] != asked:
-        rec = {"asked": asked, "since": now, "kept": None, "seen": 0,
-               "stamp": None, "at": None}
+        others = rec.pop("others", {}) if rec is not None else {}
+        if rec is not None:
+            others[rec["asked"]] = rec
+        rec = others.pop(asked, None) or {"asked": asked, "kept": None, "seen": 0,
+                                           "stamp": None, "at": None}
+        rec["since"] = now
+        rec["others"] = dict(list(others.items())[-KEPT_ASKS:])
     if (
         readback is None
         or readback > asked - 0.05
@@ -289,10 +297,13 @@ async def send_hot_water_tank_command(
     # and 46 -> 40 -> 46 -> 40 through 11:21-12:13; Home's workshop boiler
     # 80 heat -> off -> 80 heat -> off, its normal 42 never shown). Off for
     # the minimum off time since e7a4228 (7 Sep), for the grace too once
-    # 5de0d45 (3 Oct) held the label at boost through it.
-    # ponytail: a denied tank that cools past its thermostat's hysteresis heats
-    # until the next cycle reads it below the floor - a cloud poll late on a
-    # MELCloud; gate on the device's own heating word if that bites.
+    # 5de0d45 (3 Oct) held the label at boost through it. And not while the
+    # device, already set to the floor, says it heats - its own word, power
+    # sensor or hvac_action, as the load builder reads them (tank_hvac_action):
+    # a tank cooled past its thermostat's hysteresis heats at the floor target
+    # while its temperature, a MELCloud poll late, still reads at the floor;
+    # denied, it goes off. Set higher (a boost being withdrawn), its heating
+    # is for that target, and lowering it to the floor ends it.
     target, at_floor = label, False
     if not heating_permitted:
         floor = (
@@ -304,6 +315,11 @@ async def send_hot_water_tank_command(
             at_floor = (
                 float(climate_state.attributes["current_temperature"])
                 >= settings[floor]
+                and not (
+                    load_rt.get("tank_hvac_action") == "heating"
+                    and float(climate_state.attributes["temperature"])
+                    <= settings[floor] + 0.05
+                )
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             pass
