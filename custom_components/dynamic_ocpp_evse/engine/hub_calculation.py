@@ -570,6 +570,28 @@ def _latch_floor(hub_runtime, key, battery_soc, floor, hysteresis):
     return (floor if above else floor + hysteresis), above
 
 
+def _latch_full(hub_runtime, members, hysteresis):
+    """Full's hysteresis band sits ABOVE its setting - the target's sits below
+    it, so the target can reach full without the two bands overlapping (Anze,
+    2026-10-10): a battery counts as full from full + hysteresis (at most 100)
+    until it falls below full. Done per member, on its own SOC, by raising
+    ``soc_full`` while it is not full - which is what every consumer compares
+    against (Excess plugs, the charge capacity, the charge allowance)."""
+    if not hysteresis or hysteresis <= 0:
+        return
+    reached = hub_runtime.setdefault("_soc_full_reached", {})
+    for m in members:
+        if m.soc_full is None or m.battery_soc is None:
+            continue
+        if reached.get(m.entry_id, False):
+            full = m.battery_soc >= m.soc_full
+        else:
+            full = m.battery_soc >= min(m.soc_full + hysteresis, 100.0)
+        reached[m.entry_id] = full
+        if not full:
+            m.soc_full = min(m.soc_full + hysteresis, 100.0)
+
+
 def _apply_phase_remaps(site, auto_detect_state):
     """Re-point loads onto the phases auto-detection worked out earlier.
 
@@ -1342,6 +1364,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     battery_soc_hysteresis = get_entry_value(
         hub_entry, CONF_BATTERY_SOC_HYSTERESIS, DEFAULT_BATTERY_SOC_HYSTERESIS
     )
+    _latch_full(hub_runtime, members, battery_soc_hysteresis)
     # Charge capacity sums only members whose own battery is below its own
     # full-SOC, and sums what each one is PERMITTED to take rather than its
     # nameplate rate: while our own Battery Charge Control holds a member's
