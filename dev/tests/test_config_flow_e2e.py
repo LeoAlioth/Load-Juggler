@@ -1622,7 +1622,6 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
         ENTRY_TYPE_INVERTER,
         DEVICE_TYPE_INVERTER,
         CONF_DEVICE_TYPE,
-        CONF_BATTERY_SOC_FULL,
         CONF_WIRING_TOPOLOGY,
         WIRING_TOPOLOGY_SERIES,
         CONF_CHARGE_LIMIT_ENTITY_ID,
@@ -1695,7 +1694,6 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.deye_battery_power",
             CONF_BATTERY_MAX_CHARGE_POWER: 6000,
             CONF_BATTERY_MAX_DISCHARGE_POWER: 8000,
-            CONF_BATTERY_SOC_FULL: 97,
             CONF_BATTERY_CAPACITY_KWH: 15,
         },
     )

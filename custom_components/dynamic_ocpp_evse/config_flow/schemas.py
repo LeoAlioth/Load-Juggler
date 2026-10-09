@@ -30,8 +30,8 @@ from ..const import (
     CONF_BATTERY_NOMINAL_VOLTAGE,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_BATTERY_SOC_FULL,
     CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -126,8 +126,8 @@ from ..const import (
     DEFAULT_BATTERY_CAPACITY_KWH,
     DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_NOMINAL_VOLTAGE,
-    DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
+    DEFAULT_BATTERY_SOC_FREEZE_FLOOR,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
@@ -364,6 +364,10 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
             CONF_BATTERY_SOC_HYSTERESIS, defaults, DEFAULT_BATTERY_SOC_HYSTERESIS,
             1, 10, 1, "%", mode="slider",
         ),
+        _num(
+            CONF_BATTERY_SOC_FREEZE_FLOOR, defaults, DEFAULT_BATTERY_SOC_FREEZE_FLOOR,
+            0, 50, 1, "%", mode="slider",
+        ),
         _num(CONF_BASE_CONSUMPTION, defaults, DEFAULT_BASE_CONSUMPTION, 0, 10000, 50, "W"),
         _num(
             CONF_FORECAST_SOC_FLOOR, defaults, DEFAULT_FORECAST_SOC_FLOOR,
@@ -486,10 +490,6 @@ def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[t
         _num(
             CONF_BATTERY_MAX_DISCHARGE_POWER, defaults, DEFAULT_BATTERY_MAX_POWER,
             0, 50000, 100, "W",
-        ),
-        _num(
-            CONF_BATTERY_SOC_FULL, defaults, DEFAULT_BATTERY_SOC_FULL,
-            50, 100, 1, "%", mode="slider",
         ),
         _num(
             CONF_BATTERY_CAPACITY_KWH, defaults, DEFAULT_BATTERY_CAPACITY_KWH,
@@ -701,6 +701,7 @@ HUB_EXPORT_KEYS = (
 )
 HUB_POLICY_KEYS = (
     CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BASE_CONSUMPTION,
     CONF_FORECAST_SOC_FLOOR,
 )

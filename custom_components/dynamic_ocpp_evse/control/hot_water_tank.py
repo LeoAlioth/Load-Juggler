@@ -51,11 +51,14 @@ def resolve_tank_setpoint(
 
     Pure function - unit-testable. ``label`` is "away" / "normal" / "boost".
 
+    - Below the battery's minimum SOC every mode holds away: the battery then
+      carries the tanks for that alone, down to the hub's freeze floor
+      (target_calculator._freeze_reserve) - decided before any surplus, as
+      it is about the house's own reserve.
     - Freeze Protection: the away setpoint, raised to boost when the hub reports
       excess - the site can't absorb its own production anywhere else - or the
       battery is over its target SOC (ride free energy whenever it's available).
-    - Solar Priority: away below battery-min SOC, then boost at/above the
-      target SOC **or** on the same excess verdict the other two read, and
+    - Solar Priority: boost at/above the target SOC **or** on the same excess verdict the other two read, and
       normal in between. The battery keeps its priority up to target only
       while there is something to give it - excess means the pack is already
       taking all it is permitted to take.
@@ -79,6 +82,9 @@ def resolve_tank_setpoint(
     # Free energy is available on that verdict, or once the battery has charged
     # past its target SOC. Both Freeze Protection and Normal ride this surplus
     # up to the boost setpoint.
+    if soc is not None and soc_min is not None and soc < soc_min:
+        return away, "away"
+
     over_target = soc is not None and soc_target is not None and soc > soc_target
     surplus_available = over_target or excess_available
 
@@ -86,8 +92,6 @@ def resolve_tank_setpoint(
         return (boost, "boost") if surplus_available else (away, "away")
 
     if mode == TANK_MODE_SOLAR_PRIORITY.key:
-        if soc is not None and soc_min is not None and soc < soc_min:
-            return away, "away"
         # At or over the target SOC, OR the hub says the site cannot place its
         # own production anywhere else.
         #
@@ -101,9 +105,6 @@ def resolve_tank_setpoint(
         # pack pulling 3 332 W against a 3 000 W allowance, so 332 W was
         # placed nowhere the site had chosen to put it.
         #
-        # The away floor above is deliberately NOT yielded to excess: that one
-        # is about the house's own reserve, and dropping to 15 C below the
-        # minimum SOC is a decision about the battery, not about surplus.
         at_or_over_target = (
             soc is not None and soc_target is not None and soc >= soc_target
         )
@@ -278,8 +279,8 @@ async def send_hot_water_tank_command(
             60 * float(get_entry_value(
                 entry, CONF_SOLAR_GRACE_PERIOD, DEFAULT_SOLAR_GRACE_PERIOD
             ) or 0),
-            # Solar Priority's away is the battery's minimum SOC.
-            protective=mode == TANK_MODE_SOLAR_PRIORITY.key and wanted == "away",
+            # Away outside Freeze Protection is the battery's minimum SOC.
+            protective=mode != TANK_MODE_FREEZE_PROTECTION.key and wanted == "away",
         )
     )
     load_rt["_tank_label_mode"] = mode

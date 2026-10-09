@@ -255,6 +255,9 @@ class SiteContext:
     battery_soc_target: float | None = None
     battery_soc_min: float | None = None
     battery_soc_full: float | None = None  # SOC at/above which the battery counts as "full"
+    # Off-grid only (None grid-tied): below the minimum the battery's rating
+    # stays in the pool for the tanks and heaters down to this SOC (latched).
+    battery_soc_freeze_floor: float | None = None
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
     # The most the battery is taken to discharge (W), below its rating: set

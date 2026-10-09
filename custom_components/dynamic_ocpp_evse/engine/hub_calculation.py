@@ -22,6 +22,7 @@ from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_ENABLE_MAX_IMPORT_POWER,
@@ -43,6 +44,7 @@ from ..const import (
     CONF_UPDATE_FREQUENCY,
     DEAD_BAND,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
+    DEFAULT_BATTERY_SOC_FREEZE_FLOOR,
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_BATTERY_SOC_MIN,
@@ -533,20 +535,28 @@ def _apply_soc_hysteresis(
         # as long as production held. Nothing on the target side needs this:
         # there the latch DOES adjust its threshold while above, so the gate
         # cannot chatter against it.
-        was_above_min = hub_runtime.get("_soc_above_min", False)
-        if was_above_min:
-            now_above_min = battery_soc > battery_soc_min
-        else:
-            now_above_min = battery_soc >= battery_soc_min + battery_soc_hysteresis
-        hub_runtime["_soc_above_min"] = now_above_min
-        if not now_above_min:
-            battery_soc_min = battery_soc_min + battery_soc_hysteresis
+        battery_soc_min, now_above_min = _latch_floor(
+            hub_runtime, "_soc_above_min", battery_soc, battery_soc_min,
+            battery_soc_hysteresis,
+        )
     return (
         battery_soc_target,
         battery_soc_min,
         now_above_target,
         now_above_min,
     )
+
+
+def _latch_floor(hub_runtime, key, battery_soc, floor, hysteresis):
+    """``(floor in force, above)`` for a protective SOC floor: stop AT the
+    floor, resume a hysteresis above it - the latch bit kept in
+    ``hub_runtime[key]`` (see _apply_soc_hysteresis for why strictly above)."""
+    if hub_runtime.get(key, False):
+        above = battery_soc > floor
+    else:
+        above = battery_soc >= floor + hysteresis
+    hub_runtime[key] = above
+    return (floor if above else floor + hysteresis), above
 
 
 def _apply_phase_remaps(site, auto_detect_state):
@@ -1395,7 +1405,25 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # Discharge capacity sums only members whose OWN battery is at/above the
     # (hysteresis-adjusted) hub minimum - a battery below the floor cannot be
     # counted dischargeable because a full sibling lifts the fleet SOC.
-    battery_max_discharge_power = fleet.discharge_power_total(members, battery_soc_min)
+    #
+    # Off-grid, below that minimum, the battery still carries the tanks and
+    # heaters down to the freeze floor (its own latch, the same hysteresis):
+    # its members are counted down to it, and target_calculator._source_limit
+    # keeps every other load to the sun's share.
+    battery_soc_freeze_floor = None
+    discharge_floor = battery_soc_min
+    if not has_grid_cts and battery_soc is not None:
+        battery_soc_freeze_floor = get_entry_value(
+            hub_entry, CONF_BATTERY_SOC_FREEZE_FLOOR, DEFAULT_BATTERY_SOC_FREEZE_FLOOR
+        )
+        if battery_soc_hysteresis and battery_soc_hysteresis > 0:
+            battery_soc_freeze_floor, _ = _latch_floor(
+                hub_runtime, "_soc_above_freeze_floor", battery_soc,
+                battery_soc_freeze_floor, battery_soc_hysteresis,
+            )
+        if battery_soc < battery_soc_min:
+            discharge_floor = min(battery_soc_min, battery_soc_freeze_floor)
+    battery_max_discharge_power = fleet.discharge_power_total(members, discharge_floor)
 
     # Apply power buffer to reduce effective max grid import power
     if max_grid_import_power is not None and power_buffer > 0:
@@ -1472,6 +1500,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         battery_soc_min=_f(battery_soc_min),
         battery_soc_target=_f(battery_soc_target),
         battery_soc_full=_f(battery_soc_full),
+        battery_soc_freeze_floor=_f(battery_soc_freeze_floor),
         battery_max_charge_power=_f(battery_max_charge_power),
         battery_max_discharge_power=_f(battery_max_discharge_power),
         max_grid_import_power=_f(max_grid_import_power),

@@ -32,6 +32,7 @@ from ..const import (
     BEHAVIOR_BINARY_ABOVE_TARGET,
     BEHAVIOR_BINARY_EXCESS,
     DEVICE_TYPE_EVSE,
+    DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     EXCESS_URGENCY_TIER,
@@ -833,7 +834,7 @@ def _calculate_inverter_limit(site: SiteContext) -> PhaseConstraints:
 
     dischargeable = bool(
         site.battery_soc is not None
-        and site.battery_soc >= (site.battery_soc_min or 0)
+        and site.battery_soc >= _discharge_floor(site)
         and site.battery_max_discharge_power
     )
     rating = site.battery_max_discharge_power / site.voltage if dischargeable else 0.0
@@ -1627,6 +1628,26 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     return constraints
 
 
+def _discharge_floor(site: SiteContext) -> float:
+    """The SOC the battery's rating is in the physical pool down to: the
+    minimum, or off-grid the lower freeze floor - below the minimum that
+    rating is the tanks' and heaters' alone (_freeze_reserve)."""
+    floor = site.battery_soc_min or 0
+    if site.battery_soc_freeze_floor is not None:
+        floor = min(floor, site.battery_soc_freeze_floor)
+    return floor
+
+
+def _freeze_reserve(site: SiteContext) -> bool:
+    """Between the freeze floor and the minimum: the battery carries the tanks
+    and heaters (at their away setpoint, control/hot_water_tank) and nothing
+    else."""
+    return (
+        site.battery_soc is not None
+        and _discharge_floor(site) <= site.battery_soc < (site.battery_soc_min or 0)
+    )
+
+
 def _below_soc_target(site: SiteContext) -> bool:
     """Check if battery SOC is below target."""
     return (site.battery_soc is not None and site.battery_soc_target is not None
@@ -1791,6 +1812,24 @@ An Excess load is refused on a phase that is BUYING - starting or already
 
 
 def _source_limit(
+    load: LoadContext,
+    site: SiteContext,
+    solar: PhaseConstraints,
+    excess: PhaseConstraints,
+    base: float = 0,
+    excess_ahead: "Optional[float]" = None,
+) -> float:
+    """The mode's source limit (_mode_source_limit); in the freeze reserve
+    every load but a tank is held to the sun's share - the solar pool, which
+    below the target is what the physical pool held before the battery's
+    rating went back in for the tanks (_discharge_floor)."""
+    limit = _mode_source_limit(load, site, solar, excess, base, excess_ahead)
+    if _freeze_reserve(site) and load.device_type != DEVICE_TYPE_HOT_WATER_TANK:
+        return min(limit, base + solar.get_available(load.active_phases_mask))
+    return limit
+
+
+def _mode_source_limit(
     load: LoadContext,
     site: SiteContext,
     solar: PhaseConstraints,

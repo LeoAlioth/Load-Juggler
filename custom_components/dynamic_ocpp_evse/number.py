@@ -27,6 +27,8 @@ from .const import (
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_BATTERY_SOC_TARGET,
+    CONF_BATTERY_SOC_FULL,
+    DEFAULT_BATTERY_SOC_FULL,
     CONF_DEVICE_TYPE,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
@@ -57,7 +59,7 @@ from .const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
 )
-from .helpers import get_entry_value, hub_has_battery
+from .helpers import get_entry_value, get_inverters_for_hub, hub_has_battery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -108,8 +110,21 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         #     solar rate or full speed. Solar: below it do not charge.
         #   SOC Min - below it no load charges in any mode: the absolute floor
         #     that protects the home battery.
+        #   SOC Full - at/above it the battery counts as full (Excess plugs
+        #     run, no charge allowance); starts at the inverter setting it
+        #     replaced.
         if hub_has_battery(hass, config_entry):
+            full = next(
+                (
+                    v for v in (
+                        get_entry_value(e, CONF_BATTERY_SOC_FULL, None)
+                        for e in (config_entry, *get_inverters_for_hub(hass, config_entry.entry_id))
+                    ) if v
+                ),
+                DEFAULT_BATTERY_SOC_FULL,
+            )
             rows += [
+                (HubSlider, "Home Battery SOC Full", "home_battery_soc_full", "battery_soc_full", 50, 100, 1, full, "%", "mdi:battery-high"),
                 (HubSlider, "Home Battery SOC Target", "home_battery_soc_target", "battery_soc_target", 0, 100, 1, DEFAULT_BATTERY_SOC_TARGET, "%", "mdi:battery-charging-80"),
                 (HubSlider, "Home Battery SOC Min", "home_battery_soc_min", "battery_soc_min", 0, 95, 1, DEFAULT_BATTERY_SOC_MIN, "%", "mdi:battery-alert-variant-outline"),
             ]

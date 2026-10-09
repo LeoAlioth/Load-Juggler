@@ -77,6 +77,7 @@
                     "auto_detect_phase_mapping": "Zaznaj napake v faznem preslikavanju",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "battery_soc_hysteresis": "Histereza napolnjenosti baterije",
+                    "battery_soc_freeze_floor": "Spodnja meja zaščite pred zmrzaljo",
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti"
                 },
@@ -93,6 +94,7 @@
                     "auto_detect_phase_mapping": "Spremlja tokove porabnikov za zaznavo nepravilnega faznega ožičenja. Deluje za vse vrste porabnikov na večfaznih lokacijah. Onemogočite ob lažnih opozorilih.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo.",
+                    "battery_soc_freeze_floor": "Samo brez omrežja. Pod najnižjo napolnjenostjo vsak bojler in grelec pade na temperaturo odsotnosti in sme za to še vedno črpati baterijo, do te napolnjenosti; vsa druga bremena pod najnižjo napolnjenostjo ostanejo izklopljena. Pod to mejo tudi bojlerji in grelci dobijo samo, kar da sonce.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
@@ -138,12 +140,10 @@
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Največja moč polnjenja baterije",
                     "battery_max_discharge_power": "Največja moč praznjenja baterije",
-                    "battery_soc_full": "Napolnjenost polne baterije",
                     "battery_capacity_kwh": "Kapaciteta baterije"
                 },
                 "data_description": {
                     "battery_power_entity_id": "Mora kazati POZITIVNO vrednost, ko se baterija prazni (oddaja moč), in negativno med polnjenjem. Če je senzor obrnjen, uporabite predlogo (template sensor), da obrnete predznak.",
-                    "battery_soc_full": "Napolnjenost, pri kateri ali nad katero TA baterija šteje za polno in ne vpija več presežka sonca.",
                     "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti te baterije (uporabna kapaciteta). Uporabljeno za uteženo napolnjenost flote in napoved rezanja PV.",
                     "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno.",
                     "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek - dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
@@ -505,11 +505,13 @@
                 "description": "Delovanje baterij razsmernikov in napovedi proizvodnje za celoten objekt.",
                 "data": {
                     "battery_soc_hysteresis": "Histereza napolnjenosti baterije",
+                    "battery_soc_freeze_floor": "Spodnja meja zaščite pred zmrzaljo",
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo.",
+                    "battery_soc_freeze_floor": "Samo brez omrežja. Pod najnižjo napolnjenostjo vsak bojler in grelec pade na temperaturo odsotnosti in sme za to še vedno črpati baterijo, do te napolnjenosti; vsa druga bremena pod najnižjo napolnjenostjo ostanejo izklopljena. Pod to mejo tudi bojlerji in grelci dobijo samo, kar da sonce.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
                 }
@@ -598,7 +600,6 @@
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Največja moč polnjenja baterije",
                     "battery_max_discharge_power": "Največja moč praznjenja baterije",
-                    "battery_soc_full": "Napolnjenost polne baterije",
                     "battery_capacity_kwh": "Kapaciteta baterije"
                 },
                 "data_description": {
@@ -606,7 +607,6 @@
                     "battery_power_entity_id": "Pozitivno med praznjenjem, negativno med polnjenjem.",
                     "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek - dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
                     "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku.",
-                    "battery_soc_full": "Napolnjenost, pri kateri TA baterija šteje za polno.",
                     "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti te baterije."
                 }
             },
