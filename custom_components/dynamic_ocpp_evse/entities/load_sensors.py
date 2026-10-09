@@ -266,7 +266,7 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
         # A restart, or the give-up, says so until the load draws again or
         # its permit goes away; hands off (Dynamic Control off), it is stale.
         load_rt = self._runtime()
-        note = load_rt.get("plug_restart_status")
+        note = load_rt.get("plug_finish_status") or load_rt.get("plug_restart_status")
         if (
             note
             and self._attr_native_value in ("On", "Off")
