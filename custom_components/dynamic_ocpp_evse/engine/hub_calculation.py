@@ -452,7 +452,7 @@ def _read_site_phases(hass, hub_entry, voltage):
     return raw_phases, has_grid_cts
 
 
-def _read_max_import_power(hass, hub_entry):
+def _read_max_import_power(hass, hub_entry, hub_runtime):
     """The site's max grid import power, or None for unlimited.
 
     Precedence, as the hub form's own help text states it: a configured
@@ -475,12 +475,23 @@ def _read_max_import_power(hass, hub_entry):
     max_import_power_entity = get_entry_value(
         hub_entry, CONF_MAX_IMPORT_POWER_ENTITY_ID, None
     )
+    #
+    # An override sensor that stops reading keeps its last value (held in
+    # hub_runtime): the sensor is a limit, not a measurement, and None would
+    # lift the cap to unlimited for as long as it is down - on Home the
+    # SE17K's 15-minute block limit, a template whose inputs blink with the
+    # SolarEdge Modbus link. The hub status already reports the dropout
+    # (readers, "Max import power sensor"). Unlimited only until the first
+    # reading after a start.
     if max_import_power_entity:
-        return units.read_number(hass, max_import_power_entity, units.DOMAIN_WATTS)
+        value = units.read_number(hass, max_import_power_entity, units.DOMAIN_WATTS)
+        if value is None:
+            return hub_runtime.get("_max_import_power_held")
+        hub_runtime["_max_import_power_held"] = value
+        return value
     if not get_entry_value(hub_entry, CONF_ENABLE_MAX_IMPORT_POWER, True):
         return None
-    hub_rt = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
-    return hub_rt.get("max_import_power", None)
+    return hub_runtime.get("max_import_power", None)
 
 
 def _apply_soc_hysteresis(
@@ -1341,7 +1352,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # hysteresis latch below.
     battery_max_charge_power = fleet.charge_power_total(members)
 
-    max_grid_import_power = _read_max_import_power(hass, hub_entry)
+    max_grid_import_power = _read_max_import_power(hass, hub_entry, hub_runtime)
 
     # --- Inverter configuration (fleet) ---
     # Member outputs are already stale-guarded + smoothed at read time (per-
