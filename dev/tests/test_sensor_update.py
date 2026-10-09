@@ -1269,12 +1269,14 @@ async def test_the_override_sensor_applies_whatever_the_slider_checkbox_says(
     assert unticked["available_grid_power"] == ticked["available_grid_power"]
     assert unticked["load_targets"] == ticked["load_targets"]
 
-    # The sensor's dropouts are the site's business either way: an unreadable
-    # override sensor lifts the cap to unlimited, which is when the owner
-    # needs to hear about it.
+    # The sensor's dropouts are the site's business either way, so the hub
+    # status reports them - and meanwhile the last limit read still binds:
+    # an unreadable override sensor used to lift the cap to unlimited.
     hass.states.async_set("sensor.grid_power_limit", "unavailable")
     dropped = _with(**{CONF_ENABLE_MAX_IMPORT_POWER: False})
     assert "Max import power sensor" in dropped["hub_status"], dropped["hub_status"]
+    assert dropped["available_grid_power"] == ticked["available_grid_power"]
+    assert dropped["load_targets"] == ticked["load_targets"]
 
     # With NO sensor and the box unticked there is no limit and nothing to
     # report - that, not a configured sensor, is what "unused" looks like.
