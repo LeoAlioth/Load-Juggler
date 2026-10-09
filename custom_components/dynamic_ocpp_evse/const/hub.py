@@ -33,6 +33,8 @@ CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
 CONF_BATTERY_SOC_MIN = "battery_soc_min"  # Minimum SOC below which EV should not charge
 CONF_BATTERY_SOC_FULL = "battery_soc_full"  # SOC at/above which the battery counts as "full" (plug Excess mode)
 CONF_BATTERY_SOC_HYSTERESIS = "battery_soc_hysteresis"  # Hysteresis percentage for SOC thresholds
+# Off-grid, below the minimum SOC the battery still carries the tanks and heaters (at their away setpoint) down to this SOC
+CONF_BATTERY_SOC_FREEZE_FLOOR = "battery_soc_freeze_floor"
 CONF_BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power"  # W
 CONF_BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power"  # W
 
@@ -69,6 +71,7 @@ DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
 DEFAULT_BATTERY_SOC_TARGET = 80  # Default SOC target (80%)
 DEFAULT_BATTERY_SOC_FULL = 97  # Default "full" SOC - plug Excess mode trigger (%)
 DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
+DEFAULT_BATTERY_SOC_FREEZE_FLOOR = 5  # %
 
 # PV clipping forecast (hub-level). Sites with more PV than they may export
 # (e.g. 15 kWp behind a 5 kW export limit) should keep battery headroom for

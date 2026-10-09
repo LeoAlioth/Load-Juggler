@@ -20,8 +20,6 @@ from ..const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_BATTERY_SOC_FULL,
-    CONF_BATTERY_SOC_MIN,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
@@ -57,8 +55,6 @@ from ..const import (
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_WIRING_TOPOLOGY,
-    DEFAULT_BATTERY_SOC_FULL,
-    DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_DISTRIBUTION_MODE,
@@ -228,6 +224,11 @@ def _pool_detail_lines(hub_data: dict) -> list[str]:
 def _runtime(hass) -> dict:
     """The integration's runtime bucket (empty dict before setup)."""
     return hass.data.get(DOMAIN) or {}
+
+
+def _hub_slider(hass, hub_entry_id, key):
+    """A hub slider's value (number.py writes it to the hub runtime)."""
+    return ((_runtime(hass).get("hubs") or {}).get(hub_entry_id) or {}).get(key)
 
 
 def _live_hub_data(hass, hub_entry_id: str | None) -> tuple[dict, str]:
@@ -846,8 +847,8 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
         lines.append(f"- SOC: {_fmt(own.get('battery_soc'), '%', 0)}")
         lines.append(f"- Power: {_battery_power_line(own.get('battery_power'))}")
         lines.append(
-            f"- Reserve floor: {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN), '%', 0)}"
-            f" · full at {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL), '%', 0)}"
+            f"- Reserve floor: {_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_min'), '%', 0)}"
+            f" · full at {_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_full'), '%', 0)}"
         )
         lines.append(
             "- Charge/discharge limits: "
@@ -1008,9 +1009,9 @@ def _summary_text(hass, hub_entry_id: str) -> str:
             if get_entry_value(inverter, CONF_BATTERY_SOC_ENTITY_ID, None):
                 bits.append(
                     "battery "
-                    f"{_fmt(get_entry_value(inverter, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN), '%', 0)}"
+                    f"{_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_min'), '%', 0)}"
                     "–"
-                    f"{_fmt(get_entry_value(inverter, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL), '%', 0)}"
+                    f"{_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_full'), '%', 0)}"
                 )
             if get_entry_value(inverter, CONF_SOLAR_FORECAST_DEVICE_IDS, None):
                 bits.append("PV forecast active")

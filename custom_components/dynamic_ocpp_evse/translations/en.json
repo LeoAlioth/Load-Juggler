@@ -77,6 +77,7 @@
                     "auto_detect_phase_mapping": "Detect phase mapping mismatches",
                     "solar_grace_period": "Solar/Excess grace period",
                     "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "battery_soc_freeze_floor": "Freeze protection floor",
                     "base_consumption": "Base house consumption",
                     "forecast_soc_floor": "Forecast SOC floor"
                 },
@@ -93,6 +94,7 @@
                     "auto_detect_phase_mapping": "Monitors load current draws to detect incorrect phase wiring. Works for all load types on multi-phase sites. Disable if false alerts occur.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% - the battery never runs below the floor.",
+                    "battery_soc_freeze_floor": "Off-grid only. Below the minimum SOC every hot water tank and heater falls back to its away temperature and may still draw the battery for that alone, down to this SOC; every other load stays off below the minimum. Below this floor the tanks and heaters get only what the sun gives too.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable - entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
@@ -138,12 +140,10 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_full": "Battery full SOC",
                     "battery_capacity_kwh": "Battery capacity"
                 },
                 "data_description": {
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign.",
-                    "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
                     "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity). Used for the fleet SOC weighting and the PV clipping forecast.",
                     "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
                     "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger - while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
@@ -505,11 +505,13 @@
                 "description": "How the inverters' batteries behave, and the production forecast, for the whole site.",
                 "data": {
                     "battery_soc_hysteresis": "Battery SOC hysteresis",
+                    "battery_soc_freeze_floor": "Freeze protection floor",
                     "base_consumption": "Base house consumption",
                     "forecast_soc_floor": "Forecast SOC floor"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% - the battery never runs below the floor.",
+                    "battery_soc_freeze_floor": "Off-grid only. Below the minimum SOC every hot water tank and heater falls back to its away temperature and may still draw the battery for that alone, down to this SOC; every other load stays off below the minimum. Below this floor the tanks and heaters get only what the sun gives too.",
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable - entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus."
                 }
@@ -598,7 +600,6 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_soc_full": "Battery full SOC",
                     "battery_capacity_kwh": "Battery capacity"
                 },
                 "data_description": {
@@ -606,7 +607,6 @@
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
                     "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger - while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
                     "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load.",
-                    "battery_soc_full": "SOC at or above which THIS battery counts as full and stops absorbing excess solar.",
                     "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity)."
                 }
             },

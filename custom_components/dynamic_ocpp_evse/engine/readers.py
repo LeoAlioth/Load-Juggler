@@ -780,8 +780,10 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
             if has_battery
             else None
         ),
+        # The hub's slider (number.py); the inverter's own setting before it.
         soc_full=(
-            get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL)
+            hub_runtime.get("battery_soc_full")
+            or get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL)
             if has_battery
             else None
         ),
