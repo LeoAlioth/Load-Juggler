@@ -118,6 +118,7 @@ from ..const import (
     CONF_STATION_RESERVE_ENTITY_ID,
     CONF_STATION_STORM_RESERVE,
     CONF_TANK_POWER_ENTITY_ID,
+    CONF_TANK_OFF_OPERATION_MODE,
     CONF_TANK_PRIORITIZE_BELOW_NORMAL,
     CONF_UPDATE_FREQUENCY,
     CONF_WIRING_TOPOLOGY,
@@ -1062,6 +1063,15 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                             }
                         }
                     ),
+                ),
+                (
+                    # A water heater's own word for "off" (Vaillant: stand_by) -
+                    # every integration has its own, so it is typed, not picked.
+                    vol.Optional(
+                        CONF_TANK_OFF_OPERATION_MODE,
+                        description={"suggested_value": defaults.get(CONF_TANK_OFF_OPERATION_MODE, "")},
+                    ),
+                    selector({"text": {}}),
                 ),
                 _num(
                     CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,

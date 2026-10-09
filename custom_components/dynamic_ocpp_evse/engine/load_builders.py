@@ -57,6 +57,7 @@ from ..const import (
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_POWER_ENTITY_ID,
+    CONF_TANK_OFF_OPERATION_MODE,
     CONF_TANK_PRIORITIZE_BELOW_NORMAL,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
@@ -1195,7 +1196,7 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     # until the tank is first seen cooling.
     if climate_entity and climate_entity.startswith("water_heater.") and climate_state:
         own_word = _WATER_HEATER_STATUS.get(str(climate_state.attributes.get("status")))
-        if climate_state.state == "off":
+        if climate_state.state in ("off", get_entry_value(entry, CONF_TANK_OFF_OPERATION_MODE, "") or "off"):
             hvac_action = "off"
         elif power_entity:
             if not power_unreadable:

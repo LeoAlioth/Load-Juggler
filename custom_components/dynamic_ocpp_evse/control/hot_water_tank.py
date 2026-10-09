@@ -25,6 +25,7 @@ from ..const import (
     CONF_TANK_AWAY_TEMPERATURE,
     CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_BOOST_TEMPERATURE,
+    CONF_TANK_OFF_OPERATION_MODE,
     DEFAULT_TANK_AWAY_TEMPERATURE,
     DEFAULT_TANK_NORMAL_TEMPERATURE,
     DEFAULT_TANK_BOOST_TEMPERATURE,
@@ -417,6 +418,8 @@ async def send_hot_water_tank_command(
                 climate_state,
                 heating_permitted or at_floor,
                 setpoint,
+                load_rt,
+                get_entry_value(entry, CONF_TANK_OFF_OPERATION_MODE, "") or "",
             )
         elif heating_permitted or at_floor:
             await sensor.hass.services.async_call(
@@ -512,21 +515,50 @@ async def _adopt_kept_target(sensor, settings, label, asked, kept, device):
     return value
 
 
-async def _command_water_heater(hass, entity_id, state, permitted, setpoint):
-    """A water heater is gated by its target temperature alone: the setpoint
-    while the tank may heat or waits at its floor, its lowest target otherwise.
+async def _command_water_heater(hass, entity_id, state, permitted, setpoint,
+                                load_rt=None, off_mode=""):
+    """A water heater is gated by its target temperature: the setpoint while
+    the tank may heat or waits at its floor, its lowest target otherwise - or,
+    where the tank's settings name the device's own word for off
+    (``off_mode``, CONF_TANK_OFF_OPERATION_MODE), that operation mode, and
+    back to the one it was in once power returns.
 
     Never ``turn_off``: what that switches off is the integration's choice, and
     MELCloud's powers down the whole heat pump, space heating included
-    (a user's site, 2026-09-25). Never an operation mode either - they are the
-    integration's own words (Vaillant: heating / hot_water_only / stand_by;
-    MELCloud: auto / force_hot_water), so none can be picked as "off". And
-    written only when the target differs, where the climate path re-asserts
+    (a user's site, 2026-09-25). No operation mode of its own choosing either -
+    they are the integration's own words (Vaillant: heating / hot_water_only /
+    stand_by; MELCloud: auto / force_hot_water), so only the user can name one
+    as "off"; one the device does not list is warned about once and the tank
+    held at its lowest target. A target is written only when it differs, where the climate path re-asserts
     every cycle: a water heater is often a cloud device (MELCloud) that
     rate-limits writes.
     """
     attrs = state.attributes if state is not None else {}
-    target = setpoint if permitted else attrs.get("min_temp")
+    modes = attrs.get("operation_list") or []
+    if off_mode and off_mode not in modes:
+        if load_rt is not None and load_rt.get("_tank_off_mode_warned") != off_mode:
+            load_rt["_tank_off_mode_warned"] = off_mode
+            _LOGGER.warning("Water heater %s has no operation mode %r (it has %s) - "
+                            "held at its lowest target instead", entity_id, off_mode, modes)
+        off_mode = ""
+    if off_mode and load_rt is not None:
+        current = state.state if state is not None else None
+        if not permitted:
+            if current != off_mode:
+                load_rt["_tank_mode_before_off"] = current
+                await hass.services.async_call(
+                    "water_heater", "set_operation_mode",
+                    {"entity_id": entity_id, "operation_mode": off_mode}, blocking=False)
+            return
+        if current == off_mode:
+            back = load_rt.pop("_tank_mode_before_off", None)
+            if back not in modes or back == off_mode:
+                back = next((m for m in modes if m != off_mode), None)
+            if back is not None:
+                await hass.services.async_call(
+                    "water_heater", "set_operation_mode",
+                    {"entity_id": entity_id, "operation_mode": back}, blocking=False)
+    target = setpoint if permitted or off_mode else attrs.get("min_temp")
     if target is None:
         return
     try:
@@ -534,8 +566,6 @@ async def _command_water_heater(hass, entity_id, state, permitted, setpoint):
             return
     except (TypeError, ValueError):
         pass
-    # ponytail: held at its lowest target rather than off, so a tank colder
-    # than that still heats. A per-tank "off" operation mode if that bites.
     await hass.services.async_call(
         "water_heater",
         "set_temperature",

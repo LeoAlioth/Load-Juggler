@@ -315,3 +315,33 @@ def test_a_thermostat_idle_or_heating_is_read_off_its_hvac_action():
     assert load.connector_status == "Available" and load.l1_current == 0
     load, _ = _tank("climate.tank", "heat", hvac_action="heating", current_temperature=53)
     assert abs(load.l1_current - 1000 / 230.0) < 0.01
+
+
+def test_a_water_heater_with_an_off_mode_is_switched_to_it_and_back():
+    """Vaillant-like: denied, stand_by - the mode it was in remembered; power
+    back, that mode again and its target. Read as off by the builder."""
+    import asyncio
+    from custom_components.dynamic_ocpp_evse.control.hot_water_tank import _command_water_heater
+    state = FakeState("hot_water_only", current_temperature=50, temperature=55,
+                      min_temp=35, operation_list=["heating", "hot_water_only", "stand_by"])
+    hass = FakeHass({WH: state})
+    rt = {}
+    asyncio.run(_command_water_heater(hass, WH, state, False, 55.0, rt, "stand_by"))
+    assert hass.services.calls == [("water_heater", "set_operation_mode",
+                                    {"entity_id": WH, "operation_mode": "stand_by"})]
+    state.state = "stand_by"
+    entry = FakeEntry({CONF_CLIMATE_ENTITY_ID: WH, CONF_CONNECTED_TO_PHASE: "A",
+                       CONF_HEATING_ELEMENT_POWER: 1000, "tank_off_operation_mode": "stand_by"})
+    _build_hot_water_tank_load(hass, entry, 230.0, "tank_1", 1)
+    assert hass.data[DOMAIN]["loads"]["tank"]["tank_hvac_action"] == "off"
+    hass.services.calls.clear()
+    asyncio.run(_command_water_heater(hass, WH, state, True, 60.0, rt, "stand_by"))
+    assert hass.services.calls == [
+        ("water_heater", "set_operation_mode", {"entity_id": WH, "operation_mode": "hot_water_only"}),
+        ("water_heater", "set_temperature", {"entity_id": WH, "temperature": 60.0}),
+    ]
+    # A mode the device does not list: held at its lowest target, as without one.
+    hass.services.calls.clear()
+    asyncio.run(_command_water_heater(hass, WH, state, False, 55.0, {}, "off_please"))
+    assert hass.services.calls == [("water_heater", "set_temperature", {"entity_id": WH, "temperature": 35})]
+
