@@ -52,6 +52,7 @@ from ..registry import get_hub_for_load
 from ..control.smoothing import apply_smoothing
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
+from ..control import stamp_command
 from ..control.ocpp import send_ocpp_command
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
@@ -179,6 +180,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # the tz-aware values written later is a comparison landmine.
         self._last_update = None
         self._pause_started_at = None
+        # The pause whose 0 A profile reached the charger (its _pause_started_at),
+        # so the rest of that pause sends nothing - see the EVSE command below.
+        self._pause_sent_for = None
         # Has this load ever held a RUNNABLE permit in this process? The charge
         # pause may only arm once it has - see the pause branch for why.
         self._had_runnable_permit = False
@@ -841,7 +845,26 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 )
         else:
             await check_profile_compliance(self, limit, dynamic_control_on)
-            await send_ocpp_command(
+            # A pause's 0 A goes out once, valid for the rest of the pause on
+            # top of the usual validity, and is not sent again while the pause
+            # lasts: re-sending a 0 A profile every command interval restarted
+            # a go-eCharger's charging cycle every 30 s (Andrej's Nova). Sent
+            # again only if the charger draws anyway - a reboot that lost it.
+            hold_s = None
+            if limit == 0 and self._pause_started_at is not None:
+                if (
+                    self._pause_sent_for == self._pause_started_at
+                    and (hub_data.get("load_draw", {}).get(self.config_entry.entry_id) or 0) < 1.0
+                ):
+                    stamp_command(self, now_mono)
+                    return
+                pause_s = 60 * get_entry_value(
+                    self.config_entry,
+                    CONF_CHARGE_PAUSE_DURATION,
+                    DEFAULT_CHARGE_PAUSE_DURATION,
+                )
+                hold_s = max(0.0, pause_s - (time.monotonic() - self._pause_started_at))
+            sent = await send_ocpp_command(
                 self,
                 limit,
                 hub_entry,
@@ -852,4 +875,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 effective_status=hub_data.get("load_connector_status", {}).get(
                     self.config_entry.entry_id
                 ),
+                hold_s=hold_s,
             )
+            if hold_s is not None and sent:
+                self._pause_sent_for = self._pause_started_at
