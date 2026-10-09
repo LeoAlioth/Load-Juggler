@@ -14,6 +14,7 @@ from .common import (
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate or water_heater entity (read + control)
 CONF_HEATING_ELEMENT_POWER = "heating_element_power"      # Element rating in watts
 CONF_TANK_POWER_ENTITY_ID = "tank_power_entity_id"        # Optional live power sensor
+CONF_TANK_OFF_OPERATION_MODE = "tank_off_operation_mode"  # Optional: a water heater's own operation mode for "off"
 CONF_TANK_AWAY_TEMPERATURE = "tank_away_temperature"      # Frost-protection / minimal setpoint
 CONF_TANK_NORMAL_TEMPERATURE = "tank_normal_temperature"  # Baseline setpoint
 CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"    # High setpoint (surplus available)

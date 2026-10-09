@@ -128,7 +128,7 @@ def set_load_phase_currents(load, commanded_limit):
             setattr(load, attr, commanded_limit)
 
 
-def place_asymmetric_output(demand, total, cap):
+def place_asymmetric_output(demand, total, cap, rating=float("inf")):
     """Per-phase output of an ASYMMETRIC inverter putting out ``total`` A net.
 
     Anže, 2026-09-24: his asymmetric inverter "puts/pulls power on the phases in
@@ -139,11 +139,23 @@ def place_asymmetric_output(demand, total, cap):
     short of that level keeps what is left. The outputs sum to ``total``, so the
     site's net grid flow is the even spread's; only the split moves. A total
     no placement within the caps can carry falls back to the even spread.
+
+    And everything it puts out, together, within ``rating`` (A, the inverter's
+    whole rating): a pull on one phase lets it push more on the others for the
+    same net, and per-phase caps alone let the pushes add up past the rating.
+    Over it, the pushes come down to the rating and the pulls with them, so
+    the net stays ``total`` (held to the rating already by the battery model).
     """
-    # ponytail: the net total is held to the inverter's rating (the battery
-    # model caps discharge at it); what a pull lets it push on top is bounded
-    # only per phase. No scenario pulls today - sum the pushes against
-    # inverter_max_power if one ever does.
+    out = _place_within_caps(demand, total, cap)
+    pushed = sum(o for o in out if o > 0)
+    if pushed <= rating:
+        return out
+    pulled = pushed - total
+    return [o * rating / pushed if o > 0 else o * (rating - total) / pulled for o in out]
+
+
+def _place_within_caps(demand, total, cap):
+    """place_asymmetric_output's level placement, each phase within +-``cap``."""
     n = len(demand)
     if abs(total) > n * cap:
         return [total / n] * n
@@ -250,6 +262,7 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             [d for d in demand if d is not None],
             solar_total - battery_per_phase * num_phases,
             cap_w / site.voltage if cap_w else float("inf"),
+            site.inverter_max_power / site.voltage if site.inverter_max_power else float("inf"),
         ))
         nets = [None if d is None else d - next(outputs) for d in demand]
 
