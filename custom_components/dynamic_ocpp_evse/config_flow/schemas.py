@@ -77,6 +77,8 @@ from ..const import (
     CONF_PLUG_POWER_RATING,
     CONF_PLUG_RESTART_AFTER,
     CONF_PLUG_RESTART_ON_NO_DRAW,
+    CONF_PLUG_FINISH_BELOW_W,
+    CONF_PLUG_FINISH_FOR,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
     # The Filters page: its keys, and the constants that are its defaults.
@@ -149,6 +151,8 @@ from ..const import (
     DEFAULT_PLUG_MAX_CURRENT,
     DEFAULT_PLUG_POWER_RATING,
     DEFAULT_PLUG_RESTART_AFTER,
+    DEFAULT_PLUG_FINISH_BELOW_W,
+    DEFAULT_PLUG_FINISH_FOR,
     DEFAULT_PLUG_RESTART_ON_NO_DRAW,
     DEFAULT_PROFILE_VALIDITY_MODE,
     DEFAULT_SITE_UPDATE_FREQUENCY,
@@ -992,6 +996,14 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                 ),
                 _num(
                     CONF_PLUG_RESTART_AFTER, defaults, DEFAULT_PLUG_RESTART_AFTER,
+                    1, 120, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_PLUG_FINISH_BELOW_W, defaults, DEFAULT_PLUG_FINISH_BELOW_W,
+                    0, 5000, 1, "W", required=True,
+                ),
+                _num(
+                    CONF_PLUG_FINISH_FOR, defaults, DEFAULT_PLUG_FINISH_FOR,
                     1, 120, 1, "min", required=True,
                 ),
                 _num(

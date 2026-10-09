@@ -1,10 +1,14 @@
 import logging
 from .. import units
 from ..const import (
+    CONF_PLUG_FINISH_BELOW_W,
+    CONF_PLUG_FINISH_FOR,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
     CONF_PLUG_RESTART_AFTER,
     CONF_PLUG_RESTART_ON_NO_DRAW,
     CONF_PLUG_SWITCH_ENTITY_ID,
+    DEFAULT_PLUG_FINISH_BELOW_W,
+    DEFAULT_PLUG_FINISH_FOR,
     DEFAULT_PLUG_RESTART_AFTER,
     DEFAULT_PLUG_RESTART_ON_NO_DRAW,
     PLUG_NO_DRAW_W,
@@ -123,6 +127,35 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
     return _RESTART
 
 
+def _cycle_running(sensor, switch_entity, now) -> bool:
+    """Whether the load behind a switched-on plug is still in its cycle: its
+    monitor has not yet read under the "finish below" power for the "finish
+    for" time (a washing machine's soak or drain pauses are shorter). Tracked
+    on every command, so a cycle that ended long ago lets the plug off at
+    once. None when not set up (0 W, or no monitor); False with the switch
+    off. An unreadable monitor reads as still running - a missing reading
+    must not cut a wash.
+    """
+    entry = sensor.config_entry
+    below = float(get_entry_value(entry, CONF_PLUG_FINISH_BELOW_W, DEFAULT_PLUG_FINISH_BELOW_W) or 0)
+    monitor = get_entry_value(entry, CONF_PLUG_POWER_MONITOR_ENTITY_ID, None)
+    if below <= 0 or not monitor:
+        return None
+    rt = sensor._runtime()
+    state = sensor.hass.states.get(switch_entity)
+    if state is None or state.state != "on":
+        rt["_plug_quiet_since"] = None
+        return False
+    power = units.read_number(sensor.hass, monitor, units.DOMAIN_WATTS)
+    if power is None or power >= below:
+        rt["_plug_quiet_since"] = None
+        return True
+    if rt.get("_plug_quiet_since") is None:
+        rt["_plug_quiet_since"] = now
+    finish_s = 60 * float(get_entry_value(entry, CONF_PLUG_FINISH_FOR, DEFAULT_PLUG_FINISH_FOR) or 0)
+    return now - rt["_plug_quiet_since"] < finish_s
+
+
 async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
     """Send on/off command to a smart load device."""
     # The settings page saves a changed switch to options, so read it there first.
@@ -138,6 +171,15 @@ async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
         return
 
     on = limit > 0 and restart != _RESTART
+    # A load Load Juggler would switch off finishes its cycle first.
+    running = _cycle_running(sensor, plug_switch_entity, now_mono)
+    if running is not None:
+        finishing = not on and restart != _RESTART and running
+        sensor._runtime()["plug_finish_status"] = "Finishing its cycle" if finishing else None
+        if finishing:
+            _LOGGER.debug("Smart load %s: finishing its cycle before switching off", sensor._attr_name)
+            stamp_command(sensor, now_mono)
+            return
     try:
         _LOGGER.debug(
             f"Smart load {sensor._attr_name}: turning {'ON' if on else 'OFF'} (limit={limit}A)"

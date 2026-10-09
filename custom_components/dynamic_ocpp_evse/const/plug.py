@@ -26,6 +26,13 @@ CONF_PLUG_RESTART_ON_NO_DRAW = "plug_restart_on_no_draw"
 CONF_PLUG_RESTART_AFTER = "plug_restart_after"  # minutes of no draw
 DEFAULT_PLUG_RESTART_ON_NO_DRAW = False
 DEFAULT_PLUG_RESTART_AFTER = 10
+# Finish a cycle before switching off: a load Load Juggler would switch off
+# stays on until its monitor has read under this many W for this long (a
+# washing machine mid-cycle). 0 W = off.
+CONF_PLUG_FINISH_BELOW_W = "plug_finish_below_w"
+CONF_PLUG_FINISH_FOR = "plug_finish_for"  # minutes
+DEFAULT_PLUG_FINISH_BELOW_W = 0
+DEFAULT_PLUG_FINISH_FOR = 5
 PLUG_NO_DRAW_W = 10  # under this the load counts as not drawing
 PLUG_RESTART_OFF_S = 30  # how long a restart holds the switch off
 PLUG_RESTART_MIN_GAP_S = 30 * 60  # at most one restart per this span
