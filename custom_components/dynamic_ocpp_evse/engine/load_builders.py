@@ -1187,9 +1187,12 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     # heating - at its configured rating, as a heating climate is below -
     # while it is colder than its own target: a boost on the rating's surplus
     # must not read the tank's own draw as the house eating that surplus (a
-    # heat pump with no meter, 2026-09-25).
-    # ponytail: the target alone, so the heater's own restart hysteresis reads
-    # as heating; that errs toward booking power that is not drawn.
+    # heat pump with no meter, 2026-09-25) - unless the tank is cooling: below
+    # its target but inside the heater's own restart hysteresis it draws
+    # nothing, and its temperature falls; heating, it climbs. So a reading
+    # lower than the one before reads idle, a higher one heating, and an
+    # unchanged one (or the first) keeps what the last change said - heating
+    # until the tank is first seen cooling.
     if climate_entity and climate_entity.startswith("water_heater.") and climate_state:
         own_word = _WATER_HEATER_STATUS.get(str(climate_state.attributes.get("status")))
         if climate_state.state == "off":
@@ -1201,12 +1204,16 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
             hvac_action = own_word
         else:
             try:
-                below = float(climate_state.attributes["current_temperature"]) < float(
-                    climate_state.attributes["temperature"]
-                )
-                hvac_action = "heating" if below else "idle"
+                temp = float(climate_state.attributes["current_temperature"])
+                below = temp < float(climate_state.attributes["temperature"])
             except (KeyError, TypeError, ValueError):
-                pass
+                below = None
+            if below is not None:
+                last, rising = load_rt.get("_tank_trend") or (None, True)
+                if last is not None and temp != last:
+                    rising = temp > last
+                load_rt["_tank_trend"] = (temp, rising)
+                hvac_action = "heating" if below and rising else "idle"
     load_rt["tank_hvac_action"] = hvac_action
     connector_status = "Available" if hvac_action == "idle" else "Charging"
     if live and live > 10 and hvac_action == "heating":

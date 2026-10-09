@@ -100,6 +100,21 @@ def test_a_new_ask_starts_the_count_over():
     assert kept is None and rec["seen"] == 0
 
 
+def test_an_ask_that_comes_back_keeps_its_count():
+    """Boost -> normal -> boost on a passing cloud: boost's two readbacks are
+    still there, and its third - once our write has settled - judges it."""
+    rec, t = None, 0.0
+    for asked, polls in ((60.0, 2), (50.0, 1), (60.0, 1)):
+        rec, _ = judge_kept_target(rec, asked, None, None, t)
+        for _ in range(polls):
+            t += POLL_S
+            rec, kept = judge_kept_target(rec, asked, asked - 5.0, t, t)
+    assert kept == 55.0 and rec["seen"] == 3
+    # ...and an ask back inside its settle time counts nothing yet.
+    rec, kept = judge_kept_target(rec, 50.0, 45.0, "echo", t + 10.0)
+    assert kept is None and rec["seen"] == 1
+
+
 # --- driven: the tank against a device that keeps its own target ---
 
 
@@ -264,6 +279,20 @@ def test_a_heat_pump_heating_water_draws_the_element_power():
     )
     assert action == "heating"
     assert abs(load.l1_current - 1000 / 230.0) < 0.01
+
+
+def test_a_water_heater_with_no_word_and_no_meter_heats_while_it_warms():
+    """Below its target it heats until first seen cooling; cooling it is idle
+    (inside its own restart hysteresis), warming again it heats."""
+    hass = FakeHass({WH: FakeState("eco", current_temperature=53, temperature=60)})
+    entry = FakeEntry({CONF_CLIMATE_ENTITY_ID: WH, CONF_CONNECTED_TO_PHASE: "A",
+                       CONF_HEATING_ELEMENT_POWER: 1000})
+    seen = []
+    for temp in (53, 52.5, 52.5, 52.0, 52.5, 52.5, 60):
+        hass.states.get(WH).attributes["current_temperature"] = temp
+        _build_hot_water_tank_load(hass, entry, 230.0, "tank_1", 1)
+        seen.append(hass.data[DOMAIN]["loads"]["tank"]["tank_hvac_action"])
+    assert seen == ["heating", "idle", "idle", "idle", "heating", "heating", "idle"]
 
 
 def test_a_heat_pump_heating_the_house_holds_no_tank_power():

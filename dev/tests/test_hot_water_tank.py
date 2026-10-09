@@ -520,10 +520,11 @@ def test_the_minimum_soc_floor_is_never_held():
 TICK_S = 15.0
 
 
-def _tank(entity_id, mode, temp, away, normal, boost, min_temp):
+def _tank(entity_id, mode, temp, away, normal, boost, min_temp, **attrs):
     device = FakeState(
         "off" if entity_id.startswith("climate.") else "auto",
         current_temperature=temp, temperature=normal, min_temp=min_temp, max_temp=80,
+        **attrs,
     )
     hass = FakeHass({entity_id: device})
     hass.data[DOMAIN]["loads"]["tank"]["operating_mode"] = mode
@@ -539,13 +540,13 @@ def _tank(entity_id, mode, temp, away, normal, boost, min_temp):
 
 
 def _replay(entity_id, surplus, mode=TANK_MODE_NORMAL.key, temp=44.0,
-            away=40.0, normal=42.0, boost=46.0, min_temp=40):
+            away=40.0, normal=42.0, boost=46.0, min_temp=40, **attrs):
     """One 15 s cycle per ``surplus`` verdict: the builder sizes the tank from
     the label last written, the allocator grants a must-run tank its rating and
     an opportunistic one its rating only on the surplus, the minimum off time
     holds a shed permit, and the command path writes. Returns what the device
     was set to, change by change - a temperature, or "off" - and the labels."""
-    hass, device, sensor = _tank(entity_id, mode, temp, away, normal, boost, min_temp)
+    hass, device, sensor = _tank(entity_id, mode, temp, away, normal, boost, min_temp, **attrs)
     off_since, shown, labels = None, [], []
     for i, excess in enumerate(surplus):
         t = i * TICK_S
@@ -595,6 +596,20 @@ def test_a_dip_inside_the_grace_comes_back_to_boost_without_passing_away():
                             _minutes((10, True), (2, False), (10, True)))
     assert shown == [46.0, 42.0, 46.0]
     assert set(labels) == {"boost"}
+
+
+def test_a_denied_tank_the_device_says_heats_is_not_held_at_its_floor():
+    """Above its normal floor on the last poll, but the heat pump says it heats
+    (cooled past its own hysteresis since): denied, it goes to its lowest
+    target, not to a floor target it would heat to."""
+    def denied(status):
+        hass, device, sensor = _tank("water_heater.tc", TANK_MODE_NORMAL.key, 44.0,
+                                     40.0, 42.0, 46.0, 40, status=status)
+        _build_hot_water_tank_load(hass, sensor.config_entry, 230.0, "tank_1", 1)
+        asyncio.run(send_hot_water_tank_command(sensor, 0.0, {"excess_available": False}, 0.0))
+        return [d["temperature"] for _, s, d in hass.services.calls if s == "set_temperature"]
+    assert denied("idle") == []            # at its floor, already set to it
+    assert denied("heat_water") == [40]    # heating at the floor target: its lowest
 
 
 def test_freeze_protection_leaves_boost_for_its_own_floor_away():
