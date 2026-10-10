@@ -58,9 +58,10 @@ def _hub(soc=None, soc_min=20, soc_target=80, export=0, excess=False):
     }
 
 
-# --- Freeze Protection: away, raised to boost on surplus ---
-#   Surplus means the hub reported excess (its absorption capacity is used up),
-#   or the battery is over its target SOC. The element's own draw is NOT a test.
+# --- Freeze Protection: away, raised to boost on the hub's excess verdict ---
+#   Excess means the site's absorption capacity is used up (a full battery, or
+#   one taking all it may). Over the target SOC alone is not excess, and the
+#   element's own draw is NOT a test.
 
 def test_freeze_protection_no_surplus_is_away():
     for hub in (_hub(), _hub(soc=10), _hub(soc=50, export=0)):
@@ -70,12 +71,22 @@ def test_freeze_protection_no_surplus_is_away():
         assert result == (AWAY, "away")
 
 
-def test_freeze_protection_over_target_soc_is_boost():
-    result = resolve_tank_setpoint(
-        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=85, soc_target=80, export=0),
-    )
-    assert result == (BOOST, "boost")
+def test_over_target_soc_alone_does_not_boost_freeze_protection_or_normal():
+    """Their boost is powered from the Excess pool only, so a boost label on
+    the SOC being over target alone flicked the setpoint up for a cycle and
+    then sat 'Waiting for Power' (kozolec, 2026-10-10: the bee room heater at
+    24 C for a minute with the battery at 54 % over a 42 % target)."""
+    over = _hub(soc=85, soc_target=80, export=0)
+    assert resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, over
+    ) == (AWAY, "away")
+    assert resolve_tank_setpoint(
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, over
+    ) == (NORMAL, "normal")
+    over_with_excess = _hub(soc=85, soc_target=80, export=0, excess=True)
+    assert resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, over_with_excess
+    ) == (BOOST, "boost")
 
 
 def test_freeze_protection_hub_excess_is_boost():
@@ -215,14 +226,6 @@ def test_normal_export_without_excess_is_normal():
         assert result == (NORMAL, "normal")
 
 
-def test_normal_soc_over_target_is_boost():
-    result = resolve_tank_setpoint(
-        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=85, soc_target=80, export=0),
-    )
-    assert result == (BOOST, "boost")
-
-
 def test_normal_no_battery_low_export_is_normal():
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
@@ -240,10 +243,11 @@ def test_normal_no_battery_excess_is_boost():
 
 
 def test_normal_offgrid_full_battery_boosts_without_export():
-    """Off-grid: export is always ~0; the SOC > target clause carries boost."""
+    """Off-grid: export is always ~0; the hub's excess verdict (the battery at
+    its full SOC) carries boost."""
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=90, soc_target=80, export=0),
+        _hub(soc=90, soc_target=80, export=0, excess=True),
     )
     assert result == (BOOST, "boost")
 

@@ -67,8 +67,8 @@ Each load has its own operating mode, set independently. This allows mixing mode
 
 A hot water tank is driven through a `climate` entity (e.g. a Generic Thermostat) or a `water_heater` entity - that entity handles temperature regulation, while Load Juggler picks one of three setpoints (**Away**, **Normal**, **Boost**) based on the mode and conditions. The setpoints are set on the tank's sliders, which are bounded by the thermostat's own temperature range.
 
-- **Freeze Protection**: Targets the Away setpoint (minimal / frost protection), raised to Boost when there is surplus energy - the hub reports Excess (see Excess mode above), or the home battery is above its target SOC.
-- **Normal**: Targets the Normal setpoint, raised to Boost on the same surplus test.
+- **Freeze Protection**: Targets the Away setpoint (minimal / frost protection), raised to Boost when the hub reports Excess (see Excess mode above) - a full battery, or one taking all it may. Being above the target SOC alone does not boost it.
+- **Normal**: Targets the Normal setpoint, raised to Boost on the same Excess verdict.
 - **Solar Priority**: Targets Away below the battery minimum SOC, Normal up to the battery target SOC, and Boost at/above the target - heats from solar surplus only. Without a battery there is no SOC band to follow, so it stays at Normal.
 
 While a tank is aiming at its **Boost** setpoint it is heating past what its mode asks for, on energy the site would otherwise dump - so it competes at the Excess urgency tier instead of its own, and yields power to every must-run load. A Solar Priority tank that has dropped below its Normal temperature keeps its promoted tier: needing heat outranks having free energy.
