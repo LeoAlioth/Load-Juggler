@@ -56,13 +56,16 @@ def resolve_tank_setpoint(
       (target_calculator._freeze_reserve) - decided before any surplus, as
       it is about the house's own reserve.
     - Freeze Protection: the away setpoint, raised to boost when the hub reports
-      excess - the site can't absorb its own production anywhere else - or the
-      battery is over its target SOC (ride free energy whenever it's available).
+      excess - the site can't absorb its own production anywhere else (a full
+      battery, or one taking all it may). Not on the battery being over its
+      target: their boost is powered from the Excess pool alone
+      (tank_boost_is_opportunistic), so labelling it boost there only flicked
+      the setpoint up for one cycle and left the tank 'Waiting for Power'.
     - Solar Priority: boost at/above the target SOC **or** on the same excess verdict the other two read, and
       normal in between. The battery keeps its priority up to target only
       while there is something to give it - excess means the pack is already
       taking all it is permitted to take.
-    - Normal: normal setpoint, raised to boost on the same surplus test as
+    - Normal: normal setpoint, raised to boost on the same excess verdict as
       Freeze Protection.
     """
     soc = hub_data.get("battery_soc")
@@ -79,17 +82,11 @@ def resolve_tank_setpoint(
     if excess_available is None:
         excess_available = export > element_power
 
-    # Free energy is available on that verdict, or once the battery has charged
-    # past its target SOC. Both Freeze Protection and Normal ride this surplus
-    # up to the boost setpoint.
     if soc is not None and soc_min is not None and soc < soc_min:
         return away, "away"
 
-    over_target = soc is not None and soc_target is not None and soc > soc_target
-    surplus_available = over_target or excess_available
-
     if mode == TANK_MODE_FREEZE_PROTECTION.key:
-        return (boost, "boost") if surplus_available else (away, "away")
+        return (boost, "boost") if excess_available else (away, "away")
 
     if mode == TANK_MODE_SOLAR_PRIORITY.key:
         # At or over the target SOC, OR the hub says the site cannot place its
@@ -113,7 +110,7 @@ def resolve_tank_setpoint(
         return normal, "normal"
 
     # Normal mode (and any unrecognized mode).
-    return (boost, "boost") if surplus_available else (normal, "normal")
+    return (boost, "boost") if excess_available else (normal, "normal")
 
 
 def hold_tank_label(
