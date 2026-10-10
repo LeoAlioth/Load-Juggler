@@ -24,6 +24,7 @@ from ..const import (
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
     CONF_BATTERY_SOC_FULL,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_ID,
@@ -758,7 +759,11 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             user_input = _normalize_optional_inputs(
                 user_input,
-                [CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+                [
+                    CONF_BATTERY_SOC_ENTITY_ID,
+                    CONF_BATTERY_POWER_ENTITY_ID,
+                    CONF_BATTERY_CAPACITY_ENTITY_ID,
+                ],
             )
             _validate_entity_units(self.hass, user_input, _BATTERY_UNIT_MAP, errors)
             if not errors:

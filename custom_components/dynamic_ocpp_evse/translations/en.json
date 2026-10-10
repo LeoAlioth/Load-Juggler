@@ -140,11 +140,13 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_capacity_kwh": "Battery capacity"
+                    "battery_capacity_kwh": "Battery capacity",
+                    "battery_capacity_entity_id": "Battery capacity sensor"
                 },
                 "data_description": {
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging (supplying power) and negative while charging. If your sensor is inverted, wrap it in a template sensor to flip the sign.",
                     "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity). Used for the fleet SOC weighting and the PV clipping forecast.",
+                    "battery_capacity_entity_id": "Optional. A sensor (Wh or kWh) reporting the usable capacity - for example installed Ah x state of health x nominal voltage from the BMS, so the size follows the pack's ageing. While it reads, it replaces Battery capacity; when it is unavailable, its last reading is kept.",
                     "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
                     "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger - while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
                     "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load."
@@ -604,14 +606,16 @@
                     "battery_power_entity_id": "Battery power sensor",
                     "battery_max_charge_power": "Maximum battery charge power",
                     "battery_max_discharge_power": "Maximum battery discharge power",
-                    "battery_capacity_kwh": "Battery capacity"
+                    "battery_capacity_kwh": "Battery capacity",
+                    "battery_capacity_entity_id": "Battery capacity sensor"
                 },
                 "data_description": {
                     "battery_soc_entity_id": "The battery's state-of-charge percentage. This is what the SOC-gated operating modes decide on: how far each mode may drain the stored solar buffer, and when a battery counts as full.",
                     "battery_power_entity_id": "Must read a POSITIVE number while the battery is discharging and negative while charging.",
                     "battery_max_charge_power": "The fastest this battery may be charged. Used as the charge sink in the Excess trigger - while the battery can still absorb this much, the site has somewhere to put its production and Excess loads stay off.",
                     "battery_max_discharge_power": "The fastest this battery may be discharged. Caps how much stored energy the engine counts on when deciding what the inverter can deliver to a load.",
-                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity)."
+                    "battery_capacity_kwh": "The kWh this battery's SOC percentage spans (usable capacity).",
+                    "battery_capacity_entity_id": "Optional. A sensor (Wh or kWh) reporting the usable capacity - for example installed Ah x state of health x nominal voltage from the BMS, so the size follows the pack's ageing. While it reads, it replaces Battery capacity; when it is unavailable, its last reading is kept."
                 }
             },
             "inverter_control": {

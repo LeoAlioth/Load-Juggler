@@ -20,6 +20,7 @@ from ..calculations import PhaseValues
 from ..const import (
     CHARGE_RATE_UNIT_WATTS,
     CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
@@ -788,12 +789,24 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
             else None
         ),
         soc_target=soc_target if has_battery else None,
-        capacity_kwh=(
-            get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH)
-            if has_battery
-            else None
-        ),
+        capacity_kwh=_read_capacity(hass, entry, hub_runtime) if has_battery else None,
     )
+
+
+def _read_capacity(hass, entry, hub_runtime):
+    """kWh the SOC percentage spans: the capacity sensor's reading (Wh or kWh -
+    an installed-Ah x state-of-health helper follows the pack's ageing), held
+    at its last good value while it is unreadable, and the entry's kWh figure
+    until it has read once."""
+    entity = get_entry_value(entry, CONF_BATTERY_CAPACITY_ENTITY_ID, None)
+    fixed = get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH)
+    if not entity:
+        return fixed
+    held = hub_runtime.setdefault("_capacity_hold", {})
+    kwh = units.read_number(hass, entity, units.DOMAIN_KWH)
+    if kwh is not None and kwh > 0:
+        held[entry.entry_id] = kwh
+    return held.get(entry.entry_id, fixed)
 
 
 def _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage):

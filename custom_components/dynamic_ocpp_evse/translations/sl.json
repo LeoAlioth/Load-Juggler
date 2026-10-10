@@ -140,11 +140,13 @@
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Največja moč polnjenja baterije",
                     "battery_max_discharge_power": "Največja moč praznjenja baterije",
-                    "battery_capacity_kwh": "Kapaciteta baterije"
+                    "battery_capacity_kwh": "Kapaciteta baterije",
+                    "battery_capacity_entity_id": "Senzor kapacitete baterije"
                 },
                 "data_description": {
                     "battery_power_entity_id": "Mora kazati POZITIVNO vrednost, ko se baterija prazni (oddaja moč), in negativno med polnjenjem. Če je senzor obrnjen, uporabite predlogo (template sensor), da obrnete predznak.",
                     "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti te baterije (uporabna kapaciteta). Uporabljeno za uteženo napolnjenost flote in napoved rezanja PV.",
+                    "battery_capacity_entity_id": "Neobvezno. Senzor (Wh ali kWh) z uporabno kapaciteto - na primer vgrajeni Ah x zdravje baterije x nazivna napetost iz BMS, da velikost sledi staranju baterije. Dokler daje vrednost, nadomesti Kapaciteto baterije; ko ni na voljo, velja njegova zadnja vrednost.",
                     "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno.",
                     "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek - dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
                     "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku."
@@ -604,14 +606,16 @@
                     "battery_power_entity_id": "Senzor moči baterije",
                     "battery_max_charge_power": "Največja moč polnjenja baterije",
                     "battery_max_discharge_power": "Največja moč praznjenja baterije",
-                    "battery_capacity_kwh": "Kapaciteta baterije"
+                    "battery_capacity_kwh": "Kapaciteta baterije",
+                    "battery_capacity_entity_id": "Senzor kapacitete baterije"
                 },
                 "data_description": {
                     "battery_soc_entity_id": "Odstotek napolnjenosti baterije. Na tej vrednosti temeljijo načini delovanja, vezani na SOC: kako globoko posamezen način sme izprazniti shranjeno sončno energijo in kdaj velja baterija za polno.",
                     "battery_power_entity_id": "Pozitivno med praznjenjem, negativno med polnjenjem.",
                     "battery_max_charge_power": "Najvišja moč, s katero se ta baterija sme polniti. Uporablja se kot ponor pri sprožilcu načina Presežek - dokler baterija lahko sprejme toliko moči, ima merilno mesto kam shraniti proizvodnjo in porabniki v načinu Presežek ostanejo izklopljeni.",
                     "battery_max_discharge_power": "Najvišja moč, s katero se ta baterija sme prazniti. Omejuje, na koliko shranjene energije računa sistem pri presoji, kaj razsmernik zmore dostaviti porabniku.",
-                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti te baterije."
+                    "battery_capacity_kwh": "kWh, ki jih pokriva odstotek napolnjenosti te baterije.",
+                    "battery_capacity_entity_id": "Neobvezno. Senzor (Wh ali kWh) z uporabno kapaciteto - na primer vgrajeni Ah x zdravje baterije x nazivna napetost iz BMS, da velikost sledi staranju baterije. Dokler daje vrednost, nadomesti Kapaciteto baterije; ko ni na voljo, velja njegova zadnja vrednost."
                 }
             },
             "inverter_control": {

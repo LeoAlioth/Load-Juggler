@@ -5,7 +5,6 @@ from homeassistant.core import HomeAssistant, callback
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import (
-    CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -35,7 +34,8 @@ from .const import (
     ENTRY_TYPE_INVERTER,
 )
 from .helpers import (
-    fleet_battery_capacity,
+    fleet_has_battery_capacity,
+    has_battery_capacity,
     fleet_has_forecast_sources,
     get_entry_value,
     hub_has_battery,
@@ -211,7 +211,7 @@ async def async_setup_entry(
         has_forecast = (
             fleet_has_forecast_sources(hass, config_entry)
             and (get_entry_value(config_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and fleet_battery_capacity(hass, config_entry) > 0
+            and fleet_has_battery_capacity(hass, config_entry)
         )
 
         entities = [
@@ -264,7 +264,7 @@ async def async_setup_entry(
         )
         inv_has_forecast = (
             inv_has_battery
-            and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
+            and has_battery_capacity(config_entry)
             and hub_entry is not None
             and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
             # Any array on the fleet feeds the site forecast - the advice for
@@ -282,7 +282,7 @@ async def async_setup_entry(
             bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None))
             and hub_entry is not None
             and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and fleet_battery_capacity(hass, hub_entry) > 0
+            and fleet_has_battery_capacity(hass, hub_entry)
         )
         entities = []
         for desc in INVERTER_SENSOR_DEFINITIONS:
