@@ -30,6 +30,8 @@ from pathlib import Path
 from custom_components.dynamic_ocpp_evse import units
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_FULL,
@@ -540,6 +542,31 @@ def test_a_pv_only_entry_hands_the_fleet_no_battery_figures():
     assert member.capacity_kwh is None
     assert member.soc_full is None
     assert member.soc_target is None
+
+
+def test_a_capacity_sensor_sets_the_size_and_holds_through_a_dropout():
+    """The capacity sensor (Wh or kWh) replaces the kWh figure while it reads;
+    an unreadable one keeps its last reading, and before it has ever read the
+    figure stands in."""
+    entry = FakeInverterEntry(
+        {
+            CONF_BATTERY_SOC_ENTITY_ID: "sensor.soc",
+            CONF_BATTERY_CAPACITY_KWH: 60,
+            CONF_BATTERY_CAPACITY_ENTITY_ID: "sensor.capacity",
+        }
+    )
+    soc = FakeState("55", unit="%")
+    runtime = {}
+
+    def capacity(state):
+        hass = FakeHass({"sensor.soc": soc, "sensor.capacity": state})
+        return _read_fleet_member(hass, entry, runtime, {}, V, legacy=False).capacity_kwh
+
+    assert capacity(FakeState("unavailable", unit="kWh")) == 60
+    assert capacity(FakeState("62054.4", unit="Wh")) == 62.0544
+    assert capacity(FakeState("61.5", unit="kWh")) == 61.5
+    assert capacity(FakeState("unavailable", unit="kWh")) == 61.5
+    assert capacity(FakeState("0", unit="kWh")) == 61.5
 
 
 # ---------------------------------------------------------------------------

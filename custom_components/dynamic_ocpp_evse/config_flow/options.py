@@ -18,6 +18,7 @@ from homeassistant.helpers.selector import selector
 from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
@@ -411,7 +412,11 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             schema=lambda defaults: vol.Schema(
                 dict(_build_inverter_battery_schema(self.hass, defaults))
             ),
-            entity_keys=[CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+            entity_keys=[
+                CONF_BATTERY_SOC_ENTITY_ID,
+                CONF_BATTERY_POWER_ENTITY_ID,
+                CONF_BATTERY_CAPACITY_ENTITY_ID,
+            ],
             unit_map=_BATTERY_UNIT_MAP,
         )
 

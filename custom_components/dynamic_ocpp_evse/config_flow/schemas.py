@@ -25,6 +25,7 @@ from ..const import (
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_NOMINAL_VOLTAGE,
@@ -182,6 +183,7 @@ from .helpers import (
     _CURRENT_UNITS,
     _POWER_UNITS,
     _SOC_UNITS,
+    _ENERGY_UNITS,
     _VOLTAGE_UNITS,
 )
 
@@ -498,6 +500,12 @@ def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[t
         _num(
             CONF_BATTERY_CAPACITY_KWH, defaults, DEFAULT_BATTERY_CAPACITY_KWH,
             0, 1000, 0.1, "kWh",
+        ),
+        (
+            _optional_entity_field(CONF_BATTERY_CAPACITY_ENTITY_ID, defaults),
+            _entity_sel(
+                hass, {None, "energy_storage"}, _ENERGY_UNITS, ["sensor", "input_number"]
+            ),
         ),
     ]
 

@@ -15,6 +15,7 @@ from .const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_NOMINAL_VOLTAGE,
@@ -86,11 +87,20 @@ def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
     )
 
 
-def fleet_battery_capacity(hass, hub_entry: ConfigEntry) -> float:
-    """kWh of battery on this hub's fleet: the hub's own (legacy) capacity
-    plus every inverter entry's - the engine's forecast gate."""
-    return sum(
-        get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0
+def has_battery_capacity(entry: ConfigEntry) -> bool:
+    """True when the entry names its battery's size - a capacity sensor or a
+    kWh figure."""
+    return bool(
+        get_entry_value(entry, CONF_BATTERY_CAPACITY_ENTITY_ID, None)
+        or (get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
+    )
+
+
+def fleet_has_battery_capacity(hass, hub_entry: ConfigEntry) -> bool:
+    """Whether any battery on this hub's fleet - the hub's own (legacy) or an
+    inverter entry's - has a size: the engine's forecast gate."""
+    return any(
+        has_battery_capacity(entry)
         for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
     )
 
@@ -229,6 +239,7 @@ INVERTER_FEATURE_KEYS = {
         CONF_BATTERY_MAX_DISCHARGE_POWER,
         CONF_BATTERY_SOC_FULL,
         CONF_BATTERY_CAPACITY_KWH,
+        CONF_BATTERY_CAPACITY_ENTITY_ID,
     ),
     INVERTER_FEATURE_BATTERY_CONTROL: (
         CONF_CHARGE_LIMIT_ENTITY_ID,

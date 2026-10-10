@@ -248,6 +248,7 @@ One entry per inverter - everything physically attached to it, including its PV 
 | Battery max charge/discharge power | Battery power limits (W) | 5000W |
 | Battery full SOC | SOC at/above which this battery counts as full (%) | 97% |
 | Battery capacity | kWh this battery's SOC spans (PV clipping forecast, 0 = off) | 0 |
+| Battery capacity sensor | Optional Wh/kWh sensor for the capacity (e.g. installed Ah x SOH x nominal V); replaces the figure while it reads, keeps its last reading when unavailable | - |
 | Battery charge limit entity | Inverter register to write the forecast's charge limit to (optional) | - |
 | Charge limit unit | What that register expects - DC amps or watts | A |
 | Battery voltage entity / nominal voltage | Source for the watts↔amps conversion | - / 51.2V |
