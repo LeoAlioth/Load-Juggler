@@ -13,7 +13,7 @@ which flows through to "nothing to clip" → SOC ceiling 100 % → charge cap
 released. A dropped sensor must never clamp the battery; visibility comes from
 the hub Status sensor, which names unavailable forecast entities. One
 exception: a source that stops delivering keeps contributing the last series
-it read for up to FORECAST_HOLD_S after that read (``read_forecast_series_pair``)
+it read for up to FORECAST_HOLD_S after that read (``read_forecast_series``)
 - an internet outage takes the forecast integration with it, and the forecast
 it last fetched still describes the day.
 """
@@ -29,7 +29,6 @@ from ..const import FORECAST_HOLD_S
 from ..calculations import (
     FORECAST_LOOKAHEAD_DAYS,
     merge_forecast_series,
-    scale_forecast_series,
 )
 from .. import units
 
@@ -49,7 +48,7 @@ def resolve_forecast_sensor(hass, device_id, held=()):
     the first watts-bearing sensor in deterministic order.
 
     ``held`` - the entities with a forecast held for them
-    (``read_forecast_series_pair``) - count as watts-bearing: an unavailable
+    (``read_forecast_series``) - count as watts-bearing: an unavailable
     entity carries no attributes at all, so without this the device would
     resolve to nothing and its held forecast could never be read.
     """
@@ -161,21 +160,10 @@ def _parse_watts(entity_id, watts):
     return series
 
 
-def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity=None):
-    '''``(raw, inflated, by_entity)`` - both site series, and their parts.
+def read_forecast_series(hass, entity_ids, hub_runtime):
+    '''``(series, by_entity)`` - the site series, and its parts.
 
-    Two series out of ONE read, because the two consumers want different
-    numbers from the same forecast. The clip integral may be biased optimistic
-    per array (a learned gain, once the observers earn one); the deadline
-    (``first_production_at``) must not be, since it already carries its own
-    early bias. Reading twice would double the parse and could straddle a
-    forecast update, so the per-array series are kept and merged twice instead.
-
-    ``inflation_by_entity`` maps a forecast entity to its inverter's percent.
-    Falsy, or all zeros, returns the SAME object for both - so a site with
-    nothing configured takes exactly the path it took before this existed.
-
-    The third element is the per-entity map the merges were built from. The
+    The second element is the per-entity map the merge was built from. The
     gain observer needs it to split the site forecast back out per inverter
     (each array belongs to one), and rebuilding it there would parse every
     entity a second time.
@@ -246,11 +234,4 @@ def read_forecast_series_pair(hass, entity_ids, hub_runtime, inflation_by_entity
             held[entity_id] = (read_at, series, True)
         by_entity[entity_id] = series
 
-    raw = merge_forecast_series(list(by_entity.values()))
-    if not any((inflation_by_entity or {}).get(e) for e in by_entity):
-        return raw, raw, by_entity
-    inflated = merge_forecast_series([
-        scale_forecast_series(series, (inflation_by_entity or {}).get(entity_id) or 0)
-        for entity_id, series in by_entity.items()
-    ])
-    return raw, inflated, by_entity
+    return merge_forecast_series(list(by_entity.values())), by_entity

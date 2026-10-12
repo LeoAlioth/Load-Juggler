@@ -60,7 +60,7 @@ from ..calculations.utils import managed_phase_draws
 from ..helpers import get_entry_value
 from . import fleet
 from .forecast_reader import (
-    read_forecast_series_pair,
+    read_forecast_series,
     forecast_windows,
     configured_forecast_sensors,
 )
@@ -289,29 +289,18 @@ def _compute_forecast_advice(
         power_cap = fleet_max_power + (fleet_charge_cap or 0)
 
     # Entities with a forecast held for them still resolve while their device
-    # reads nothing (see read_forecast_series_pair).
+    # reads nothing (see read_forecast_series).
     held = hub_runtime.get("_forecast_held", ())
     entity_ids = configured_forecast_sensors(
         hass, device_ids, legacy_entity_ids, held
     )
-    # Per-array optimism, resolved device → entity so the factor follows the
-    # array rather than the site (fleet.forecast_inflation_by_device). Only the
-    # CLIP series is inflated; ``series`` below stays raw for the overnight
-    # drop's deadline, which carries its own early bias already.
-    inflation_by_device = fleet.forecast_inflation_by_device(members)
-    inflation_by_entity = {}
-    for device_id, pct in inflation_by_device.items():
-        for entity_id in configured_forecast_sensors(hass, [device_id], None, held):
-            inflation_by_entity.setdefault(entity_id, pct)
-    series, clip_series, by_entity = read_forecast_series_pair(
-        hass, entity_ids, hub_runtime, inflation_by_entity
-    )
+    series, by_entity = read_forecast_series(hass, entity_ids, hub_runtime)
     # The NEXT clipping window, not the rest of the calendar day: the remainder
     # of today while today still has clip left, tomorrow once it does not (see
     # ``select_clipping_window``). ``window`` is 0 exactly in the first case.
     windows = forecast_windows()
     window, fc = select_clipping_window(
-        clip_series,
+        series,
         clip_threshold,
         windows,
         charge_cap_w=fleet_charge_cap,
