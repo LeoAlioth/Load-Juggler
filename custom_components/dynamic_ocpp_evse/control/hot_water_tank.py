@@ -232,21 +232,16 @@ async def send_hot_water_tank_command(
     mode = load_rt.get(
         "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key
     )
-    away = load_rt.get("tank_away_temperature") or get_entry_value(
-        sensor.config_entry,
-        CONF_TANK_AWAY_TEMPERATURE,
-        DEFAULT_TANK_AWAY_TEMPERATURE,
-    )
-    normal = load_rt.get("tank_normal_temperature") or get_entry_value(
-        sensor.config_entry,
-        CONF_TANK_NORMAL_TEMPERATURE,
-        DEFAULT_TANK_NORMAL_TEMPERATURE,
-    )
-    boost = load_rt.get("tank_boost_temperature") or get_entry_value(
-        sensor.config_entry,
-        CONF_TANK_BOOST_TEMPERATURE,
-        DEFAULT_TANK_BOOST_TEMPERATURE,
-    )
+    settings = {
+        label: load_rt.get(f"tank_{label}_temperature")
+        or get_entry_value(sensor.config_entry, conf, default)
+        for label, conf, default in (
+            ("away", CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE),
+            ("normal", CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE),
+            ("boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE),
+        )
+    }
+    away, normal, boost = settings["away"], settings["normal"], settings["boost"]
     element_power = get_entry_value(
         sensor.config_entry,
         CONF_HEATING_ELEMENT_POWER,
@@ -280,7 +275,6 @@ async def send_hot_water_tank_command(
         )
     )
     load_rt["_tank_label_mode"] = mode
-    settings = {"away": away, "normal": normal, "boost": boost}
     heating_permitted = limit > 0
     climate_state = sensor.hass.states.get(climate_entity)
 
