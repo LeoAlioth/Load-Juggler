@@ -116,6 +116,38 @@ async def test_a_hub_with_legacy_inverter_fields_is_split_before_its_platforms(
     assert get_inverters_for_hub(hass, hub.entry_id) == [inverter]
 
 
+async def test_a_hub_with_only_leftover_inverter_settings_drops_them(
+    hass: HomeAssistant,
+    mock_setup,
+):
+    """A hub with no inverter hardware to import, but still carrying settings
+    the import would have moved (the v2 migration's charge/discharge defaults,
+    SOC Full), loses them at setup - no inverter entry is made for them."""
+    from custom_components.dynamic_ocpp_evse.registry import get_inverters_for_hub
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_BATTERY_SOC_FULL,
+        CONF_GRID_EXPORT_LIMIT,
+    )
+
+    leftovers = {CONF_BATTERY_MAX_CHARGE_POWER: 4000, CONF_BATTERY_SOC_FULL: 95}
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=8,
+        title="Old Hub",
+        data={ENTRY_TYPE: ENTRY_TYPE_HUB, CONF_ENTITY_ID: "old_hub", **leftovers},
+        options={**leftovers, CONF_GRID_EXPORT_LIMIT: 5000},
+    )
+    hub.add_to_hass(hass)
+
+    await hass.config_entries.async_setup(hub.entry_id)
+    await hass.async_block_till_done()
+
+    assert get_inverters_for_hub(hass, hub.entry_id) == []
+    assert not any(key in hub.data or key in hub.options for key in leftovers)
+    assert hub.options[CONF_GRID_EXPORT_LIMIT] == 5000
+
+
 async def test_charger_setup(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,

@@ -19,13 +19,9 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.selector import selector
 from ..const import (
-    CONF_BATTERY_CAPACITY_KWH,
-    CONF_BATTERY_MAX_CHARGE_POWER,
-    CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
-    CONF_BATTERY_SOC_FULL,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_ID,
     CONF_LOAD_PRIORITY,
@@ -36,12 +32,7 @@ from ..const import (
     CONF_DEVICE_TYPE,
     CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
-    CONF_INVERTER_MAX_POWER,
-    CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-    CONF_INVERTER_SUPPORTS_ASYMMETRIC,
     CONF_MAX_CURRENT_ENTITY_ID,
     CONF_MIN_CURRENT_ENTITY_ID,
     CONF_NAME,
@@ -54,12 +45,10 @@ from ..const import (
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STATION_CHARGE_SPEED_ENTITY_ID,
     CONF_STATION_RESERVE_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
-    CONF_WIRING_TOPOLOGY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_UPDATE_FREQUENCY,
     DEVICE_TYPE_EVSE,
@@ -82,6 +71,8 @@ from ..const import (
 )
 from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR
 from ..helpers import (
+    HUB_INVERTER_IMPORT_FIELDS,
+    strip_hub_inverter_fields,
     detect_charge_rate_unit,
     get_entry_value,
     infer_inverter_features,
@@ -858,51 +849,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             },
         )
 
-    # The legacy hub-level fields the auto-import moves onto an inverter entry:
-    # everything physically attached to the inverter, its PV array included.
-    # Site policy stays behind on the hub: SOC hysteresis, the SOC target/min
-    # sliders, base consumption, forecast SOC floor and the grid export limit.
-    # Nothing reads these off a hub at runtime any more - the import is the
-    # only way an old hub's values reach the engine. CONF_SOLAR_FORECAST_
-    # ENTITY_IDS (a direct sensor list that lived on dev for under an hour on
-    # 2026-08-14, before the device selector replaced it) is read nowhere; it
-    # stays listed only so the import strips it from a hub.
-    _HUB_INVERTER_IMPORT_FIELDS = (
-        CONF_SOLAR_PRODUCTION_ENTITY_ID,
-        CONF_SOLAR_FORECAST_DEVICE_IDS,
-        CONF_SOLAR_FORECAST_ENTITY_IDS,
-        CONF_INVERTER_MAX_POWER,
-        CONF_INVERTER_MAX_POWER_PER_PHASE,
-        CONF_INVERTER_SUPPORTS_ASYMMETRIC,
-        CONF_WIRING_TOPOLOGY,
-        CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-        CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-        CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-        CONF_BATTERY_SOC_ENTITY_ID,
-        CONF_BATTERY_POWER_ENTITY_ID,
-        CONF_BATTERY_MAX_CHARGE_POWER,
-        CONF_BATTERY_MAX_DISCHARGE_POWER,
-        CONF_BATTERY_SOC_FULL,
-        CONF_BATTERY_CAPACITY_KWH,
-    )
-
-    def _blank_hub_legacy_inverter_fields(self, hub_entry) -> None:
-        """Strip the imported fields from the hub entry, which removes the
-        import's own trigger (see ``_setup_hub_entry``)."""
-        new_data = {
-            k: v
-            for k, v in hub_entry.data.items()
-            if k not in self._HUB_INVERTER_IMPORT_FIELDS
-        }
-        new_options = {
-            k: v
-            for k, v in hub_entry.options.items()
-            if k not in self._HUB_INVERTER_IMPORT_FIELDS
-        }
-        self.hass.config_entries.async_update_entry(
-            hub_entry, data=new_data, options=new_options
-        )
-
     def _imported_inverter_name(self, imported: dict) -> str:
         """Name the auto-created entry after the hardware it represents.
 
@@ -965,10 +911,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # before the duplicate check, so every path leaves the hub clean.
         imported = {
             key: get_entry_value(hub_entry, key, None)
-            for key in self._HUB_INVERTER_IMPORT_FIELDS
+            for key in HUB_INVERTER_IMPORT_FIELDS
         }
         imported = {k: v for k, v in imported.items() if v is not None}
-        self._blank_hub_legacy_inverter_fields(hub_entry)
+        strip_hub_inverter_fields(self.hass, hub_entry)
         # The imported entry declares what the legacy fields say it has, and
         # carries nothing for the rest (a hub with battery caps but no battery
         # entity had no battery).

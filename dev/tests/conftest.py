@@ -46,14 +46,16 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGE_PAUSE_DURATION,
     CONF_STACK_LEVEL,
 )
-from custom_components.dynamic_ocpp_evse.config_flow.flow import LoadJugglerConfigFlow
-from custom_components.dynamic_ocpp_evse.helpers import INVERTER_FEATURE_KEYS
+from custom_components.dynamic_ocpp_evse.helpers import (
+    HUB_INVERTER_IMPORT_FIELDS,
+    INVERTER_FEATURE_KEYS,
+)
 
 
 # Every setting an inverter entry owns: the keys an old hub's fields are
 # imported under, plus the per-feature keys added since. The engine reads
 # none of them off the hub, so a test's site carries them on an inverter.
-INVERTER_KEYS = frozenset(LoadJugglerConfigFlow._HUB_INVERTER_IMPORT_FIELDS).union(
+INVERTER_KEYS = frozenset(HUB_INVERTER_IMPORT_FIELDS).union(
     *INVERTER_FEATURE_KEYS.values()
 )
 
