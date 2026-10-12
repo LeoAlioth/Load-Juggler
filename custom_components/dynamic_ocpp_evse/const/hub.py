@@ -96,7 +96,8 @@ CONF_SOLAR_FORECAST_DEVICE_IDS = "solar_forecast_device_ids"  # list - one forec
 # series, so selecting sensors risks double-counting one array - the reader
 # resolves exactly one watts-bearing sensor per device).
 CONF_SOLAR_FORECAST_ENTITY_IDS = "solar_forecast_entity_ids"  # LEGACY - direct
-# sensor list from the first dev iteration; still honored at runtime.
+# sensor list from the first dev iteration; read nowhere, only stripped from a
+# hub by the one-time import.
 CONF_BASE_CONSUMPTION = "base_consumption"  # W - typical daytime minimum house draw
 CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"  # kWh the SOC percentage spans; 0 = off
 CONF_BATTERY_CAPACITY_ENTITY_ID = "battery_capacity_entity_id"  # Wh/kWh sensor; overrides the number while it reads

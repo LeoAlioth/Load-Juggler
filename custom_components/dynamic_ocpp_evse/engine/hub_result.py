@@ -45,7 +45,6 @@ from ..const import (
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
     CONF_PHASES,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_TOTAL_ALLOCATED_CURRENT,
     DEFAULT_BASE_CONSUMPTION,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
@@ -211,17 +210,11 @@ def _compute_forecast_advice(
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
         or 0
     )
-    # Fleet capacity: the hub's legacy capacity field arrives via the implicit
-    # legacy member, entry capacities via theirs.
     capacity_kwh = fleet.capacity_total(members)
     # Forecast sources are per inverter (each PV array belongs to one), but
     # clipping is a site question - every array competes for the same export
-    # headroom - so the fleet's devices merge into one site forecast. The
-    # hub's legacy fields arrive via the implicit legacy member.
+    # headroom - so the fleet's devices merge into one site forecast.
     device_ids = fleet.forecast_device_ids(members)
-    legacy_entity_ids = (
-        get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
-    )
     # ``export_limit`` of 0 means two OPPOSITE things, and reading it as one
     # silently switched this whole feature off on the site that needs it most.
     # Grid-tied it means "no limit configured": the grid absorbs everything,
@@ -234,7 +227,7 @@ def _compute_forecast_advice(
     if (
         (export_limit <= 0 and not off_grid)
         or capacity_kwh <= 0
-        or not (device_ids or legacy_entity_ids)
+        or not device_ids
     ):
         for key in (*_FORECAST_LATCHES, "_forecast_parse_memo", "_forecast_held"):
             hub_runtime.pop(key, None)
@@ -291,9 +284,7 @@ def _compute_forecast_advice(
     # Entities with a forecast held for them still resolve while their device
     # reads nothing (see read_forecast_series).
     held = hub_runtime.get("_forecast_held", ())
-    entity_ids = configured_forecast_sensors(
-        hass, device_ids, legacy_entity_ids, held
-    )
+    entity_ids = configured_forecast_sensors(hass, device_ids, held)
     series, by_entity = read_forecast_series(hass, entity_ids, hub_runtime)
     # The NEXT clipping window, not the rest of the calendar day: the remainder
     # of today while today still has clip left, tomorrow once it does not (see
@@ -527,7 +518,7 @@ def _compute_forecast_advice(
         if not m.forecast_device_ids:
             continue
         member_entities = configured_forecast_sensors(
-            hass, list(m.forecast_device_ids), None, held
+            hass, list(m.forecast_device_ids), held
         )
         member_series = merge_forecast_series(
             [by_entity[e] for e in member_entities if e in by_entity]

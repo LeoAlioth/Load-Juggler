@@ -26,6 +26,8 @@ the house - 21.74 A - on every cycle.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import with_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -97,7 +99,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200):
     settled on the household alone; then the car plugs in and slews toward its
     last command at ``car_ramp_a_s``. One row per cycle.
     """
-    hub = _hub(slug, topology)
+    hub = with_inverter(hass, _hub(slug, topology))
     hass.states.async_set(SOC, "80", BATTERY_PCT)
     hass.states.async_set(STATUS, "Available")
     hass.states.async_set(SOLAR, f"{SOLAR_W:.1f}", WATTS)
@@ -195,8 +197,8 @@ async def test_solar_remaining_is_unknown_with_nothing_to_measure_the_house(
     )
 
     slug = f"unmeasured_{solar}_{battery_power}"
-    hub = _hub(slug, WIRING_TOPOLOGY_SERIES, solar=solar,
-               battery_power=battery_power != "unconfigured")
+    hub = with_inverter(hass, _hub(slug, WIRING_TOPOLOGY_SERIES, solar=solar,
+               battery_power=battery_power != "unconfigured"))
     evse = evse_entry(hub, "ogs_evse")
     hass.states.async_set(SOC, "80", BATTERY_PCT)
     hass.states.async_set(STATUS, "Charging")

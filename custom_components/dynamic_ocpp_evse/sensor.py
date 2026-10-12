@@ -196,8 +196,8 @@ async def async_setup_entry(
         name = config_entry.data.get(CONF_NAME, "Site Load Management")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
-        # Any battery on the fleet - the hub's legacy fields or an inverter
-        # entry - enables the hub's (fleet-aggregate) battery sensors.
+        # Any battery on the fleet's inverter entries enables the hub's
+        # (fleet-aggregate) battery sensors.
         has_battery = hub_has_battery(hass, config_entry)
         has_phase_b = bool(
             get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None)

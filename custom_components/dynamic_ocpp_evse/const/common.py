@@ -19,8 +19,8 @@ ENTRY_TYPE_GROUP = "group"
 # An inverter (a power SOURCE, optionally carrying its own battery), linked to
 # a hub via CONF_HUB_ENTRY_ID like loads and groups. Inverter entries reuse
 # the hub-level CONF_INVERTER_* / CONF_BATTERY_* key names (const/hub.py) in
-# their own options: schemas are shared with the legacy hub pages, and the
-# one-time auto-import of a hub's legacy fields is a verbatim key copy.
+# their own options, so the one-time auto-import of an old hub's fields is a
+# verbatim key copy.
 ENTRY_TYPE_INVERTER = "inverter"
 
 # configuration keys - common

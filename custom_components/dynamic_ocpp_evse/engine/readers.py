@@ -41,7 +41,6 @@ from ..const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_WIRING_TOPOLOGY,
     DEFAULT_BATTERY_CAPACITY_KWH,
@@ -336,20 +335,15 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
     """Return unavailable hub-configured entities as ``(label, entity_id)``.
 
     Grid CTs are tracked separately (stale-timeout logic); this covers the
-    solar, battery, inverter-output and max-import-power sensors so a missing
-    feed shows up on the hub Status sensor instead of silently defaulting to 0.
+    hub's max-import-power sensor and every inverter entry's solar, battery
+    and output sensors so a missing feed shows up on the hub Status sensor
+    instead of silently defaulting to 0.
     Returns the short label and the entity_id so the caller can both name the
     sensor in the status line and spell out the full detail in a warning.
     ``members`` is this cycle's fleet (``_read_fleet_members``), whose forecast
     devices are checked.
     """
     unavailable = _unavailable_entities(hass, hub_entry, (
-        ("Solar production sensor", CONF_SOLAR_PRODUCTION_ENTITY_ID),
-        ("Battery SOC sensor", CONF_BATTERY_SOC_ENTITY_ID),
-        ("Battery power sensor", CONF_BATTERY_POWER_ENTITY_ID),
-        ("Inverter output sensor (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
-        ("Inverter output sensor (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
-        ("Inverter output sensor (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
         # Whenever it is configured, whatever the slider checkbox says: a set
         # override sensor is always read by the engine (hub_calculation.
         # _read_max_import_power), and an unreadable one lifts the cap to
@@ -378,14 +372,10 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
     # Forecast sources fail open in the clipping maths - the status sensor is
     # the only place a dropout is visible. A configured forecast DEVICE with
     # no watts-bearing sensor right now (integration down, states missing)
-    # counts as unavailable; legacy directly-configured sensors are checked
-    # like any other entity.
+    # counts as unavailable.
     for device_id in fleet.forecast_device_ids(members):
         if resolve_forecast_sensor(hass, device_id) is None:
             unavailable.append(("Solar forecast device", device_id))
-    for entity_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []:
-        if units.is_unavailable(hass.states.get(entity_id)):
-            unavailable.append(("Solar forecast sensor", entity_id))
     return unavailable
 
 
@@ -533,32 +523,9 @@ def _track_grid_stale(hub_runtime, any_stale, now):
     return 0
 
 
-# Legacy hub-level fleet fields: while any of these are configured on the hub
-# entry itself (pre-import installs), the hub acts as one implicit inverter
-# merged into the fleet. The one-time auto-import moves them onto a standalone
-# inverter entry and blanks them here.
-_LEGACY_FLEET_KEYS = (
-    CONF_SOLAR_PRODUCTION_ENTITY_ID,
-    CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_INVERTER_MAX_POWER,
-    CONF_INVERTER_MAX_POWER_PER_PHASE,
-    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-    CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_BATTERY_POWER_ENTITY_ID,
-    CONF_BATTERY_MAX_CHARGE_POWER,
-    CONF_BATTERY_MAX_DISCHARGE_POWER,
-)
-
-
 def _smooth_member_output(output_pv, hub_runtime, ema_inputs, key_prefix):
-    """Stale-guard + EMA a member's per-phase inverter output.
-
-    The legacy hub member uses the historic ``inv_0..2`` keys, so pre-import
-    behavior (and smoothing state) is bit-identical; inverter entries get
-    keys namespaced by their entry_id.
-    """
+    """Stale-guard + EMA a member's per-phase inverter output, under keys
+    namespaced by the inverter entry's id."""
     if output_pv is None:
         return None
     smoothed = [
@@ -589,21 +556,15 @@ def _read_enforced_charge_limit(hass, entry):
     None whenever nothing is being held back - switch off, no advice, released,
     no register configured at all, or simply before the first write pass of a
     fresh start - and None is exactly what leaves the member at its nameplate
-    charge rate in ``fleet.charge_power_total()``. The legacy hub member has no
-    charge control of its own (it is a per-inverter-entry feature), so it lands
-    on None through the same lookup rather than through a special case.
+    charge rate in ``fleet.charge_power_total()``.
     """
-    entry_id = getattr(entry, "entry_id", None)
-    if not entry_id:
-        return None
-    inverter_rt = hass.data.get(DOMAIN, {}).get("inverters", {}).get(entry_id) or {}
+    inverter_rt = hass.data.get(DOMAIN, {}).get("inverters", {}).get(entry.entry_id) or {}
     value = inverter_rt.get(INVERTER_RT_ENFORCED_CHARGE_W)
     return float(value) if is_number(value) else None
 
 
-def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy):
-    """Read one inverter (an inverter entry, or the hub's legacy fields) into
-    a FleetMember. ``legacy`` selects the historic EMA key namespace."""
+def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):
+    """Read one inverter entry into a FleetMember."""
     # Per-phase output entities (optional). Each configured phase is read
     # independently - a B/C-only configuration is valid, and one phase being
     # momentarily unavailable must not discard the others. Unavailable phases
@@ -622,7 +583,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         if any(output_entities)
         else None
     )
-    output_prefix = "inv_" if legacy else f"inv_{entry.entry_id}_"
+    output_prefix = f"inv_{entry.entry_id}_"
     output_raw = (
         None
         if output_pv is None
@@ -630,11 +591,9 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     )
     output_pv = _smooth_member_output(output_pv, hub_runtime, ema_inputs, output_prefix)
 
-    # Solar production sensor: this inverter's own PV output. The legacy hub
-    # member keeps the historic "solar" EMA key so pre-import smoothing (and
-    # its stale guard) is bit-identical.
+    # Solar production sensor: this inverter's own PV output.
     solar_entity = get_entry_value(entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
-    solar_key = "solar" if legacy else f"solar_{entry.entry_id}"
+    solar_key = f"solar_{entry.entry_id}"
     solar_measured = None
     solar_assumed = False
     if solar_entity:
@@ -663,7 +622,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     soc_entity = get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     power_entity = get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
     battery_soc = units.read_number(hass, soc_entity)
-    power_key = "battery_power" if legacy else f"battery_power_{entry.entry_id}"
+    power_key = f"battery_power_{entry.entry_id}"
     raw_power = (
         _read_entity(hass, power_entity, None, unit="W") if power_entity else None
     )
@@ -746,7 +705,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
 
     return fleet.FleetMember(
         entry_id=entry.entry_id,
-        name=get_entry_value(entry, CONF_NAME, entry.title if not legacy else "Hub"),
+        name=get_entry_value(entry, CONF_NAME, entry.title),
         max_power=get_entry_value(entry, CONF_INVERTER_MAX_POWER, None),
         max_power_per_phase=get_entry_value(
             entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None
@@ -810,23 +769,10 @@ def _read_capacity(hass, entry, hub_runtime):
 
 
 def _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage):
-    """All of the hub's inverters: standalone inverter entries plus, while its
-    legacy hub-level fields remain configured, the hub itself as one implicit
-    member (using the historic EMA keys, so pre-import behavior is
-    bit-identical)."""
-    members = []
-    if any(get_entry_value(hub_entry, key, None) for key in _LEGACY_FLEET_KEYS):
-        members.append(
-            _read_fleet_member(
-                hass, hub_entry, hub_runtime, ema_inputs, voltage, legacy=True
-            )
-        )
-    hub_entry_id = getattr(hub_entry, "entry_id", None)
-    if hub_entry_id:
-        for entry in get_inverters_for_hub(hass, hub_entry_id):
-            members.append(
-                _read_fleet_member(
-                    hass, entry, hub_runtime, ema_inputs, voltage, legacy=False
-                )
-            )
-    return members
+    """All of the hub's inverters - its inverter entries. Inverter fields
+    an old hub still carries are moved onto one by the import at hub setup
+    (``_setup_hub_entry``), before the engine first reads anything."""
+    return [
+        _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage)
+        for entry in get_inverters_for_hub(hass, hub_entry.entry_id)
+    ]

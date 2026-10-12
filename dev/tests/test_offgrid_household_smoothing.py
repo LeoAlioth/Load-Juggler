@@ -28,6 +28,8 @@ household low while the charger starts.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import with_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -93,7 +95,7 @@ async def _run(hass, slug, car_ramp_a_s, cycles=120, house=None, car=None,
     car that ignores its command). At night the battery supplies the whole
     output. One row per cycle.
     """
-    hub = _hub(slug)
+    hub = with_inverter(hass, _hub(slug))
     hass.states.async_set(STATUS, "Available")
     hass.states.async_set("sensor.og_battery_soc", "80", BATTERY_PCT)
     draw = 0.0

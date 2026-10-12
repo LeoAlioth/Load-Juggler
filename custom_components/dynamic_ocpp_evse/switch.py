@@ -67,8 +67,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         _LOGGER.debug("Skipping switch setup for unknown entry type: %s", config_entry.title)
         return
 
-    # Hub-level switches - only if any fleet battery is configured
-    # (the hub's legacy fields or an inverter entry)
+    # Hub-level switches - only if any inverter entry has a battery
     has_battery = hub_has_battery(hass, config_entry)
 
     if not has_battery:

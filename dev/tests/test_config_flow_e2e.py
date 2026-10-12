@@ -590,16 +590,12 @@ async def test_charger_discovery_duplicate_aborts(
 async def test_options_flow_hub_saves_changes(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that submitting hub options actually updates the config entry.
-
-    Setting the hub up auto-imports its legacy hardware (inverter, battery,
-    solar sensor, forecast devices) onto a standalone inverter entry, so the
-    options flow is a single page from then on: grid connection plus site
-    policy, then straight to save.
-    """
+    """Test that submitting hub options actually updates the config entry."""
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -781,6 +777,7 @@ async def _open_options(hass, entry_id, step="settings"):
 async def test_inverter_options_does_not_autodetect_phases(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
     """Editing an existing inverter must NOT auto-pick inverter-output entities.
@@ -788,18 +785,17 @@ async def test_inverter_options_does_not_autodetect_phases(
     Regression: the flow used to re-run auto-detection into empty fields, which
     could grab a 3-phase inverter from an unrelated building and silently add
     phantom L2/L3 phases that split available power across phases the site does
-    not have. The hub here has no inverter-output phases, so neither does the
-    inverter entry auto-imported from it; even with SolarEdge-matching entities
-    present in HA, its options page must leave those fields empty.
+    not have. The hub's inverter here has no inverter-output phases; even with
+    SolarEdge-matching entities present in HA, its options page must leave
+    those fields empty.
     """
     from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
-    # Setting the hub up auto-imports its legacy battery config onto an
-    # inverter entry - that entry is where the inverter page lives now.
     inverter = next(
         e
         for e in hass.config_entries.async_entries(DOMAIN)
@@ -833,6 +829,7 @@ async def test_inverter_options_does_not_autodetect_phases(
 async def test_inverter_options_offers_and_clears_the_soc_slots(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
     """The SOC write-control is editable from the options page too, and an
@@ -851,6 +848,7 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     )
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -930,6 +928,7 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
 async def test_inverter_options_round_trip_the_minimum_charge_limit(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
     """The floor under the engaged charge limit is editable from the options
@@ -947,6 +946,7 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
     )
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -1366,7 +1366,6 @@ async def test_summary_page_describes_the_configuration(
     text = _summary_text(hass, mock_hub_entry.entry_id)
     assert "3-phase site at 230 V" in text
     assert "main breaker 25 A per phase" in text
-    # The hub's legacy battery was auto-imported onto an inverter entry.
     assert "Power sources" in text
     assert "Distribution mode" in text
     assert "Pond Pump" in text
@@ -2098,12 +2097,16 @@ async def test_write_control_without_a_battery_is_refused(
 
 
 async def test_unticking_the_battery_in_options_clears_its_settings(
-    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
 ):
     """The options flow opens on the features page with the declared (or
     inferred) list suggested; unticking battery hides its section and clears
     every battery key on save, so a stale cap cannot outlive the battery."""
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -2407,7 +2410,10 @@ async def test_the_overview_survives_hub_data_without_the_pools(
 
 
 async def test_the_inverter_overview_separates_battery_from_forecast(
-    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
 ):
     """The battery section and the array's forecast section are independent.
 
@@ -2420,6 +2426,7 @@ async def test_the_inverter_overview_separates_battery_from_forecast(
     from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
     inverter = next(
@@ -2456,7 +2463,10 @@ async def test_the_inverter_overview_separates_battery_from_forecast(
 
 
 async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
-    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
 ):
     """Downloading from the hub yields every entry's config, the live result
     and the carried runtime - and the whole thing is JSON-serialisable, which
@@ -2470,6 +2480,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
     plug = _plug_entry(mock_hub_entry, "Pond Pump", priority=1)
@@ -2528,7 +2539,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     diag = await async_get_config_entry_diagnostics(hass, mock_hub_entry)
     json.dumps(diag)
     assert diag["runtime"]["hub"]["_household_held"] == {"a": 1.0, "b": 2.0, "c": None}
-    # The auto-imported inverter is a child, with its effective features.
+    # The inverter is a child, with its effective features.
     inv = next(
         c for c in diag["config"]["children"]
         if c["entry_type"] == ENTRY_TYPE_INVERTER

@@ -707,8 +707,6 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             if INVERTER_FEATURE_SOLAR in features:
                 _normalize_list(user_input, CONF_SOLAR_FORECAST_DEVICE_IDS)
-                # The device selection replaces any legacy sensor list.
-                user_input[CONF_SOLAR_FORECAST_ENTITY_IDS] = []
             _validate_entity_units(
                 self.hass,
                 user_input,
@@ -864,6 +862,11 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     # everything physically attached to the inverter, its PV array included.
     # Site policy stays behind on the hub: SOC hysteresis, the SOC target/min
     # sliders, base consumption, forecast SOC floor and the grid export limit.
+    # Nothing reads these off a hub at runtime any more - the import is the
+    # only way an old hub's values reach the engine. CONF_SOLAR_FORECAST_
+    # ENTITY_IDS (a direct sensor list that lived on dev for under an hour on
+    # 2026-08-14, before the device selector replaced it) is read nowhere; it
+    # stays listed only so the import strips it from a hub.
     _HUB_INVERTER_IMPORT_FIELDS = (
         CONF_SOLAR_PRODUCTION_ENTITY_ID,
         CONF_SOLAR_FORECAST_DEVICE_IDS,
@@ -884,9 +887,8 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     )
 
     def _blank_hub_legacy_inverter_fields(self, hub_entry) -> None:
-        """Strip the imported fields from the hub entry - the hub must stop
-        acting as the implicit legacy fleet member the moment the standalone
-        inverter entry represents the hardware."""
+        """Strip the imported fields from the hub entry, which removes the
+        import's own trigger (see ``_setup_hub_entry``)."""
         new_data = {
             k: v
             for k, v in hub_entry.data.items()
@@ -936,19 +938,16 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self, import_data: dict[str, Any]
     ) -> config_entries.FlowResult:
         """Auto-import of a hub's legacy inverter/battery/PV fields onto a
-        standalone inverter entry (spawned from _setup_hub_entry).
+        standalone inverter entry - awaited by _setup_hub_entry before the
+        hub's platforms are set up, so the engine never sees a hub with them.
 
-        Runs whenever such a field is still on the hub, so a later release
-        that moves one more field (the solar sensor and forecast devices, say)
-        converges on the next restart without a second migration path. When
-        the hub's inverter entry already exists, the newly-found fields are
-        merged into it rather than creating a second one.
+        Runs whenever such a field is still on the hub. When the hub's
+        inverter entry already exists, the newly-found fields are merged into
+        it rather than creating a second one.
 
         Idempotency: the unique_id makes a duplicate entry impossible, and the
-        hub is blanked BEFORE the already-configured abort - so a
-        restart between entry creation and blanking still converges instead of
-        double-counting the battery (the engine's implicit legacy member and
-        the entry would otherwise both exist).
+        hub is blanked BEFORE the already-configured abort - so a restart
+        between entry creation and blanking still converges.
         """
         hub_entry_id = import_data.get("hub_entry_id")
         hub_entry = (
