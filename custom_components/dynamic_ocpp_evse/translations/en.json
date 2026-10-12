@@ -351,6 +351,7 @@
                     "update_frequency": "Update frequency",
                     "ocpp_profile_timeout": "Profile timeout",
                     "charge_pause_duration": "Charge pause duration",
+                    "pause_profile_validity": "Pause profile validity",
                     "stack_level": "OCPP stack level",
                     "solar_grace_period": "Solar/Excess grace period"
                 },
@@ -360,6 +361,7 @@
                     "update_frequency": "How often to send updated charging profiles to this charger.",
                     "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
+                    "pause_profile_validity": "How long the 0 A profile sent for a charge pause stays valid. It is renewed before it runs out for as long as the pause lasts, and any new allocation replaces it at once, so a long value costs nothing. It only matters if Home Assistant stops: the charger then stays paused for up to this long before falling back to its own default current.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
@@ -785,6 +787,7 @@
                     "update_frequency": "Update frequency",
                     "ocpp_profile_timeout": "Profile timeout",
                     "charge_pause_duration": "Charge pause duration",
+                    "pause_profile_validity": "Pause profile validity",
                     "stack_level": "OCPP stack level",
                     "solar_grace_period": "Solar/Excess grace period"
                 },
@@ -794,6 +797,7 @@
                     "update_frequency": "How often to send updated charging profiles to this charger.",
                     "ocpp_profile_timeout": "How long a charging profile remains valid. The charger reverts to default behavior if no new profile is sent within this time.",
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
+                    "pause_profile_validity": "How long the 0 A profile sent for a charge pause stays valid. It is renewed before it runs out for as long as the pause lasts, and any new allocation replaces it at once, so a long value costs nothing. It only matters if Home Assistant stops: the charger then stays paused for up to this long before falling back to its own default current.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
                 }
