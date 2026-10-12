@@ -24,6 +24,7 @@ CONF_MIN_CURRENT_ENTITY_ID = "min_current_entity_id"
 CONF_MAX_CURRENT_ENTITY_ID = "max_current_entity_id"
 CONF_OCPP_PROFILE_TIMEOUT = "ocpp_profile_timeout"
 CONF_CHARGE_PAUSE_DURATION = "charge_pause_duration"
+CONF_PAUSE_PROFILE_VALIDITY = "pause_profile_validity"  # minutes a pause's 0 A profile stays valid
 CONF_STACK_LEVEL = "stack_level"
 
 # OCPP charger L1/L2/L3 → site phase mapping
@@ -72,6 +73,7 @@ DEFAULT_MIN_CHARGE_CURRENT = 6
 DEFAULT_MAX_CHARGE_CURRENT = 16
 DEFAULT_OCPP_PROFILE_TIMEOUT = 120
 DEFAULT_CHARGE_PAUSE_DURATION = 3  # minutes
+DEFAULT_PAUSE_PROFILE_VALIDITY = 60  # minutes
 DEFAULT_STACK_LEVEL = 3
 
 # Charge rate unit configuration (per charger)

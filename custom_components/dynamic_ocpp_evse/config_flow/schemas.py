@@ -45,6 +45,7 @@ from ..const import (
     CONF_CHARGE_LIMIT_NORMAL,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_PAUSE_DURATION,
+    CONF_PAUSE_PROFILE_VALIDITY,
     CONF_CHARGE_RATE_UNIT,
     CONF_CLIMATE_ENTITY_ID,
     CONF_CONNECTED_TO_PHASE,
@@ -138,6 +139,7 @@ from ..const import (
     DEFAULT_CHARGE_LIMIT_NORMAL,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DEFAULT_CHARGE_PAUSE_DURATION,
+    DEFAULT_PAUSE_PROFILE_VALIDITY,
     DEFAULT_EXCESS_HYSTERESIS,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
@@ -938,6 +940,10 @@ def _charger_timing_schema(
                 _num(
                     CONF_CHARGE_PAUSE_DURATION, defaults, DEFAULT_CHARGE_PAUSE_DURATION,
                     0, 10, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_PAUSE_PROFILE_VALIDITY, defaults, DEFAULT_PAUSE_PROFILE_VALIDITY,
+                    1, 1440, 1, "min", required=True,
                 ),
                 _num(
                     CONF_STACK_LEVEL, defaults, DEFAULT_STACK_LEVEL,

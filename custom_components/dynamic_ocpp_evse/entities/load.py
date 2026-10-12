@@ -12,6 +12,7 @@ from ..const import (
     CONF_LOAD_PRIORITY,
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
+    CONF_PAUSE_PROFILE_VALIDITY,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -25,6 +26,7 @@ from ..const import (
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_CHARGE_PAUSE_DURATION,
+    DEFAULT_PAUSE_PROFILE_VALIDITY,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_PHASE_VOLTAGE,
@@ -198,8 +200,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._last_update = None
         self._pause_started_at = None
         # The pause whose 0 A profile reached the charger (its _pause_started_at),
-        # so the rest of that pause sends nothing - see the EVSE command below.
+        # so the rest of that pause sends nothing - see the EVSE command below -
+        # and when that profile is due a refresh (monotonic).
         self._pause_sent_for = None
+        self._pause_hold_until = 0.0
         # Has this load ever held a RUNNABLE permit in this process? The charge
         # pause may only arm once it has - see the pause branch for why.
         self._had_runnable_permit = False
@@ -857,20 +861,35 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 )
         else:
             await check_profile_compliance(self, limit, dynamic_control_on)
-            # A pause's 0 A goes out once, valid for the rest of the pause on
-            # top of the usual validity, and is not sent again while the pause
-            # lasts: re-sending a 0 A profile every command interval restarted
-            # a go-eCharger's charging cycle every 30 s (Andrej's Nova). Sent
-            # again only if the charger draws anyway - a reboot that lost it.
+            # A pause's 0 A goes out once, valid for the pause profile validity
+            # (default 1 h, or the rest of the pause if longer) on top of the
+            # usual validity, and is not sent again while it holds: re-sending
+            # a 0 A profile every command interval restarted a go-eCharger's
+            # charging cycle every 30 s (Andrej's Nova). A pause outlives its
+            # dwell whenever the permit stays under the minimum (Solar Only or
+            # Excess after sunset), so the profile is refreshed once its hold
+            # runs out - a lapsed one let Home's EVBox fall back to 16 A and
+            # charge at 10 kW in Excess mode (2026-10-12). Any allocation
+            # replaces it at once (same profile id and stack level). Sent
+            # again early only if the charger draws anyway - a reboot that
+            # lost it.
             hold_s = None
             if limit == 0 and self._pause_started_at is not None:
                 if (
                     self._pause_sent_for == self._pause_started_at
+                    and time.monotonic() < self._pause_hold_until
                     and (hub_data.get("load_draw", {}).get(self.config_entry.entry_id) or 0) < 1.0
                 ):
                     stamp_command(self, now_mono)
                     return
-                hold_s = max(0.0, pause_s - (time.monotonic() - self._pause_started_at))
+                hold_s = max(
+                    pause_s - (time.monotonic() - self._pause_started_at),
+                    60 * get_entry_value(
+                        self.config_entry,
+                        CONF_PAUSE_PROFILE_VALIDITY,
+                        DEFAULT_PAUSE_PROFILE_VALIDITY,
+                    ),
+                )
             sent = await send_ocpp_command(
                 self,
                 limit,
@@ -886,3 +905,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             )
             if hold_s is not None and sent:
                 self._pause_sent_for = self._pause_started_at
+                # Refreshed when the hold runs out, with the usual profile
+                # timeout still left on the charger as the margin.
+                self._pause_hold_until = time.monotonic() + hold_s

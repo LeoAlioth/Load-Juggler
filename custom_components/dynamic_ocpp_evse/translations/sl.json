@@ -351,6 +351,7 @@
                     "update_frequency": "Pogostost posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
+                    "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
                     "solar_grace_period": "Odlog za način Solar/Excess"
                 },
@@ -360,6 +361,7 @@
                     "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja tej polnilni postaji.",
                     "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilna postaja se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilna postaja drži na 0 A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
+                    "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
@@ -785,6 +787,7 @@
                     "update_frequency": "Pogostost posodabljanja",
                     "ocpp_profile_timeout": "Časovna omejitev profila",
                     "charge_pause_duration": "Trajanje premora polnjenja",
+                    "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
                     "solar_grace_period": "Odlog za način Solar/Excess"
                 },
@@ -794,6 +797,7 @@
                     "update_frequency": "Kako pogosto se pošiljajo posodobljeni profili polnjenja tej polnilni postaji.",
                     "ocpp_profile_timeout": "Koliko časa profil polnjenja ostane veljaven. Polnilna postaja se vrne na privzeto obnašanje, če v tem času ne prejme novega profila.",
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilna postaja drži na 0 A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
+                    "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
