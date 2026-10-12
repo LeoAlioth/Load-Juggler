@@ -91,7 +91,7 @@ from .helpers import (
 )
 from . import units
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
-from .registry import follow_renames
+from .registry import follow_renames, own_entity_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -553,11 +553,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         Its unique_id is the entry's entity-id prefix plus ``suffix``.
         """
         entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is None:
-            return None
-        return er.async_get(hass).async_get_entity_id(
-            platform, DOMAIN, f"{entry.data.get(CONF_ENTITY_ID)}{suffix}"
-        )
+        return own_entity_id(hass, entry, platform, suffix) if entry else None
 
     # How each platform's entity is set: its service, and that service's value key.
     setters = {"select": ("select_option", "option"), "number": ("set_value", "value")}
