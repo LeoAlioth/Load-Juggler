@@ -85,8 +85,14 @@ def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
     return any(
         get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
         or get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
+        for entry in fleet_entries(hass, hub_entry)
     )
+
+
+def fleet_entries(hass, hub_entry: ConfigEntry) -> list:
+    """The hub's own entry (its legacy hub-level inverter fields) and every
+    inverter entry under it."""
+    return [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
 
 
 def has_battery_capacity(entry: ConfigEntry) -> bool:
@@ -103,7 +109,7 @@ def fleet_has_battery_capacity(hass, hub_entry: ConfigEntry) -> bool:
     inverter entry's - has a size: the engine's forecast gate."""
     return any(
         has_battery_capacity(entry)
-        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
+        for entry in fleet_entries(hass, hub_entry)
     )
 
 
@@ -118,7 +124,7 @@ def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
     return any(
         get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None)
         or get_entry_value(entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
-        for entry in [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
+        for entry in fleet_entries(hass, hub_entry)
     )
 
 
