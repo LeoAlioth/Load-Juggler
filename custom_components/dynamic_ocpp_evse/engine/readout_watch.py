@@ -82,6 +82,7 @@ load's runtime bucket) and the clock (``now``, monotonic seconds).
 from __future__ import annotations
 
 from datetime import timedelta
+from statistics import median
 
 # OCPP 1.6 connector statuses in which a car may be connected but no energy is
 # transferred: waiting to start, suspended by the car or by the charger, or the
@@ -562,14 +563,6 @@ def _reset_lockstep(state: dict) -> None:
         state.pop(key, None)
 
 
-def _median(values):
-    ordered = sorted(values)
-    mid = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[mid]
-    return (ordered[mid - 1] + ordered[mid]) / 2
-
-
 def _summarise(samples) -> dict:
     """Per phase, the (level, spread) of one interval's household samples:
     their median, and their median absolute deviation from it."""
@@ -577,8 +570,8 @@ def _summarise(samples) -> dict:
     for phase in _PHASES:
         values = [s[phase] for s in samples if s.get(phase) is not None]
         if values:
-            level = _median(values)
-            out[phase] = (level, _median([abs(v - level) for v in values]))
+            level = median(values)
+            out[phase] = (level, median([abs(v - level) for v in values]))
     return out
 
 
