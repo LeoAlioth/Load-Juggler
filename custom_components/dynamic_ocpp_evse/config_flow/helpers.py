@@ -60,8 +60,6 @@ from ..const import (
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_TANK_POWER_ENTITY_ID,
     CHARGE_LIMIT_UNIT_AMPS,
-    CHARGE_RATE_UNIT_AMPS,
-    CHARGE_RATE_UNIT_WATTS,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DEFAULT_STATION_MAX_CHARGE_POWER,
@@ -520,29 +518,6 @@ def _apply_priority_order(hass, devices: list, chosen: list) -> None:
         hass.config_entries.async_update_entry(
             child, options={**child.options, CONF_LOAD_PRIORITY: rank}
         )
-
-
-async def _detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
-    """The charge rate unit the charger accepts: "A", "W", or None if unknown.
-
-    From its ChargingScheduleAllowedChargingRateUnit; a charger that takes
-    both is driven in amps.
-    """
-    value = await ocpp_config_value(
-        hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
-    )
-    if not value:
-        return None
-    value = str(value).strip()
-    _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
-    if "current" in value.lower():
-        return CHARGE_RATE_UNIT_AMPS
-    if "power" in value.lower():
-        return CHARGE_RATE_UNIT_WATTS
-    _LOGGER.warning(
-        "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s", value
-    )
-    return None
 
 
 async def _detect_meter_value_interval(hass, ocpp_device_id: str) -> int | None:

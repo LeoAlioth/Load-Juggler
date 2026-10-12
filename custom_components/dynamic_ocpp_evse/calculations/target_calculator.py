@@ -2095,7 +2095,7 @@ def _allocate_minimums(
     # Inactive loads the verdict is about to start (site.excess_potential_claims),
     # folded into the ledger at their rank so a lower-ranked Excess load sees
     # them ahead of it on the very cycle the verdict turns on.
-    potential = sorted(getattr(site, "excess_potential_claims", ()) or ())
+    potential = sorted(site.excess_potential_claims)
     for load in loads:
         mask = load.active_phases_mask
         if not mask:

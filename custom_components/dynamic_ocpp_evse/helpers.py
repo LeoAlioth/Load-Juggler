@@ -7,6 +7,8 @@ import logging
 from homeassistant.config_entries import ConfigEntry
 
 from .const import (
+    CHARGE_RATE_UNIT_AMPS,
+    CHARGE_RATE_UNIT_WATTS,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
@@ -158,6 +160,29 @@ async def ocpp_config_value(hass, ocpp_device_id: str | None, key: str):
         _LOGGER.debug("Could not read OCPP %s from %s: %s", key, ocpp_device_id, err)
         return None
 
+
+
+async def detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
+    """The charge rate unit the charger accepts: "A", "W", or None if unknown.
+
+    From its ChargingScheduleAllowedChargingRateUnit; a charger that takes
+    both is driven in amps.
+    """
+    value = await ocpp_config_value(
+        hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
+    )
+    if not value:
+        return None
+    value = str(value).strip()
+    _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
+    if "current" in value.lower():
+        return CHARGE_RATE_UNIT_AMPS
+    if "power" in value.lower():
+        return CHARGE_RATE_UNIT_WATTS
+    _LOGGER.warning(
+        "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s", value
+    )
+    return None
 
 def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> None:
     """

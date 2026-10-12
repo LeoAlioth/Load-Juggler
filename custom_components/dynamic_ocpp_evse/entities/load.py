@@ -477,6 +477,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # Both branches therefore read the live runtime slider first and fall
         # back to the config value exactly as engine/hub_calculation.py does.
         load_rt = self._runtime()
+        pause_s = 60 * get_entry_value(
+            self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION
+        )
         if device_type == DEVICE_TYPE_POWER_STATION:
             # The station's floor is its minimum charge POWER, not a current -
             # see _build_power_station_load().
@@ -730,7 +733,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             DEFAULT_MAX_CHARGE_CURRENT,
         )
 
-        load_rt = self._runtime()
         dynamic_control_on = load_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:
@@ -805,17 +807,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # the smoothed permit may still be climbing back to it.
             self._had_runnable_permit = True
             runnable = round(max(self._available_current, min_charge_current), 1)
-            pause_duration_s = (
-                get_entry_value(
-                    self.config_entry,
-                    CONF_CHARGE_PAUSE_DURATION,
-                    DEFAULT_CHARGE_PAUSE_DURATION,
-                )
-                * 60
-            )
             if self._pause_started_at is not None:
                 elapsed = time.monotonic() - self._pause_started_at
-                if elapsed < pause_duration_s:
+                if elapsed < pause_s:
                     limit = 0
                 else:
                     self._pause_started_at = None
@@ -876,11 +870,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 ):
                     stamp_command(self, now_mono)
                     return
-                pause_s = 60 * get_entry_value(
-                    self.config_entry,
-                    CONF_CHARGE_PAUSE_DURATION,
-                    DEFAULT_CHARGE_PAUSE_DURATION,
-                )
                 hold_s = max(0.0, pause_s - (time.monotonic() - self._pause_started_at))
             sent = await send_ocpp_command(
                 self,
