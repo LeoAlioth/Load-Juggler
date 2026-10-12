@@ -158,13 +158,12 @@ KEPT_READBACKS = 3
 KEPT_ASKS = 4
 
 
-def judge_kept_target(rec, asked, readback, stamp, now,
-                      settle_s=KEPT_SETTLE_S, needed=KEPT_READBACKS):
+def judge_kept_target(rec, asked, readback, stamp, now):
     """Whether the device keeps a lower target than the one asked of it.
 
     Returns ``(rec, kept)``: the record of this ask the caller keeps between
     cycles (``None`` starts one), and the device's own value once it has
-    answered ``asked`` with the same lower one on ``needed`` separate
+    answered ``asked`` with the same lower one on KEPT_READBACKS separate
     readbacks, else None.
 
     A MELCloud heat pump asked for 60 C on boost read back 55 at each of its
@@ -174,10 +173,10 @@ def judge_kept_target(rec, asked, readback, stamp, now,
 
     - it is lower than asked - a higher one is the device's or the user's own
       choice, not a ceiling;
-    - the ask has stood ``settle_s`` - our write's echo, or a cloud poll not yet
+    - the ask has stood KEPT_SETTLE_S - our write's echo, or a cloud poll not yet
       through, reads anything;
     - it is a new readback (``stamp``: the state's ``last_reported``), and
-      ``settle_s`` after the last one counted - a frozen state, or one cloud
+      KEPT_SETTLE_S after the last one counted - a frozen state, or one cloud
       poll seen on two cycles, is one answer;
     - it is the same value as the ones before it - a lag shows the previous
       ask once, a ceiling the same value every time.
@@ -202,16 +201,16 @@ def judge_kept_target(rec, asked, readback, stamp, now,
     if (
         readback is None
         or readback > asked - 0.05
-        or now - rec["since"] < settle_s
+        or now - rec["since"] < KEPT_SETTLE_S
         or stamp is None
         or stamp == rec["stamp"]
-        or (rec["at"] is not None and now - rec["at"] < settle_s)
+        or (rec["at"] is not None and now - rec["at"] < KEPT_SETTLE_S)
     ):
         return rec, None
     if rec["kept"] is None or abs(readback - rec["kept"]) > 0.05:
         rec.update(kept=readback, seen=0)
     rec.update(seen=rec["seen"] + 1, stamp=stamp, at=now)
-    return rec, rec["kept"] if rec["seen"] >= needed else None
+    return rec, rec["kept"] if rec["seen"] >= KEPT_READBACKS else None
 
 
 async def send_hot_water_tank_command(
@@ -393,10 +392,9 @@ async def send_hot_water_tank_command(
         load_rt.pop("_tank_kept", None)
 
     # Publish state for the tank status sensor.
-    if load_rt is not None:
-        load_rt["tank_setpoint"] = setpoint
-        load_rt["tank_setpoint_label"] = label
-        load_rt["tank_heating_permitted"] = heating_permitted
+    load_rt["tank_setpoint"] = setpoint
+    load_rt["tank_setpoint_label"] = label
+    load_rt["tank_heating_permitted"] = heating_permitted
 
     _LOGGER.debug(
         "Hot water tank %s [%s]: setpoint=%.0f°C (%s), heating %s",
@@ -513,8 +511,7 @@ async def _adopt_kept_target(sensor, settings, label, asked, kept, device):
     return value
 
 
-async def _command_water_heater(hass, entity_id, state, permitted, setpoint,
-                                load_rt=None, off_mode=""):
+async def _command_water_heater(hass, entity_id, state, permitted, setpoint, load_rt, off_mode):
     """A water heater is gated by its target temperature: the setpoint while
     the tank may heat or waits at its floor, its lowest target otherwise - or,
     where the tank's settings name the device's own word for off
@@ -534,12 +531,12 @@ async def _command_water_heater(hass, entity_id, state, permitted, setpoint,
     attrs = state.attributes if state is not None else {}
     modes = attrs.get("operation_list") or []
     if off_mode and off_mode not in modes:
-        if load_rt is not None and load_rt.get("_tank_off_mode_warned") != off_mode:
+        if load_rt.get("_tank_off_mode_warned") != off_mode:
             load_rt["_tank_off_mode_warned"] = off_mode
             _LOGGER.warning("Water heater %s has no operation mode %r (it has %s) - "
                             "held at its lowest target instead", entity_id, off_mode, modes)
         off_mode = ""
-    if off_mode and load_rt is not None:
+    if off_mode:
         current = state.state if state is not None else None
         if not permitted:
             if current != off_mode:

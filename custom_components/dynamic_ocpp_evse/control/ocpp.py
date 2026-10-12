@@ -18,26 +18,11 @@ from ..const import (
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
 )
-from ..helpers import get_entry_value, ocpp_config_value
+from ..helpers import detect_charge_rate_unit, get_entry_value
 from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
-
-
-async def detect_charge_rate_unit(sensor, ocpp_device_id: str) -> str | None:
-    """Query OCPP charger for ChargingScheduleAllowedChargingRateUnit."""
-    value = await ocpp_config_value(
-        sensor.hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
-    )
-    if not value:
-        return None
-    value = str(value).strip()
-    if "Current" in value:
-        return CHARGE_RATE_UNIT_AMPS
-    if "Power" in value:
-        return CHARGE_RATE_UNIT_WATTS
-    return None
 
 
 async def send_ocpp_command(
@@ -111,7 +96,7 @@ async def send_ocpp_command(
             ocpp_device_id = get_entry_value(
                 sensor.config_entry, CONF_OCPP_DEVICE_ID, None
             )
-            detected = await detect_charge_rate_unit(sensor, ocpp_device_id)
+            detected = await detect_charge_rate_unit(sensor.hass, ocpp_device_id)
             if detected:
                 charge_rate_unit = detected
                 sensor._cached_charge_rate_unit = detected

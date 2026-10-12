@@ -50,6 +50,7 @@ from ..const import (
     INVERTER_FEATURE_SOLAR,
 )
 from ..helpers import (
+    detect_charge_rate_unit,
     get_entry_value,
     validate_charger_settings,
     validate_offgrid_battery_requirement,
@@ -68,7 +69,6 @@ from .helpers import (
     _TANK_ENTITY_KEYS,
     _apply_priority_order,
     _controlled_devices,
-    _detect_charge_rate_unit,
     _check_power_window,
     _fill_hidden_legs,
     _hub_phase_count,
@@ -651,7 +651,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or get_entry_value(
             self.config_entry, CONF_OCPP_DEVICE_ID, None
         )
-        detected_unit = await _detect_charge_rate_unit(self.hass, ocpp_device_id)
+        detected_unit = await detect_charge_rate_unit(self.hass, ocpp_device_id)
 
         return await self._async_edit_page(
             user_input,

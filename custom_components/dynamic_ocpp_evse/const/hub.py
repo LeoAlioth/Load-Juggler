@@ -30,7 +30,6 @@ DEFAULT_WIRING_TOPOLOGY = WIRING_TOPOLOGY_PARALLEL
 # Battery support configuration constants (hub-level)
 CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
 CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
-CONF_BATTERY_SOC_MIN = "battery_soc_min"  # Minimum SOC below which EV should not charge
 CONF_BATTERY_SOC_FULL = "battery_soc_full"  # SOC at/above which the battery counts as "full" (plug Excess mode)
 CONF_BATTERY_SOC_HYSTERESIS = "battery_soc_hysteresis"  # Hysteresis percentage for SOC thresholds
 # Off-grid, below the minimum SOC the battery still carries the tanks and heaters (at their away setpoint) down to this SOC

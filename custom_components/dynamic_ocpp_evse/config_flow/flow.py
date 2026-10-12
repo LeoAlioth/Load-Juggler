@@ -82,6 +82,7 @@ from ..const import (
 )
 from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR
 from ..helpers import (
+    detect_charge_rate_unit,
     get_entry_value,
     infer_inverter_features,
     strip_unfeatured_inverter_options,
@@ -100,9 +101,7 @@ from .helpers import (
     _STATION_ENTITY_KEYS,
     _TANK_ENTITY_KEYS,
     _auto_detect_entity,
-    _auto_detect_phase_entities,
     _compose_entry_title,
-    _detect_charge_rate_unit,
     _detect_meter_value_interval,
     _check_power_window,
     _entity_registry_ids,
@@ -112,7 +111,6 @@ from .helpers import (
     _normalize_list,
     _normalize_inverter_power_caps,
     _normalize_optional_inputs,
-    _power_beside,
     _same_device_fill,
     _validate_entity_units,
     _write_control_unit_map,
@@ -331,11 +329,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             # A complete set of phases from one pattern set, in the meter's
             # watts where it has them; else the phases one meter has
             entity_ids = self._get_entity_registry_ids()
-            ct_detected = _power_beside(
-                self.hass, _auto_detect_phase_entities(entity_ids, PHASE_PATTERNS)
-            )
-            if not all(ct_detected.values()):
-                ct_detected = _same_device_fill(self.hass, entity_ids, PHASE_PATTERNS)
+            ct_detected = _same_device_fill(self.hass, entity_ids, PHASE_PATTERNS)
 
             data_schema = _hub_grid_schema(
                 self.hass,
@@ -1206,7 +1200,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or detected_device_id
 
         # Detect charger capabilities via OCPP
-        detected_unit = await _detect_charge_rate_unit(self.hass, ocpp_device_id)
+        detected_unit = await detect_charge_rate_unit(self.hass, ocpp_device_id)
         detected_interval = await _detect_meter_value_interval(
             self.hass, ocpp_device_id
         )
