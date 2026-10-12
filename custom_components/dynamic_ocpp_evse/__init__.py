@@ -87,6 +87,7 @@ from .const import (
 from .helpers import (
     get_entry_value,
     infer_inverter_features,
+    strip_hub_inverter_fields,
     strip_unfeatured_inverter_options,
 )
 from . import units
@@ -814,6 +815,11 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
             context={"source": SOURCE_IMPORT},
             data={"hub_entry_id": entry.entry_id},
         )
+    else:
+        # No hardware to import, but settings an old hub may still carry
+        # (the v2 migration's charge/discharge defaults, SOC Full, wiring
+        # topology...): nothing reads them off a hub, so drop them.
+        strip_hub_inverter_fields(hass, entry)
 
     # Check if entities need migration
     await _migrate_hub_entities_if_needed(hass, entry)

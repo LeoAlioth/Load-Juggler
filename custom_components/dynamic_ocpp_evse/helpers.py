@@ -36,6 +36,14 @@ from .const import (
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
+    CONF_SOLAR_FORECAST_ENTITY_IDS,
+    CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_PER_PHASE,
+    CONF_INVERTER_SUPPORTS_ASYMMETRIC,
+    CONF_WIRING_TOPOLOGY,
+    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
 )
 from .registry import get_inverters_for_hub
 
@@ -326,3 +334,42 @@ def inverter_features(entry: ConfigEntry) -> list:
     if declared is not None:
         return list(declared)
     return infer_inverter_features({**entry.data, **entry.options})
+
+
+# The legacy hub-level fields the auto-import moves onto an inverter entry:
+# everything physically attached to the inverter, its PV array included.
+# Site policy stays behind on the hub: SOC hysteresis, the SOC target/min
+# sliders, base consumption, forecast SOC floor and the grid export limit.
+# Nothing reads these off a hub at runtime any more - the import is the
+# only way an old hub's values reach the engine. CONF_SOLAR_FORECAST_
+# ENTITY_IDS (a direct sensor list that lived on dev for under an hour on
+# 2026-08-14, before the device selector replaced it) is read nowhere; it
+# stays listed only so the import strips it from a hub.
+HUB_INVERTER_IMPORT_FIELDS = (
+    CONF_SOLAR_PRODUCTION_ENTITY_ID,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
+    CONF_SOLAR_FORECAST_ENTITY_IDS,
+    CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_PER_PHASE,
+    CONF_INVERTER_SUPPORTS_ASYMMETRIC,
+    CONF_WIRING_TOPOLOGY,
+    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_POWER_ENTITY_ID,
+    CONF_BATTERY_MAX_CHARGE_POWER,
+    CONF_BATTERY_MAX_DISCHARGE_POWER,
+    CONF_BATTERY_SOC_FULL,
+    CONF_BATTERY_CAPACITY_KWH,
+)
+
+
+def strip_hub_inverter_fields(hass, hub_entry: ConfigEntry) -> None:
+    """Drop the legacy inverter fields from a hub entry - the import's own
+    trigger among them (see ``_setup_hub_entry``). No-op when it has none."""
+    hass.config_entries.async_update_entry(
+        hub_entry,
+        data={k: v for k, v in hub_entry.data.items() if k not in HUB_INVERTER_IMPORT_FIELDS},
+        options={k: v for k, v in hub_entry.options.items() if k not in HUB_INVERTER_IMPORT_FIELDS},
+    )
