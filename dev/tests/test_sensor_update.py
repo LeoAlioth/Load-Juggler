@@ -17,6 +17,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import forecast_device, with_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
@@ -54,8 +56,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_TOTAL_ALLOCATED_CURRENT,
     CONF_PHASES,
     CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_FORECAST_SOC_FLOOR,
@@ -101,8 +103,9 @@ from custom_components.dynamic_ocpp_evse.entities.mixins import SITE_CYCLE_WORKE
 
 
 @pytest.fixture
-def setup_domain_data(hass, mock_hub_entry, mock_charger_entry):
+def setup_domain_data(hass, mock_hub_entry, mock_charger_entry, mock_inverter_entry):
     """Initialize hass.data[DOMAIN] with hub and charger structures."""
+    mock_inverter_entry.add_to_hass(hass)
     hass.data[DOMAIN] = {
         "hubs": {
             mock_hub_entry.entry_id: {
@@ -1269,7 +1272,7 @@ async def test_hub_status_names_unavailable_sensor(
 
     # The status line names the sensor; the warning carries the entity_id.
     assert result["hub_status"].startswith("Sensor unavailable:")
-    assert "Battery power sensor" in result["hub_status"]
+    assert "Battery power (Inverter)" in result["hub_status"]
     assert any(
         "sensor.battery_power" in w for w in result["hub_warnings"]
     )
@@ -1521,14 +1524,14 @@ async def test_current_grid_power_sensor_reads_unknown_on_a_cold_start(
 # ── Dead solar sensor: 0 W for the maths, nothing published ──────────
 
 
-def _solar_hub(slug, solar_entity):
-    """A hub whose own solar production sensor is its only fleet member.
+def _solar_hub(hass, slug, solar_entity):
+    """A hub whose one inverter has only a solar production sensor.
 
     Measured solar (not derived), so ``solar_power`` is exactly that sensor's
     reading and ``household_power`` comes from the supply identity - the two
     published figures a fabricated 0 W would poison.
     """
-    return MockConfigEntry(
+    return with_inverter(hass, MockConfigEntry(
         domain=DOMAIN,
         version=2,
         minor_version=2,
@@ -1544,7 +1547,7 @@ def _solar_hub(slug, solar_entity):
             CONF_PHASE_VOLTAGE: 230,
             CONF_SOLAR_PRODUCTION_ENTITY_ID: solar_entity,
         },
-    )
+    ), slug=f"solar_inverter_{slug}")
 
 
 def _set_solar_states(hass, slug, solar_entity, solar_state):
@@ -1577,8 +1580,8 @@ async def test_a_dead_solar_sensor_publishes_no_production(hass):
         run_hub_calculation,
     )
 
-    dead = _solar_hub("dead", "sensor.sl_dead_pv")
-    zero = _solar_hub("zero", "sensor.sl_zero_pv")
+    dead = _solar_hub(hass, "dead", "sensor.sl_dead_pv")
+    zero = _solar_hub(hass, "zero", "sensor.sl_zero_pv")
     hass.data[DOMAIN] = {
         "hubs": {dead.entry_id: {"loads": []}, zero.entry_id: {"loads": []}},
         "loads": {},
@@ -1615,7 +1618,7 @@ async def test_a_solar_reading_resumes_publication_on_the_first_cycle(hass):
         run_hub_calculation,
     )
 
-    hub = _solar_hub("resume", "sensor.sl_resume_pv")
+    hub = _solar_hub(hass, "resume", "sensor.sl_resume_pv")
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
         "loads": {},
@@ -1641,7 +1644,7 @@ async def test_a_held_solar_reading_still_publishes_after_a_dropout(hass):
         run_hub_calculation,
     )
 
-    hub = _solar_hub("held", "sensor.sl_held_pv")
+    hub = _solar_hub(hass, "held", "sensor.sl_held_pv")
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
         "loads": {},
@@ -1769,7 +1772,7 @@ async def test_current_solar_power_clears_when_the_sensor_dies_mid_run(hass):
     )
     from custom_components.dynamic_ocpp_evse.entities.hub import publish_hub_data
 
-    hub = _solar_hub("midrun", "sensor.sl_midrun_pv")
+    hub = _solar_hub(hass, "midrun", "sensor.sl_midrun_pv")
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
         "loads": {},
@@ -1796,8 +1799,11 @@ async def test_current_solar_power_clears_when_the_sensor_dies_mid_run(hass):
 
     # Past INPUT_STALE_TIMEOUT the guard gives up on the held value, and the
     # published figure goes with it.
+    from custom_components.dynamic_ocpp_evse.registry import get_inverters_for_hub
+
+    (inverter,) = get_inverters_for_hub(hass, hub.entry_id)
     hub_runtime = hass.data[DOMAIN]["hubs"][hub.entry_id]
-    hub_runtime["_input_stale_since"]["solar"] = (
+    hub_runtime["_input_stale_since"][f"solar_{inverter.entry_id}"] = (
         time.monotonic() - INPUT_STALE_TIMEOUT - 5
     )
     published = publish_hub_data(hass, hub.entry_id, run_hub_calculation(hass, hub))
@@ -2917,7 +2923,7 @@ async def test_forecast_max_soc_ratchet(hass):
         run_hub_calculation,
     )
 
-    hub = MockConfigEntry(
+    hub = with_inverter(hass, MockConfigEntry(
         domain=DOMAIN,
         version=2,
         minor_version=2,
@@ -2939,11 +2945,11 @@ async def test_forecast_max_soc_ratchet(hass):
             CONF_BASE_CONSUMPTION: 300,
             CONF_BATTERY_CAPACITY_KWH: 10,
             CONF_FORECAST_SOC_FLOOR: 30,
-            # Legacy direct-sensor key (pre-device-selector) - still honored
-            # at runtime, and this test doubles as coverage for that path.
-            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.fc_forecast"],
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [
+                forecast_device(hass, "sensor.fc_forecast")
+            ],
         },
-    )
+    ))
     # Minimal runtime structures - the ratchet state must live in this dict
     # across calls, exactly as it does in production.
     hass.data[DOMAIN] = {
@@ -3039,7 +3045,7 @@ def _hold_rig(hass, slug):
 
     device_id = _forecast_device(hass, slug, _HOLD_DAYS)
     entity_id = f"sensor.{slug}_energy_production_today"
-    hub = MockConfigEntry(
+    hub = with_inverter(hass, MockConfigEntry(
         domain=DOMAIN,
         version=2,
         minor_version=2,
@@ -3059,7 +3065,7 @@ def _hold_rig(hass, slug):
             CONF_FORECAST_SOC_FLOOR: 30,
             CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id],
         },
-    )
+    ))
     runtime = {"loads": []}
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: runtime},
@@ -3195,7 +3201,7 @@ async def test_forecast_charge_limit_latch_round_trips_through_hub_runtime(hass)
         run_hub_calculation,
     )
 
-    hub = MockConfigEntry(
+    hub = with_inverter(hass, MockConfigEntry(
         domain=DOMAIN,
         version=2,
         minor_version=2,
@@ -3217,9 +3223,11 @@ async def test_forecast_charge_limit_latch_round_trips_through_hub_runtime(hass)
             CONF_BASE_CONSUMPTION: 300,
             CONF_BATTERY_CAPACITY_KWH: 10,
             CONF_FORECAST_SOC_FLOOR: 30,
-            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.fl_forecast"],
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [
+                forecast_device(hass, "sensor.fl_forecast")
+            ],
         },
-    )
+    ))
     hub_runtime = {"loads": []}
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: hub_runtime},
@@ -3278,13 +3286,13 @@ async def test_forecast_charge_limit_latch_round_trips_through_hub_runtime(hass)
         assert hub_runtime["_forecast_charge_limiting"] is False
 
 
-def _anchor_hub(slug, export_limit, trigger_margin):
+def _anchor_hub(hass, slug, export_limit, trigger_margin):
     """A forecast hub differing only in its export limit and trigger margin.
 
     Measured solar (not derived) so the advice is a clean function of the
     reading; 10 kWh pack, 5 kW charge rating, 300 W base consumption.
     """
-    return MockConfigEntry(
+    return with_inverter(hass, MockConfigEntry(
         domain=DOMAIN,
         version=2,
         minor_version=2,
@@ -3308,9 +3316,11 @@ def _anchor_hub(slug, export_limit, trigger_margin):
             CONF_BASE_CONSUMPTION: 300,
             CONF_BATTERY_CAPACITY_KWH: 10,
             CONF_FORECAST_SOC_FLOOR: 30,
-            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.an_forecast"],
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [
+                forecast_device(hass, "sensor.an_forecast")
+            ],
         },
-    )
+    ), slug=f"anchor_inverter_{slug}")
 
 
 def _set_anchor_states(hass, solar_w, forecast_w, export_w=0.0, battery_w=500.0):
@@ -3373,8 +3383,8 @@ async def test_forecast_charge_limit_steers_to_a_setpoint_a_margin_under_the_lim
         run_hub_calculation,
     )
 
-    at_limit = _anchor_hub("atlimit", 5000, 0)
-    shifted = _anchor_hub("shifted", 5000, 800)
+    at_limit = _anchor_hub(hass, "atlimit", 5000, 0)
+    shifted = _anchor_hub(hass, "shifted", 5000, 800)
     hass.data[DOMAIN] = {
         "hubs": {
             at_limit.entry_id: {"loads": []},
@@ -3426,7 +3436,7 @@ async def test_the_export_setpoint_never_goes_below_zero(hass):
         run_hub_calculation,
     )
 
-    hub = _anchor_hub("clamped", 400, 500)
+    hub = _anchor_hub(hass, "clamped", 400, 500)
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
         "loads": {},
@@ -3455,12 +3465,9 @@ async def test_the_export_setpoint_never_goes_below_zero(hass):
 
 
 def _destination_hub(slug, base=300):
-    """A forecast hub whose battery (and its ceiling source) is an inverter entry.
-
-    Hub-level: the grid CT, the export limit and base consumption - clipping
-    threshold 5300 W - and the forecast source. The battery belongs to the
-    inverter entry, because that is where the SOC write-control and its normal
-    ceiling source live.
+    """A forecast hub: the grid CT, the export limit and base consumption -
+    clipping threshold 5300 W. The battery, its ceiling source and the
+    forecast source belong to the inverter entry (``_destination_inverter``).
     """
     return MockConfigEntry(
         domain=DOMAIN,
@@ -3479,14 +3486,19 @@ def _destination_hub(slug, base=300):
             CONF_GRID_EXPORT_LIMIT: 5000,
             CONF_BASE_CONSUMPTION: base,
             CONF_FORECAST_SOC_FLOOR: 30,
-            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.dst_forecast"],
         },
     )
 
 
-def _destination_inverter(hub, slug, normal_entity=None, solar_entity=None):
-    """That hub's inverter: a 20 kWh battery, optionally with a ceiling source."""
+def _destination_inverter(
+    hass, hub, slug, normal_entity=None, solar_entity=None, forecast=True
+):
+    """That hub's inverter: a 20 kWh battery and (``forecast``) the site's
+    forecast source, optionally with a ceiling source."""
     options = {
+        CONF_SOLAR_FORECAST_DEVICE_IDS: (
+            [forecast_device(hass, "sensor.dst_forecast")] if forecast else []
+        ),
         CONF_BATTERY_SOC_ENTITY_ID: "sensor.dst_battery_soc",
         CONF_BATTERY_POWER_ENTITY_ID: "sensor.dst_battery_power",
         CONF_BATTERY_MAX_CHARGE_POWER: 5000,
@@ -3555,8 +3567,8 @@ async def test_forecast_max_soc_is_carved_below_the_configured_destination(hass)
 
     with_dest = _destination_hub("with")
     without = _destination_hub("without")
-    inv_with = _destination_inverter(with_dest, "with", "number.dst_normal")
-    inv_without = _destination_inverter(without, "without")
+    inv_with = _destination_inverter(hass, with_dest, "with", "number.dst_normal")
+    inv_without = _destination_inverter(hass, without, "without")
     for entry in (inv_with, inv_without):
         entry.add_to_hass(hass)
     hass.data[DOMAIN] = {
@@ -3600,8 +3612,8 @@ async def test_forecast_charge_gate_engages_relative_to_the_destination_advice(h
 
     with_dest = _destination_hub("gate")
     without = _destination_hub("gateflat")
-    inv_with = _destination_inverter(with_dest, "gate", "number.dst_normal")
-    inv_without = _destination_inverter(without, "gateflat")
+    inv_with = _destination_inverter(hass, with_dest, "gate", "number.dst_normal")
+    inv_without = _destination_inverter(hass, without, "gateflat")
     for entry in (inv_with, inv_without):
         entry.add_to_hass(hass)
     dest_runtime = {"loads": []}
@@ -3645,7 +3657,7 @@ async def test_a_mid_day_destination_change_moves_the_advice_with_it(hass):
     )
 
     hub = _destination_hub("moving")
-    inverter = _destination_inverter(hub, "moving", "number.dst_normal")
+    inverter = _destination_inverter(hass, hub, "moving", "number.dst_normal")
     inverter.add_to_hass(hass)
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
@@ -3686,7 +3698,7 @@ async def test_an_unreadable_destination_holds_its_last_known_value(hass):
     )
 
     hub = _destination_hub("dropout")
-    inverter = _destination_inverter(hub, "dropout", "number.dst_normal")
+    inverter = _destination_inverter(hass, hub, "dropout", "number.dst_normal")
     inverter.add_to_hass(hass)
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
@@ -3705,7 +3717,7 @@ async def test_an_unreadable_destination_holds_its_last_known_value(hass):
         # Never readable at all (a fresh hub, a typo'd entity) is the one case
         # with nothing better to hold: the 100 % anchor, exactly as before.
         fresh_hub = _destination_hub("fresh")
-        fresh_inv = _destination_inverter(fresh_hub, "fresh", "number.dst_missing")
+        fresh_inv = _destination_inverter(hass, fresh_hub, "fresh", "number.dst_missing")
         fresh_inv.add_to_hass(hass)
         hass.data[DOMAIN]["hubs"][fresh_hub.entry_id] = {"loads": []}
         assert run_hub_calculation(hass, fresh_hub)["forecast_battery_max_soc"] == 90
@@ -3750,7 +3762,7 @@ async def test_todays_window_is_untouched_while_today_still_clips(hass):
     )
 
     hub = _destination_hub("windownow")
-    inverter = _destination_inverter(hub, "windownow", "number.dst_normal")
+    inverter = _destination_inverter(hass, hub, "windownow", "number.dst_normal")
     inverter.add_to_hass(hass)
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
@@ -3797,7 +3809,7 @@ async def test_the_window_rolls_over_to_tomorrow_once_todays_clip_is_spent(hass)
     )
 
     hub = _destination_hub("windownext")
-    inverter = _destination_inverter(hub, "windownext", "number.dst_normal")
+    inverter = _destination_inverter(hass, hub, "windownext", "number.dst_normal")
     inverter.add_to_hass(hass)
     runtime = {"loads": []}
     hass.data[DOMAIN] = {
@@ -3848,7 +3860,7 @@ async def test_the_window_search_never_looks_past_tomorrow(hass):
     )
 
     hub = _destination_hub("windowcap")
-    inverter = _destination_inverter(hub, "windowcap", "number.dst_normal")
+    inverter = _destination_inverter(hass, hub, "windowcap", "number.dst_normal")
     inverter.add_to_hass(hass)
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
@@ -3897,7 +3909,7 @@ _TOMORROW_DAWN = {
 def _jit_rig(hass, slug):
     """The worked example's hub, inverter and runtime."""
     hub = _destination_hub(slug)
-    inverter = _destination_inverter(hub, slug, "number.dst_normal")
+    inverter = _destination_inverter(hass, hub, slug, "number.dst_normal")
     inverter.add_to_hass(hass)
     runtime = {"loads": []}
     hass.data[DOMAIN] = {
@@ -4109,7 +4121,7 @@ async def test_an_unreadable_base_consumption_falls_back_to_the_plain_drop(hass)
         data=dict(template.data),
         options={**template.options, CONF_BASE_CONSUMPTION: 0},
     )
-    inverter = _destination_inverter(hub, "jitnobase", "number.dst_normal")
+    inverter = _destination_inverter(hass, hub, "jitnobase", "number.dst_normal")
     inverter.add_to_hass(hass)
     hass.data[DOMAIN] = {
         "hubs": {hub.entry_id: {"loads": []}},
@@ -4173,7 +4185,7 @@ def _fb_rig(hass, slug, soc=88, base=None):
     """
     hub = _destination_hub(slug, base=300 if base is None else base)
     inverter = _destination_inverter(
-        hub, slug, "number.dst_normal", solar_entity="sensor.dst_solar"
+        hass, hub, slug, "number.dst_normal", solar_entity="sensor.dst_solar"
     )
     inverter.add_to_hass(hass)
     runtime = {"loads": []}
@@ -4435,7 +4447,7 @@ async def test_the_battery_yields_to_an_engaged_excess_load_above_its_destinatio
 
     hub = _destination_hub("yield")
     inverter = _destination_inverter(
-        hub, "yield", "number.dst_normal", solar_entity="sensor.dst_solar"
+        hass, hub, "yield", "number.dst_normal", solar_entity="sensor.dst_solar"
     )
     load = MockConfigEntry(
         domain=DOMAIN,
@@ -4550,7 +4562,7 @@ async def test_the_verdict_does_not_flap_while_the_battery_yields_above_target(h
 
     hub = _destination_hub("noflap")
     inverter = _destination_inverter(
-        hub, "noflap", "number.dst_normal", solar_entity="sensor.dst_solar"
+        hass, hub, "noflap", "number.dst_normal", solar_entity="sensor.dst_solar"
     )
     load = MockConfigEntry(
         domain=DOMAIN,
@@ -4671,7 +4683,7 @@ def _no_clip_rig(hass, slug, soc, solar_w=4000.0, normal_entity="number.dst_norm
     """The destination rig on a day with nothing forecast to clip."""
     hub = _destination_hub(slug)
     inverter = _destination_inverter(
-        hub, slug, normal_entity, solar_entity="sensor.dst_solar"
+        hass, hub, slug, normal_entity, solar_entity="sensor.dst_solar"
     )
     inverter.add_to_hass(hass)
     runtime = {"loads": []}
@@ -6306,12 +6318,11 @@ async def test_a_released_limit_hands_the_nameplate_allowance_back(
 
 # --- The observers run on a PER-INVERTER forecast -----------------------------
 #
-# Every other forecast rig here configures the source hub-level
-# (CONF_SOLAR_FORECAST_ENTITY_IDS, the legacy field), which leaves
-# ``FleetMember.forecast_device_ids`` empty - so the gain observer's loop, which
-# keys on exactly that, never executed in any test. It shipped a NameError to a
+# The gain observer's loop keys on ``FleetMember.forecast_device_ids``. While
+# the forecast rigs here configured the source hub-level (the legacy direct
+# sensor list) it never executed in any test, and shipped a NameError to a
 # live site (2026-08-31: merge_forecast_series used in hub_result and never
-# imported there). This rig is the one that walks that loop.
+# imported there). This rig is the one that checks the observation lands.
 
 
 def _forecast_device(hass, slug, watts):
@@ -6343,9 +6354,8 @@ def _forecast_device(hass, slug, watts):
 async def test_a_per_inverter_forecast_drives_the_observers(hass: HomeAssistant):
     """The cycle completes and the gain observation reaches the inverter.
 
-    Without the per-inverter source this loop is skipped entirely, which is how
-    a missing import reached a real site: every existing rig configures the
-    forecast hub-level.
+    Without a per-inverter source this loop is skipped entirely, which is how
+    a missing import reached a real site.
     """
     from freezegun import freeze_time
     from custom_components.dynamic_ocpp_evse.const import (
@@ -6462,7 +6472,9 @@ async def test_battery_less_array_gets_the_accuracy_sensor(hass: HomeAssistant):
     hub = _destination_hub("acarray")
     hub.add_to_hass(hass)
     # The fleet's battery (capacity 20 kWh) - enables the site forecast.
-    battery_inverter = _destination_inverter(hub, "acarray", "number.dst_normal")
+    battery_inverter = _destination_inverter(
+        hass, hub, "acarray", "number.dst_normal", forecast=False
+    )
     battery_inverter.add_to_hass(hass)
     # The battery-less AC-coupled array, owning its own forecast device.
     array = MockConfigEntry(
@@ -6697,7 +6709,7 @@ async def test_a_pv_only_inverter_takes_no_share_of_the_battery_advice(hass):
     )
 
     hub = _destination_hub("pvonly")
-    hybrid = _destination_inverter(hub, "pvonly", "number.dst_normal")
+    hybrid = _destination_inverter(hass, hub, "pvonly", "number.dst_normal")
     array = _pv_only_inverter(hub, "pvonly")
     for entry in (hybrid, array):
         entry.add_to_hass(hass)
@@ -6923,7 +6935,7 @@ async def test_the_accuracy_sensor_restores_the_gain_series(hass: HomeAssistant)
 
     hub = _destination_hub("restore")
     hub.add_to_hass(hass)
-    array = _destination_inverter(hub, "restore", "number.dst_normal")
+    array = _destination_inverter(hass, hub, "restore", "number.dst_normal")
     array.add_to_hass(hass)
     hass.data[DOMAIN] = {"hubs": {hub.entry_id: {"loads": []}}, "loads": {}, "load_allocations": {}, "inverters": {}}
 
@@ -6973,8 +6985,7 @@ def _off_grid_rig(hass, slug, *, soc="70", battery_w="-2000", solar_w="6542", fo
         entry.add_to_hass(hass)
     hass.data[DOMAIN] = {"hubs": {hub.entry_id: {"loads": []}}, "loads": {},
                          "load_allocations": {}, "inverters": {}}
-    # A per-inverter forecast DEVICE, which is what the gain observer keys on
-    # (the hub's legacy entity list feeds the integral but no observer).
+    # A per-inverter forecast DEVICE, which is what the gain observer keys on.
     from custom_components.dynamic_ocpp_evse.const import (
         CONF_SOLAR_FORECAST_DEVICE_IDS,
     )

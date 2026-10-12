@@ -560,11 +560,10 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
 
     A site phase exists when it has a grid CT or an inverter output sensor
     (mirrors ``run_hub_calculation``'s phase derivation). The inverter output
-    entities may live on the hub's own legacy fields OR - after the one-time
-    auto-import - on any of its inverter child entries, so the whole fleet is
-    consulted. Without that, an off-grid 3-phase site collapses to 1 phase
-    post-import, hiding the L2/L3 mapping fields and force-mapping every
-    charger leg onto L1's phase.
+    entities live on the hub's inverter child entries, so the whole fleet is
+    consulted. Without that, an off-grid 3-phase site collapses to 1 phase,
+    hiding the L2/L3 mapping fields and force-mapping every charger leg onto
+    L1's phase.
     """
     if not hub_entry_id:
         return 3  # Default to 3 if unknown
@@ -584,10 +583,9 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
     )
     if count > 0:
         return count
-    # Off-grid fallback: infer from the inverter output entities of the whole
-    # fleet - the hub's own (pre-import) fields plus every inverter child
-    # entry. A phase counts once, no matter how many members feed it.
-    sources = [opts] + [
+    # Off-grid fallback: infer from the inverter output entities of every
+    # inverter child entry. A phase counts once, no matter how many feed it.
+    sources = [
         {**inverter.data, **inverter.options}
         for inverter in get_inverters_for_hub(hass, hub_entry_id)
     ]

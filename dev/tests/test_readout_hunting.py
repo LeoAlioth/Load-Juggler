@@ -32,6 +32,8 @@ from unittest.mock import patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import with_inverter
+
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGE_PAUSE_DURATION,
@@ -207,7 +209,7 @@ class World:
 
 def _make_site(hass, off_grid=False):
     """Grid-tied: a 6 kW Max Import Power on phase A. Off-grid: no grid CT at
-    all, and a series hybrid (the hub's own inverter fields) rated 6 kW with
+    all, and a series hybrid (the hub's inverter entry) rated 6 kW with
     its AC output metered on phase A and a large battery behind it - so the
     binding limit is again 6 kW, now the inverter's."""
     if off_grid:
@@ -229,11 +231,11 @@ def _make_site(hass, off_grid=False):
             CONF_PHASE_VOLTAGE: V,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_allowance",
         }
-    hub_entry = MockConfigEntry(
+    hub_entry = with_inverter(hass, MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="Hub",
         data={CONF_NAME: "Hub", CONF_ENTITY_ID: "hub", ENTRY_TYPE: ENTRY_TYPE_HUB},
         options=hub_options,
-    )
+    ))
     evse = MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="evse",
         data={

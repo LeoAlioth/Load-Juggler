@@ -15,7 +15,6 @@ from .const import (
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -75,8 +74,7 @@ def get_entry_value(entry: ConfigEntry, key: str, default=None):
 
 
 def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
-    """True when any battery exists on this hub's fleet - on the hub's own
-    (legacy) battery fields, or on any inverter entry linked to it.
+    """True when any inverter entry linked to this hub has a battery.
 
     The single gate for every battery-dependent hub entity (SOC sensors and
     sliders, the Allow Grid Charging switch), shared across the sensor,
@@ -85,14 +83,8 @@ def hub_has_battery(hass, hub_entry: ConfigEntry) -> bool:
     return any(
         get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
         or get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-        for entry in fleet_entries(hass, hub_entry)
+        for entry in get_inverters_for_hub(hass, hub_entry.entry_id)
     )
-
-
-def fleet_entries(hass, hub_entry: ConfigEntry) -> list:
-    """The hub's own entry (its legacy hub-level inverter fields) and every
-    inverter entry under it."""
-    return [hub_entry, *get_inverters_for_hub(hass, hub_entry.entry_id)]
 
 
 def has_battery_capacity(entry: ConfigEntry) -> bool:
@@ -105,11 +97,11 @@ def has_battery_capacity(entry: ConfigEntry) -> bool:
 
 
 def fleet_has_battery_capacity(hass, hub_entry: ConfigEntry) -> bool:
-    """Whether any battery on this hub's fleet - the hub's own (legacy) or an
-    inverter entry's - has a size: the engine's forecast gate."""
+    """Whether any battery on this hub's inverter entries has a size: the
+    engine's forecast gate."""
     return any(
         has_battery_capacity(entry)
-        for entry in fleet_entries(hass, hub_entry)
+        for entry in get_inverters_for_hub(hass, hub_entry.entry_id)
     )
 
 
@@ -118,13 +110,11 @@ def fleet_has_forecast_sources(hass, hub_entry: ConfigEntry) -> bool:
 
     Forecast devices belong to the inverter whose array they model, but
     clipping is a site-level question, so the hub's forecast sensors light up
-    as soon as ANY member has one. The hub's own (legacy) fields count until
-    the auto-import moves them onto an inverter entry.
+    as soon as ANY member has one.
     """
     return any(
         get_entry_value(entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None)
-        or get_entry_value(entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None)
-        for entry in fleet_entries(hass, hub_entry)
+        for entry in get_inverters_for_hub(hass, hub_entry.entry_id)
     )
 
 
@@ -212,22 +202,19 @@ def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> N
 
 def validate_offgrid_battery_requirement(
     grid_data: dict,
-    battery_data: dict,
     errors: dict[str, str],
-    hass=None,
-    hub_entry_id: str | None = None,
+    hass,
+    hub_entry_id: str,
 ) -> None:
     """Require a battery on hubs with no grid CTs (hard block).
 
     A hub with no grid CT entities runs off-grid: the battery SOC drives the
     mode logic and battery power drives off-grid solar-surplus detection, so
-    both entities are mandatory - on the hub itself, or (when ``hass`` and
-    ``hub_entry_id`` are given, i.e. the hub already exists) on any inverter
-    entry linked to it. Adds an error to ``errors`` in-place.
+    both entities are mandatory on some inverter entry linked to the hub.
+    Adds an error to ``errors`` in-place.
 
     Args:
         grid_data: config holding the phase-current entity keys (may be None).
-        battery_data: config holding the battery SOC / power entity keys.
         errors: error dict to populate (modified in-place).
     """
     has_grid_cts = any(
@@ -238,19 +225,13 @@ def validate_offgrid_battery_requirement(
             CONF_PHASE_C_CURRENT_ENTITY_ID,
         )
     )
-    if not has_grid_cts and not (
-        battery_data.get(CONF_BATTERY_SOC_ENTITY_ID)
-        and battery_data.get(CONF_BATTERY_POWER_ENTITY_ID)
+    if has_grid_cts or any(
+        get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
+        and get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
+        for entry in get_inverters_for_hub(hass, hub_entry_id)
     ):
-        # A battery on a linked inverter entry satisfies the requirement -
-        # after the auto-import that is where the battery normally lives.
-        if hass is not None and hub_entry_id and any(
-            get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
-            and get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
-            for entry in get_inverters_for_hub(hass, hub_entry_id)
-        ):
-            return
-        errors["base"] = "battery_required_no_cts"
+        return
+    errors["base"] = "battery_required_no_cts"
 
 
 # --- Inverter features: what an inverter entry declares it has ---------------

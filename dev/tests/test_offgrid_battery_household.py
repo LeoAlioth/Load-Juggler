@@ -38,6 +38,8 @@ on every cycle, day or night.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import with_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -115,7 +117,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, solar_w, solar_sensor,
     settled on the household alone; then the car plugs in and slews toward its
     last command at ``car_ramp_a_s``. One row per cycle.
     """
-    hub = _hub(slug, topology, solar_sensor, battery_sensor)
+    hub = with_inverter(hass, _hub(slug, topology, solar_sensor, battery_sensor))
     hass.states.async_set(STATUS, "Available")
     hass.states.async_set(SOC, "80", BATTERY_PCT)
     draw = 0.0

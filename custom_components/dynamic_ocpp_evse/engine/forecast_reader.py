@@ -72,10 +72,9 @@ def resolve_forecast_sensor(hass, device_id, held=()):
     return candidates[0]
 
 
-def configured_forecast_sensors(hass, device_ids, legacy_entity_ids=None, held=()):
-    """The sensor entity_ids to read: one per configured forecast device,
-    plus any directly-configured legacy entities (pre-device-selector
-    installs). A device whose sensors expose no watts data contributes
+def configured_forecast_sensors(hass, device_ids, held=()):
+    """The sensor entity_ids to read: one per configured forecast device.
+    A device whose sensors expose no watts data contributes
     nothing - fail open, visibility via the hub Status sensor - unless a
     forecast is held for one of them (``held``, see resolve_forecast_sensor)."""
     entity_ids = []
@@ -87,9 +86,6 @@ def configured_forecast_sensors(hass, device_ids, legacy_entity_ids=None, held=(
             _LOGGER.debug(
                 "Forecast device %s has no watts-bearing sensor", device_id
             )
-    for entity_id in legacy_entity_ids or []:
-        if entity_id not in entity_ids:
-            entity_ids.append(entity_id)
     return entity_ids
 
 

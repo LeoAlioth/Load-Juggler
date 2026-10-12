@@ -104,8 +104,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         else:
             _LOGGER.info("Max import power: no sensor and no slider - unlimited")
 
-        # Only create battery entities if any battery is on the fleet (hub
-        # legacy fields or an inverter entry).
+        # Only create battery entities if any inverter entry has a battery.
         #   SOC Target - Eco: below it charge at minimum rate, at/above it at
         #     solar rate or full speed. Solar: below it do not charge.
         #   SOC Min - below it no load charges in any mode: the absolute floor
@@ -118,7 +117,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                 (
                     v for v in (
                         get_entry_value(e, CONF_BATTERY_SOC_FULL, None)
-                        for e in (config_entry, *get_inverters_for_hub(hass, config_entry.entry_id))
+                        for e in get_inverters_for_hub(hass, config_entry.entry_id)
                     ) if v
                 ),
                 DEFAULT_BATTERY_SOC_FULL,

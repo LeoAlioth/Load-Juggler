@@ -436,7 +436,7 @@ def _read_solar(state, ema=None, stale_for=None, entity_id=_SOLAR):
         hub_runtime["_input_stale_since"] = {key: time.monotonic() - stale_for}
     ema_inputs = dict(ema or {})
     member = _read_fleet_member(
-        hass, entry, hub_runtime, ema_inputs, V, legacy=False
+        hass, entry, hub_runtime, ema_inputs, V
     )
     return member.solar_measured, member.solar_assumed
 
@@ -492,7 +492,7 @@ def test_no_production_sensor_configured_is_not_a_fabrication():
     # Nothing was invented: this member derives its production from its
     # inverter output, or the site falls back to grid export.
     entry = FakeInverterEntry({})
-    member = _read_fleet_member(FakeHass({}), entry, {}, {}, V, legacy=False)
+    member = _read_fleet_member(FakeHass({}), entry, {}, {}, V)
     assert member.has_solar_entity is False
     assert member.solar_measured is None
     assert member.solar_assumed is False
@@ -528,7 +528,6 @@ def test_a_pv_only_entry_hands_the_fleet_no_battery_figures():
         {},
         {},
         V,
-        legacy=False,
     )
     assert member.has_battery is False
     assert member.solar_measured == 1800.0  # the PV half still reads
@@ -560,7 +559,7 @@ def test_a_capacity_sensor_sets_the_size_and_holds_through_a_dropout():
 
     def capacity(state):
         hass = FakeHass({"sensor.soc": soc, "sensor.capacity": state})
-        return _read_fleet_member(hass, entry, runtime, {}, V, legacy=False).capacity_kwh
+        return _read_fleet_member(hass, entry, runtime, {}, V).capacity_kwh
 
     assert capacity(FakeState("unavailable", unit="kWh")) == 60
     assert capacity(FakeState("62054.4", unit="Wh")) == 62.0544

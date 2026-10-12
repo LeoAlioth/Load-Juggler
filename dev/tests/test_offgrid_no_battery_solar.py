@@ -29,6 +29,8 @@ from types import SimpleNamespace
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import with_inverter
+
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGE_PAUSE_DURATION,
@@ -144,7 +146,7 @@ SITES = pytest.mark.parametrize(
 @pytest.fixture
 def site(hass, request):
     wiring, mode, sun_w, house_w = request.param
-    hub_entry = MockConfigEntry(
+    hub_entry = with_inverter(hass, MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="Hub",
         data={CONF_NAME: "Hub", CONF_ENTITY_ID: "hub", ENTRY_TYPE: ENTRY_TYPE_HUB},
         options={
@@ -156,7 +158,7 @@ def site(hass, request):
             CONF_INVERTER_MAX_POWER: RATING_W,
             CONF_WIRING_TOPOLOGY: wiring,
         },
-    )
+    ))
     evse = MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="evse",
         data={

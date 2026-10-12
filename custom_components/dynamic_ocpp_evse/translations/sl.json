@@ -416,7 +416,7 @@
             "no_members_selected": "Izberite vsaj enega porabnika za to deljeno varovalko.",
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
-            "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Obvezni sta entiteta napolnjenosti baterije in entiteta moči baterije.",
+            "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Eden od njegovih razsmernikov potrebuje entiteto napolnjenosti baterije in entiteto moči baterije.",
             "ocpp_device_not_usable": "Ta naprava nima uporabnih senzorjev OCPP polnilne postaje. Izberite napravo, ki jo je za polnilno postajo ustvarila integracija OCPP - potrebuje senzor uvoženega toka ter senzor ponujenega toka ali ponujene moči.",
             "invalid_unit": "Neujemanje enote senzorja - preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
             "control_needs_battery": "Upravljanje polnjenja baterije potrebuje baterijo - označite tudi »Baterija«.",

@@ -80,6 +80,7 @@ from ..calculations.utils import (
     managed_phase_draws,
 )
 from ..helpers import get_entry_value
+from ..registry import get_inverters_for_hub
 from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
@@ -431,20 +432,26 @@ def _read_site_phases(hass, hub_entry, voltage):
     has_grid_cts = any(r is not None for r in raw_phases)
 
     # A site phase exists if it has EITHER a grid CT or an inverter output
-    # sensor configured - the phase count is the combination of both. For a
-    # phase with an inverter sensor but no grid CT (an off-grid site, or a
-    # partially grid-metered one), grid current is taken as 0 A so the phase
-    # still counts. Without this a 1-phase off-grid site would look 3-phase
-    # and per-phase figures would be split across phantom phases. A phase whose
-    # CT is merely unreadable is NOT 0 A - the sentinel is not None, so it falls
-    # through to the holdover instead.
+    # sensor configured on any of the hub's inverter entries - the phase count
+    # is the combination of both. For a phase with an inverter sensor but no
+    # grid CT (an off-grid site, or a partially grid-metered one), grid current
+    # is taken as 0 A so the phase still counts. Without this a 1-phase
+    # off-grid site would look 3-phase and per-phase figures would be split
+    # across phantom phases. A phase whose CT is merely unreadable is NOT 0 A -
+    # the sentinel is not None, so it falls through to the holdover instead.
+    # (Read off the hub entry itself until 2026-10-12, where no output sensor
+    # has lived since the import: an off-grid 3-phase site with its outputs on
+    # an inverter entry ran as 1-phase.)
     inv_phase_confs = (
         CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
         CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
         CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     )
+    inverters = get_inverters_for_hub(hass, hub_entry.entry_id)
     for i, conf in enumerate(inv_phase_confs):
-        if raw_phases[i] is None and get_entry_value(hub_entry, conf, None):
+        if raw_phases[i] is None and any(
+            get_entry_value(inverter, conf, None) for inverter in inverters
+        ):
             raw_phases[i] = 0.0
     # Nothing configured at all - fall back to a single phase.
     if all(r is None for r in raw_phases):
@@ -1193,27 +1200,25 @@ def _build_hub_status(
     if not has_grid_cts and not has_inverter_output and not has_solar_entity:
         hub_status = "Setup incomplete"
         hub_warnings.append(
-            "No power-measurement input configured. Add at least one in the "
-            "hub options: grid CT current sensors (grid-tied sites), inverter "
-            "output power sensors, or a solar production sensor."
+            "No power-measurement input configured. Add at least one: grid "
+            "CT current sensors in the hub options (grid-tied sites), or an "
+            "inverter entry's output power or solar production sensor."
         )
     elif not has_grid_cts:
         # Off-grid: no grid CTs, so the battery is the primary state source.
-        # Any fleet member's battery satisfies the requirement - the battery
-        # may live on the hub's legacy fields or on an inverter entry.
+        # Any fleet member's battery satisfies the requirement.
         hub_warnings.append("Off-grid mode (no grid CTs)")
         if not any(m.battery_soc is not None or m.has_battery for m in members):
             hub_status = "Setup incomplete"
             hub_warnings.append(
                 "Off-grid hub needs a battery SOC sensor - it drives the "
-                "operating-mode logic. Set it on the hub or an inverter entry."
+                "operating-mode logic. Set it on an inverter entry."
             )
         if not any(m.has_battery_power_entity for m in members):
             hub_status = "Setup incomplete"
             hub_warnings.append(
                 "Off-grid hub needs a battery power sensor - it is used to "
-                "detect available solar surplus. Set it on the hub or an "
-                "inverter entry."
+                "detect available solar surplus. Set it on an inverter entry."
             )
         if not has_inverter_output and not has_solar_entity:
             hub_warnings.append(
@@ -1331,7 +1336,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
 
-    # --- Inverter fleet (inverter entries + legacy hub-level fields) ---
+    # --- Inverter fleet (the hub's inverter entries) ---
     # Every battery/inverter scalar below is a fleet aggregate. With a single
     # member (the classic setup) each aggregate reduces to exactly the old
     # singleton value - see engine/fleet.py for the per-member gating rules.
@@ -1652,8 +1657,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
 
     # --- Per-inverter data for the inverter-entry sensors ---
-    # The legacy implicit member (the hub's own fields) has no device of its
-    # own - its values already show on the hub's fleet sensors.
     inverters_data = {
         m.entry_id: {
             "name": m.name,
@@ -1665,7 +1668,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
             "battery_power": m.battery_power,
         }
         for m in members
-        if m.entry_id != hub_entry_id
     }
 
     # --- PV clipping forecast (advisory battery headroom) ---

@@ -785,22 +785,16 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
         if load_data.get("hub_entry_id") == entry.entry_id
     ]
 
-    # Check if entities need migration
-    await _migrate_hub_entities_if_needed(hass, entry)
-    
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_HUB])
-
-    # Trigger discovery for unconfigured OCPP chargers
-    await _discover_and_notify_chargers(hass, entry.entry_id)
-
     # Auto-import: a hub still carrying legacy hub-level HARDWARE config
     # (inverter, battery or PV entities and capacities - bare charge/discharge
     # defaults don't count) gets it moved onto a standalone inverter entry.
-    # The trigger is the presence of a field, so a release that moves one
-    # more field onto the inverter converges on the next restart; blanking
-    # removes the trigger, making it self-terminating.
-    # Until the import lands the engine keeps treating the hub's fields as one
-    # implicit fleet member, so nothing is lost or double-counted in between.
+    # The trigger is the presence of a field, and blanking removes it, so it
+    # is self-terminating. Awaited here, BEFORE the platforms are set up: the
+    # engine reads inverter settings only from inverter entries, so the hub
+    # must not start computing while its inverter still sits on the hub.
+    # (The new entry's own setup runs inside this await - the hub is already
+    # in hass.data, which is all an inverter waits for - and no update
+    # listener is registered yet, so blanking the hub reloads nothing.)
     if any(
         get_entry_value(entry, key, None)
         for key in (
@@ -815,13 +809,19 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
             CONF_INVERTER_MAX_POWER_PER_PHASE,
         )
     ):
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": SOURCE_IMPORT},
-                data={"hub_entry_id": entry.entry_id},
-            )
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={"hub_entry_id": entry.entry_id},
         )
+
+    # Check if entities need migration
+    await _migrate_hub_entities_if_needed(hass, entry)
+    
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_HUB])
+
+    # Trigger discovery for unconfigured OCPP chargers
+    await _discover_and_notify_chargers(hass, entry.entry_id)
 
     return True
 

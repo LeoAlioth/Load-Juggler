@@ -54,6 +54,68 @@ async def test_hub_setup(
     assert hub_data["loads"] == []
 
 
+async def test_a_hub_with_legacy_inverter_fields_is_split_before_its_platforms(
+    hass: HomeAssistant,
+    mock_setup,
+):
+    """An old hub still carrying inverter/battery/PV fields is converted at
+    setup: a new inverter entry gets the values and the hub loses them - all
+    BEFORE the hub's platforms (and so the engine) start, because nothing
+    reads those fields off a hub any more. A reload imports nothing twice."""
+    from custom_components.dynamic_ocpp_evse.registry import get_inverters_for_hub
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_GRID_EXPORT_LIMIT,
+        CONF_INVERTER_MAX_POWER,
+        CONF_SOLAR_PRODUCTION_ENTITY_ID,
+    )
+
+    legacy = {
+        CONF_INVERTER_MAX_POWER: 17000,
+        CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.pv_power",
+        CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc",
+        CONF_BATTERY_POWER_ENTITY_ID: "sensor.batt_power",
+        CONF_BATTERY_MAX_CHARGE_POWER: 4000,
+    }
+    hub = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=8,
+        title="Old Hub",
+        data={ENTRY_TYPE: ENTRY_TYPE_HUB, CONF_ENTITY_ID: "old_hub"},
+        options={**legacy, CONF_GRID_EXPORT_LIMIT: 5000, CONF_BATTERY_SOC_HYSTERESIS: 3},
+    )
+    hub.add_to_hass(hass)
+
+    # What the hub's platforms would find when they start.
+    at_platforms = []
+
+    async def forward(entry, platforms):
+        if entry.entry_id == hub.entry_id:
+            at_platforms.append(
+                (
+                    len(get_inverters_for_hub(hass, hub.entry_id)),
+                    any(key in hub.options for key in legacy),
+                )
+            )
+
+    mock_setup["forward"].side_effect = forward
+
+    await hass.config_entries.async_setup(hub.entry_id)
+    await hass.async_block_till_done()
+
+    (inverter,) = get_inverters_for_hub(hass, hub.entry_id)
+    assert {k: inverter.options[k] for k in legacy} == legacy
+    assert not any(key in hub.options for key in legacy)
+    # Site policy stays on the hub.
+    assert hub.options[CONF_GRID_EXPORT_LIMIT] == 5000
+    assert hub.options[CONF_BATTERY_SOC_HYSTERESIS] == 3
+    assert at_platforms == [(1, False)]
+
+    await hass.config_entries.async_reload(hub.entry_id)
+    await hass.async_block_till_done()
+    assert get_inverters_for_hub(hass, hub.entry_id) == [inverter]
+
+
 async def test_charger_setup(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
@@ -277,8 +339,6 @@ async def test_fleet_survives_a_hub_reload(
     await hass.config_entries.async_setup(inverter.entry_id)
     await hass.async_block_till_done()
 
-    # The hub fixture's legacy battery fields auto-import into an inverter
-    # entry of their own, so compare sets rather than assuming a lone member.
     before = {e.entry_id for e in get_inverters_for_hub(hass, mock_hub_entry.entry_id)}
     assert inverter.entry_id in before
 

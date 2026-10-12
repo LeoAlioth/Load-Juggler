@@ -30,7 +30,6 @@ from ..const import (
     CONF_PRIORITY_ORDER,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_SOC_LIMIT_ENTITY_IDS,
     DEFAULT_LOAD_PRIORITY,
@@ -256,11 +255,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             return self.async_show_menu(step_id="init", menu_options=menu_options)
         if entry_type == ENTRY_TYPE_HUB:
             # A hub edits its own settings one question per page - its
-            # hardware lives on inverter entries (a hub still carrying legacy
-            # hardware fields has them moved there on its next setup). The
-            # battery/forecast policy is offered only while some inverter on
-            # it declares a battery; the priority order only while it has
-            # loads to order.
+            # hardware lives on inverter entries. The battery/forecast policy
+            # is offered only while some inverter on it declares a battery;
+            # the priority order only while it has loads to order.
             menu_options = ["hub_connection", "hub_export"]
             if hub_has_battery(self.hass, self.config_entry):
                 menu_options.append("hub_policy")
@@ -398,8 +395,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             validate=lambda data, errors: _validate_forecast_devices(
                 self.hass, data, errors
             ),
-            # The device selection replaces any legacy sensor list.
-            finalize=lambda data: data.update({CONF_SOLAR_FORECAST_ENTITY_IDS: []}),
         )
 
     async def async_step_inverter_battery(
@@ -450,8 +445,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         def _require_battery_when_offgrid(data, errors) -> None:
             validate_offgrid_battery_requirement(
-                data, self._defaults, errors,
-                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
+                data, errors, self.hass, self.config_entry.entry_id
             )
 
         return await self._async_edit_page(

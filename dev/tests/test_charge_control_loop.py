@@ -32,6 +32,8 @@ import math
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import forecast_device
+
 from custom_components.dynamic_ocpp_evse.control import inverter as control
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BASE_CONSUMPTION,
@@ -53,7 +55,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
+    CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     DOMAIN,
     ENTRY_TYPE,
@@ -90,12 +92,11 @@ def _hub(slug):
             CONF_GRID_EXPORT_LIMIT: int(LIMIT),
             CONF_BASE_CONSUMPTION: int(BASE),
             CONF_FORECAST_SOC_FLOOR: 30,
-            CONF_SOLAR_FORECAST_ENTITY_IDS: ["sensor.loop_forecast"],
         },
     )
 
 
-def _inverter(hub, slug, interval=None):
+def _inverter(hass, hub, slug, interval=None):
     return MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=4,
         title=f"Loop Inverter {slug}",
@@ -112,6 +113,9 @@ def _inverter(hub, slug, interval=None):
             CONF_BATTERY_NOMINAL_VOLTAGE: PACK_V,
             CONF_SOC_LIMIT_NORMAL_ENTITY_ID: "number.loop_normal",
             CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.loop_solar",
+            CONF_SOLAR_FORECAST_DEVICE_IDS: [
+                forecast_device(hass, "sensor.loop_forecast")
+            ],
             CONF_CHARGE_LIMIT_ENTITY_ID: REGISTER,
             CONF_CHARGE_LIMIT_UNIT: "A",
             **({} if interval is None
@@ -123,7 +127,7 @@ def _inverter(hub, slug, interval=None):
 async def _rig(hass, slug, soc, clip=False, interval=None, writes=None,
                with_evse=False):
     hub = _hub(slug)
-    inverter = _inverter(hub, slug, interval=interval)
+    inverter = _inverter(hass, hub, slug, interval=interval)
     inverter.add_to_hass(hass)
     # A 1-phase 6→16 A Excess EVSE, for the yield row.
     load = evse_entry(hub, "loop_evse", hi=16) if with_evse else None

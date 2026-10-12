@@ -28,6 +28,8 @@ the house - 21.74 A - on every cycle, and the output must never pass 6 kW.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import with_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -91,7 +93,7 @@ def _hub(slug, topology):
 
 
 def _pv_inverter(hub):
-    """An unrated AC-coupled PV inverter beside the hub's own hybrid."""
+    """An unrated AC-coupled PV inverter beside the hub's hybrid."""
     return MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=4, title="Off-grid PV",
         data={CONF_NAME: "Off-grid PV",
@@ -112,13 +114,13 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False,
     The connector reads Available for ``START`` cycles, so every input EMA is
     settled on the household alone; then the car plugs in and slews toward its
     last command at ``car_ramp_a_s``. ``mixed`` adds a parallel PV inverter
-    putting out ``PV_A`` on the same bus, so the hub's own inverter carries
+    putting out ``PV_A`` on the same bus, so the hub's hybrid carries
     the rest. ``solar_w`` is the hub inverter's own (unmetered) production:
     its battery carries the supply less that, charging when it is negative.
     ``mode`` is the car's operating mode (Standard when None). One row per
     cycle.
     """
-    hub = _hub(slug, topology)
+    hub = with_inverter(hass, _hub(slug, topology))
     pv_a = PV_A if mixed else 0.0
     if mixed:
         _pv_inverter(hub).add_to_hass(hass)
@@ -134,7 +136,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False,
         if i >= START:
             draw = slew(draw, command, car_ramp_a_s * DT)
         supply = HOUSE_A + draw
-        # The hub's own inverter carries whatever the PV inverter does not,
+        # The hub's hybrid carries whatever the PV inverter does not,
         # all of it from its battery at night.
         hass.states.async_set(OUTPUT, f"{supply - pv_a:.3f}", AMPS)
         hass.states.async_set(
