@@ -221,7 +221,7 @@ def beside(rows: Sequence[dict], reference: str, kind: str, phase: str) -> Optio
 
 
 def phase_mapping(votes: Mapping[str, Mapping[str, float]], phases: Sequence[str] = ("a", "b", "c"),
-                  min_votes: float = 0, current: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
+                  current: Optional[Mapping[str, str]] = None) -> Dict[str, str]:
     """Which phase each of a meter's own channels carries.
 
     ``votes[channel][phase]`` is the evidence that the channel carries that
@@ -233,9 +233,8 @@ def phase_mapping(votes: Mapping[str, Mapping[str, float]], phases: Sequence[str
     tie between them.
 
     ``current`` is what the channels are believed to carry now (default:
-    each its own label). Only a strictly better answer replaces it: with
-    fewer than ``min_votes`` votes in all, or on a tie, ``current`` stands,
-    and between equally good answers the one relabelling fewest channels
+    each its own label). Only a strictly better answer replaces it: on a
+    tie ``current`` stands, and between equally good answers the one relabelling fewest channels
     wins - one line found on another phase swaps with the line that had it.
 
     Load Juggler asks the same question about a charger's lines (Anze,
@@ -245,8 +244,8 @@ def phase_mapping(votes: Mapping[str, Mapping[str, float]], phases: Sequence[str
     prior.update(current or {})
     channels = sorted(prior)
     best = tuple(prior[c] for c in channels)
-    if not channels or sum(sum(r.values()) for r in votes.values()) < min_votes:
-        return dict(zip(channels, best))
+    if not channels:
+        return {}
 
     def score(perm):
         return (sum((votes.get(c) or {}).get(p, 0) for c, p in zip(channels, perm)),
