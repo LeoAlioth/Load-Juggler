@@ -9,12 +9,12 @@ import logging
 import math
 
 from homeassistant.helpers import entity_registry as er
+from ..registry import own_entity_id
 from homeassistant.helpers.translation import async_get_translations
 
 from ..const import (
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CLIMATE_ENTITY_ID,
-    CONF_ENTITY_ID,
     CONF_NAME,
     DOMAIN,
     CONF_SOLAR_GRACE_PERIOD,
@@ -456,7 +456,6 @@ async def _adopt_kept_target(sensor, settings, label, asked, kept, device):
     hass, entry, load_rt = sensor.hass, sensor.config_entry, sensor._runtime()
     value = math.floor(kept + 0.01)
     names = list(settings)
-    registry = er.async_get(hass)
     lowered = []
     for name in names[: names.index(label) + 1]:
         if settings[name] <= value:
@@ -464,9 +463,7 @@ async def _adopt_kept_target(sensor, settings, label, asked, kept, device):
         key = f"tank_{name}_temperature"
         load_rt[key] = value
         lowered.append(f"{name.title()} Temperature")
-        number = registry.async_get_entity_id(
-            "number", DOMAIN, f"{entry.data.get(CONF_ENTITY_ID)}_{key}"
-        )
+        number = own_entity_id(hass, entry, "number", f"_{key}")
         if number:
             await hass.services.async_call(
                 "number",

@@ -16,7 +16,6 @@ from .. import units
 from ..entities.readout import status_with_readout_note
 from ..entities.sun_probe import status_with_sun_probe_note
 from ..const import (
-    CONF_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_ENTITY_ID,
@@ -82,7 +81,7 @@ from ..const import (
     resolve_operating_mode,
 )
 from ..helpers import get_entry_value
-from ..registry import get_groups_for_hub, get_inverters_for_hub
+from ..registry import get_groups_for_hub, get_inverters_for_hub, own_entity_id
 from .helpers import (
     _LOGGER,
     _controlled_devices,
@@ -400,10 +399,7 @@ def _device_status(hass, load_entry) -> str | None:
     )
     if not suffix:
         return None
-    unique_id = f"{load_entry.data.get(CONF_ENTITY_ID)}{suffix}"
-    entity_id = async_get_entity_registry(hass).async_get_entity_id(
-        "sensor", DOMAIN, unique_id
-    )
+    entity_id = own_entity_id(hass, load_entry, "sensor", suffix)
     state = hass.states.get(entity_id) if entity_id else None
     if state is None or units.is_unavailable(state):
         return None

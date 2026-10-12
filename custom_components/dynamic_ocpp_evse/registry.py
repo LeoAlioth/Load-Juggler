@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from .const import (
+    CONF_ENTITY_ID,
     CONF_HUB_ENTRY_ID,
     DOMAIN,
     ENTRY_TYPE,
@@ -28,6 +29,16 @@ from .const import (
 if TYPE_CHECKING:
     from homeassistant.config_entries import ConfigEntry
     from homeassistant.core import HomeAssistant
+
+
+def own_entity_id(hass: HomeAssistant, entry: ConfigEntry, platform: str, suffix: str) -> str | None:
+    """The entity_id of one of ``entry``'s own entities - its unique_id is the
+    entry's entity-id prefix plus ``suffix`` - or None."""
+    from homeassistant.helpers import entity_registry as er
+
+    return er.async_get(hass).async_get_entity_id(
+        platform, DOMAIN, f"{entry.data.get(CONF_ENTITY_ID)}{suffix}"
+    )
 
 
 def get_hub_for_load(hass: HomeAssistant, load_entry_id: str) -> ConfigEntry | None:
