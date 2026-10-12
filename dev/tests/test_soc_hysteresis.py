@@ -132,6 +132,7 @@ def test_hysteresis_disabled_leaves_both_thresholds_raw():
 
 from custom_components.dynamic_ocpp_evse.entities.load import (  # noqa: E402
     grace_modes,
+    rides_grace,
     soc_floor_reached,
 )
 
@@ -171,6 +172,24 @@ def test_modulating_loads_are_untouched():
     than to zero, so it has no collapse to bridge and gains no new mode."""
     modes = grace_modes(False, {"battery_soc": 40.0, "battery_soc_min": 10.0})
     assert modes == (SOLAR_ONLY, EXCESS)
+
+
+
+def test_a_tank_boosting_on_excess_rides_a_cloud_like_an_excess_load():
+    """Kozolec 11 Oct 2026: a Normal-mode tank boosting on Excess (the
+    bathroom IR panel) was not in any grace mode, so the first cloud dropped
+    its permit and the minimum off time held it off - on for 20 s at a time.
+    Only the boost rides: normal heating, and away below the minimum SOC,
+    still shed at once."""
+    tank, plug = "hot_water_tank", "plug"
+    above = {"battery_soc": 40.0, "battery_soc_min": 10.0}
+    for mode in ("Normal", "Freeze Protection"):
+        assert rides_grace(mode, tank, above, "boost") is True
+        assert rides_grace(mode, tank, above, "normal") is False
+        assert rides_grace(mode, tank, above, "away") is False
+    assert rides_grace("Normal", tank, {}, "boost") is True       # no battery: like Excess mode
+    assert rides_grace(EXCESS, plug, {}) is True                  # unchanged
+    assert rides_grace("Normal", plug, above, "boost") is False   # the label is a tank's only
 
 
 # --- Minimum off time ------------------------------------------------------

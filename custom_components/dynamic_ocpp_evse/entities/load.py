@@ -130,6 +130,23 @@ def grace_modes(binary_load, hub_data) -> tuple:
 
 
 
+def rides_grace(mode, device_type, hub_data, tank_label=None) -> bool:
+    """May this load hold a collapsed permit through the grace window?
+
+    The modes grace_modes names - and a tank boosting in Freeze Protection or
+    Normal: that boost is on the Excess tier (powered from the Excess pool
+    alone), so it rides a cloud like an Excess-mode load. Without it the permit
+    collapsed on the first dip and the minimum off time then held it off:
+    Kozolec 11 Oct 2026, the bathroom IR panel on for 20 s at a time as the sun
+    swung 7.4 -> 4.5 kW. Only the boost - normal heating still sheds at once,
+    and below the minimum SOC the tank's label is away, which is never held.
+    """
+    binary_load = device_type in (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK)
+    if mode in grace_modes(binary_load, hub_data):
+        return True
+    return device_type == DEVICE_TYPE_HOT_WATER_TANK and tank_label == "boost"
+
+
 class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity):
     """Representation of a managed device (EVSE, smart plug, etc.).
 
@@ -535,7 +552,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # the cycle it happens, exactly as before. Nothing holds a load on below
         # its floor; the hold is simply no longer forbidden above it.
         if (
-            self._operating_mode in grace_modes(binary_load, hub_data)
+            rides_grace(self._operating_mode, device_type, hub_data,
+                        load_rt.get("tank_setpoint_label"))
             and grace_period_seconds > 0
         ):
             if self._available_current < min_charge_current:
