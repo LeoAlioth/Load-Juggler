@@ -32,7 +32,7 @@ def determine_charging_status(
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
         return "Unplugged"
     if not dynamic_control_on:
-        return "Dynamic Control Off"
+        return "Manual"
 
     if (
         sensor._grace_started_at is not None

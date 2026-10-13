@@ -1,10 +1,16 @@
 import logging
+from datetime import timedelta
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.event import (
+    async_track_point_in_utc_time,
+    async_track_state_change_event,
+)
 from homeassistant.helpers.restore_state import RestoreEntity
+from homeassistant.util import dt as dt_util
 from .entities.mixins import HubEntityMixin, LoadEntityMixin, InverterEntityMixin
 from .const import (
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, ENTRY_TYPE_INVERTER,
@@ -12,7 +18,13 @@ from .const import (
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
     CONF_CHARGE_LIMIT_ENTITY_ID, INVERTER_RT_CONTROL_ENABLED,
     INVERTER_RT_SOC_CONTROL_ENABLED,
+    DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
+    CONF_PLUG_SWITCH_ENTITY_ID, CONF_CLIMATE_ENTITY_ID,
+    CONF_STATION_CHARGE_SPEED_ENTITY_ID, CONF_STATION_RESERVE_ENTITY_ID,
+    CONF_MANUAL_OVERRIDE_TIMEOUT, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+    MIN_MANUAL_OVERRIDE_TIMEOUT,
 )
+from .control import manual_change
 from .control.inverter import soc_targets
 from .helpers import get_entry_value, hub_has_battery
 
@@ -126,17 +138,105 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
     """Per-load switch to enable/disable dynamic current control.
 
     When ON (default): the load receives dynamically calculated current.
-    When OFF: the load charges at its configured maximum current.
+    When OFF: a manual override - the load is the user's (a charger charges
+    at its configured maximum current, any other load is left alone) until
+    its Manual override timeout runs out and the switch turns itself back on.
+    Every override ends: turned off by hand, or by someone operating the
+    device outside Load Juggler (control.manual_change - a plug switched, a
+    tank's thermostat or a station's charge speed or reserve set; a charger
+    has no such signal, so only this switch overrides it). Turning it on
+    ends the override at once. The end time is the ``resumes_at`` attribute,
+    restored with the state, so a restart neither cancels nor extends it.
     """
 
     _data_key = "dynamic_control"
     _default = True
     _attr_icon = "mdi:auto-fix"
+    _resumes_at = None
+    _unsub_resume = None
 
     def __init__(self, hass, config_entry, entity_id, name):
         self._init_entity(
             hass, config_entry, f"{name} Dynamic Control", f"{entity_id}_dynamic_control"
         )
+
+    @property
+    def extra_state_attributes(self):
+        return {"resumes_at": self._resumes_at.isoformat()} if self._resumes_at else {}
+
+    async def async_added_to_hass(self):
+        await super().async_added_to_hass()
+        self.async_on_remove(self._cancel_resume)
+        if not self.is_on:
+            # An off saved before overrides timed out gets a full timeout now.
+            last = await self.async_get_last_state()
+            self._override(dt_util.parse_datetime(last.attributes.get("resumes_at") or ""))
+        entry = self.config_entry
+        watched = {
+            DEVICE_TYPE_PLUG: [get_entry_value(entry, CONF_PLUG_SWITCH_ENTITY_ID, None)],
+            DEVICE_TYPE_HOT_WATER_TANK: [entry.data.get(CONF_CLIMATE_ENTITY_ID)],
+            DEVICE_TYPE_POWER_STATION: [
+                entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID),
+                entry.data.get(CONF_STATION_RESERVE_ENTITY_ID),
+            ],
+        }.get(entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE), [])
+        watched = [e for e in watched if e]
+        if watched:
+            self.async_on_remove(
+                async_track_state_change_event(self.hass, watched, self._device_changed)
+            )
+
+    async def async_turn_on(self, **kwargs):
+        self._cancel_resume()
+        await super().async_turn_on(**kwargs)
+
+    async def async_turn_off(self, **kwargs):
+        self._override()
+        _LOGGER.info("%s turned off until %s", self.entity_id, self._resumes_at)
+
+    @callback
+    def _device_changed(self, event):
+        if not self.is_on:
+            return
+        change = manual_change(
+            self._runtime(), event.data["old_state"], event.data["new_state"]
+        )
+        if change:
+            self._override()
+            _LOGGER.info(
+                "%s operated outside Load Juggler (%s %s) - manual until %s",
+                self.entity_id, event.data["entity_id"], change, self._resumes_at,
+            )
+
+    def _override(self, until=None):
+        """Hand the load to the user until ``until`` (now + its timeout)."""
+        minutes = max(
+            MIN_MANUAL_OVERRIDE_TIMEOUT,
+            get_entry_value(
+                self.config_entry, CONF_MANUAL_OVERRIDE_TIMEOUT, DEFAULT_MANUAL_OVERRIDE_TIMEOUT
+            ),
+        )
+        self._cancel_resume()
+        self._resumes_at = until or dt_util.utcnow() + timedelta(minutes=minutes)
+        # A past end (it ran out while HA was down) fires at once.
+        self._unsub_resume = async_track_point_in_utc_time(
+            self.hass, self._resume, self._resumes_at
+        )
+        # What was asked before the override is no reference after it.
+        self._runtime().pop("_commanded", None)
+        self._set(False)
+
+    @callback
+    def _resume(self, _now):
+        self._unsub_resume = None
+        self._resumes_at = None
+        self._set(True)
+        _LOGGER.info("%s back on - manual override timed out", self.entity_id)
+
+    def _cancel_resume(self):
+        if self._unsub_resume:
+            self._unsub_resume()
+        self._unsub_resume = self._resumes_at = None
 
 
 class StationStormReserveSwitch(LoadEntityMixin, _FlagSwitch):

@@ -217,13 +217,15 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
 
     A plug has no connector to plug a car into, so the EVSE charging-status
     vocabulary ("Unplugged", "Charging", ...) does not apply. This simply
-    reflects the controlled switch: ``On`` / ``Off``, or an error state when
-    the switch entity is missing or unavailable.
+    reflects the controlled switch: ``On`` / ``Off``, ``Manual`` while Dynamic
+    Control is off, or an error state when the switch entity is missing or
+    unavailable.
     """
 
     _PLUG_ICONS = {
         "On": "mdi:power-plug",
         "Off": "mdi:power-plug-off",
+        "Manual": "mdi:hand-back-right",
     }
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
@@ -256,6 +258,8 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
             switch_state = self.hass.states.get(self._switch_entity)
             if units.is_unavailable(switch_state):
                 self._attr_native_value = "Unavailable"
+            elif not self._runtime().get("dynamic_control", True):
+                self._attr_native_value = "Manual"
             elif switch_state.state == "on":
                 self._attr_native_value = "On"
             else:

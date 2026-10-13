@@ -210,6 +210,7 @@
                     "plug_finish_for": "Finish its cycle: for",
                     "update_frequency": "Update frequency",
                     "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
@@ -225,6 +226,7 @@
                     "plug_finish_for": "How long the power must stay under the value above before the cycle counts as finished. Longer than the appliance's quiet pauses mid-cycle (a washing machine's soak: about 10-15 min).",
                     "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately.",
+                    "manual_override_timeout": "How long the load is left to you after a manual override - Dynamic Control switched off, or the device operated outside Load Juggler (its switch turned on or off) - before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load."
                 }
@@ -248,7 +250,8 @@
                     "connected_to_phase": "Connected to phase",
                     "load_priority": "Priority (1 = highest)",
                     "update_frequency": "Update frequency",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout"
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for entities created by this integration.",
@@ -263,6 +266,7 @@
                     "station_normal_reserve": "Held day to day. The station discharges down to this level to run its own loads, and charges no further from the grid. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "station_storm_reserve": "Held while the Storm Reserve switch is on - charged from any source and not discharged below. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met.",
+                    "manual_override_timeout": "How long the load is left to you after a manual override - Dynamic Control switched off, or the device operated outside Load Juggler (its charge speed or backup reserve changed) - before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner.",
                     "connected_to_phase": "Which electrical phase(s) the station's AC input is wired to. Determines which phase capacity its charging draws from.",
                     "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "update_frequency": "How often to re-evaluate the station's charging speed and reserve."
@@ -283,6 +287,7 @@
                     "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
                     "update_frequency": "Update frequency",
                     "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
@@ -295,6 +300,7 @@
                     "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
                     "update_frequency": "How often to re-evaluate the tank.",
                     "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
+                    "manual_override_timeout": "How long the load is left to you after a manual override - Dynamic Control switched off, or the device operated outside Load Juggler (its thermostat's target temperature or mode changed) - before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "tank_prioritize_below_normal": "When on, a Solar Priority tank that has dropped below its Normal temperature is promoted to the Normal urgency tier, so it wins contention against other Solar Priority loads. It does not change where the power comes from - the tank still never uses the grid and still stops at the battery's minimum SOC."
                 }
@@ -353,7 +359,8 @@
                     "charge_pause_duration": "Charge pause duration",
                     "pause_profile_validity": "Pause profile validity",
                     "stack_level": "OCPP stack level",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout"
                 },
                 "data_description": {
                     "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
@@ -363,7 +370,8 @@
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
                     "pause_profile_validity": "How long the 0 A profile sent for a charge pause stays valid. It is renewed before it runs out for as long as the pause lasts, and any new allocation replaces it at once, so a long value costs nothing. It only matters if Home Assistant stops: the charger then stays paused for up to this long before falling back to its own default current.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
-                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
+                    "manual_override_timeout": "How long the charger charges at its maximum current after Dynamic Control is switched off, before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner."
                 }
             },
             "group_config": {
@@ -666,6 +674,7 @@
                     "plug_finish_for": "Finish its cycle: for",
                     "update_frequency": "Update frequency",
                     "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
@@ -680,6 +689,7 @@
                     "plug_finish_for": "How long the power must stay under the value above before the cycle counts as finished. Longer than the appliance's quiet pauses mid-cycle (a washing machine's soak: about 10-15 min).",
                     "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately.",
+                    "manual_override_timeout": "How long the load is left to you after a manual override - Dynamic Control switched off, or the device operated outside Load Juggler (its switch turned on or off) - before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load."
                 }
@@ -701,7 +711,8 @@
                     "connected_to_phase": "Connected to phase",
                     "load_priority": "Priority (1 = highest)",
                     "update_frequency": "Update frequency",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout"
                 },
                 "data_description": {
                     "station_charge_speed_entity_id": "The station's AC charging speed control. Load Juggler writes the charge rate it allocates here.",
@@ -715,6 +726,7 @@
                     "station_normal_reserve": "Held day to day. The station discharges down to this level to run its own loads, and charges no further from the grid. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "station_storm_reserve": "Held while the Storm Reserve switch is on - charged from any source and not discharged below. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                     "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met.",
+                    "manual_override_timeout": "How long the load is left to you after a manual override - Dynamic Control switched off, or the device operated outside Load Juggler (its charge speed or backup reserve changed) - before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner.",
                     "connected_to_phase": "Which electrical phase(s) the station's AC input is wired to. Determines which phase capacity its charging draws from.",
                     "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "update_frequency": "How often to re-evaluate the station's charging speed and reserve."
@@ -733,6 +745,7 @@
                     "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
                     "update_frequency": "Update frequency",
                     "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time"
                 },
                 "data_description": {
@@ -745,6 +758,7 @@
                     "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
                     "update_frequency": "How often to re-evaluate the tank.",
                     "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
+                    "manual_override_timeout": "How long the load is left to you after a manual override - Dynamic Control switched off, or the device operated outside Load Juggler (its thermostat's target temperature or mode changed) - before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                 }
             },
@@ -789,7 +803,8 @@
                     "charge_pause_duration": "Charge pause duration",
                     "pause_profile_validity": "Pause profile validity",
                     "stack_level": "OCPP stack level",
-                    "solar_grace_period": "Solar/Excess grace period"
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout"
                 },
                 "data_description": {
                     "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
@@ -799,7 +814,8 @@
                     "charge_pause_duration": "When allocated current drops below the minimum, the charger is held at 0A for this duration before recalculating. Prevents rapid start/stop cycling.",
                     "pause_profile_validity": "How long the 0 A profile sent for a charge pause stays valid. It is renewed before it runs out for as long as the pause lasts, and any new allocation replaces it at once, so a long value costs nothing. It only matters if Home Assistant stops: the charger then stays paused for up to this long before falling back to its own default current.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
-                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately."
+                    "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
+                    "manual_override_timeout": "How long the charger charges at its maximum current after Dynamic Control is switched off, before Dynamic Control turns itself back on. At least 5 minutes: every override ends. Turn Dynamic Control on to end one sooner."
                 }
             },
             "group": {

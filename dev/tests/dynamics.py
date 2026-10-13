@@ -222,7 +222,7 @@ class Engine:
         """Put a reading where the readers look for it."""
         self._states[entity] = _Reading(value, unit)
 
-    async def _set_value(self, domain, service, data, blocking=False):
+    async def _set_value(self, domain, service, data, blocking=False, context=None):
         """``number.set_value``, the only service the command modules call
         here. The register keeps its unit; the plant reads it back."""
         entity = data["entity_id"]
