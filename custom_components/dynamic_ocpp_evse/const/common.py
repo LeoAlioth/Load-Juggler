@@ -406,6 +406,18 @@ BEHAVIOR_BINARY_ABOVE_MIN = "binary_above_min"        # run while battery > mini
 CONF_BINARY_MIN_OFF_TIME = "binary_min_off_time"
 DEFAULT_BINARY_MIN_OFF_TIME = 5  # minutes
 
+# A manual override - Dynamic Control switched off, or the device operated
+# outside Load Juggler - hands the load to the user for this long, then
+# Dynamic Control turns itself back on. Minutes, per load; never 0, so every
+# override ends (Anze, 2026-10-13).
+CONF_MANUAL_OVERRIDE_TIMEOUT = "manual_override_timeout"
+DEFAULT_MANUAL_OVERRIDE_TIMEOUT = 120
+MIN_MANUAL_OVERRIDE_TIMEOUT = 5
+# A device reporting a value Load Juggler asked for this recently is still
+# answering that command, not being operated by hand: a slow (cloud) device's
+# report of the previous command can land after the next one went out.
+MANUAL_ECHO_S = 120
+
 BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > target SOC
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 

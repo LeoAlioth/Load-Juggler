@@ -48,7 +48,7 @@ class FakeServices:
     def __init__(self):
         self.calls = []
 
-    async def async_call(self, domain, service, data, blocking=False):
+    async def async_call(self, domain, service, data, blocking=False, context=None):
         self.calls.append(service)
 
 

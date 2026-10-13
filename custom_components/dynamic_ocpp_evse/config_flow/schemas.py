@@ -109,6 +109,7 @@ from ..const import (
     SOC_LIMIT_SEMANTICS_FLOOR,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
+    CONF_MANUAL_OVERRIDE_TIMEOUT,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STACK_LEVEL,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -160,6 +161,8 @@ from ..const import (
     DEFAULT_PROFILE_VALIDITY_MODE,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_SOLAR_GRACE_PERIOD,
+    DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+    MIN_MANUAL_OVERRIDE_TIMEOUT,
     DEFAULT_STACK_LEVEL,
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_MIN_CHARGE_POWER,
@@ -953,6 +956,10 @@ def _charger_timing_schema(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
+                _num(
+                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
+                ),
             ]
         )
     )
@@ -1027,6 +1034,10 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                 _num(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
                 ),
             ]
         )
@@ -1107,6 +1118,10 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                 _num(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
                 ),
             ]
         )
@@ -1195,6 +1210,10 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                 _num(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
                 ),
             ]
         )

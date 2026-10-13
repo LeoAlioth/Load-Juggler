@@ -34,7 +34,7 @@ from ..const import (
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
 )
 from ..helpers import get_entry_value
-from . import stamp_command
+from . import call_device, stamp_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -412,24 +412,33 @@ async def send_hot_water_tank_command(
                 get_entry_value(entry, CONF_TANK_OFF_OPERATION_MODE, "") or "",
             )
         elif heating_permitted or at_floor:
-            await sensor.hass.services.async_call(
+            await call_device(
+                sensor.hass,
+                load_rt,
                 "climate",
                 "set_temperature",
                 {"entity_id": climate_entity, "temperature": setpoint},
-                blocking=False,
+                "temperature",
+                setpoint,
             )
-            await sensor.hass.services.async_call(
+            await call_device(
+                sensor.hass,
+                load_rt,
                 "climate",
                 "set_hvac_mode",
                 {"entity_id": climate_entity, "hvac_mode": "heat"},
-                blocking=False,
+                "state",
+                "heat",
             )
         else:
-            await sensor.hass.services.async_call(
+            await call_device(
+                sensor.hass,
+                load_rt,
                 "climate",
                 "set_hvac_mode",
                 {"entity_id": climate_entity, "hvac_mode": "off"},
-                blocking=False,
+                "state",
+                "off",
             )
     except Exception as e:
         _LOGGER.warning(
@@ -532,18 +541,18 @@ async def _command_water_heater(hass, entity_id, state, permitted, setpoint, loa
         if not permitted:
             if current != off_mode:
                 load_rt["_tank_mode_before_off"] = current
-                await hass.services.async_call(
-                    "water_heater", "set_operation_mode",
-                    {"entity_id": entity_id, "operation_mode": off_mode}, blocking=False)
+                await call_device(
+                    hass, load_rt, "water_heater", "set_operation_mode",
+                    {"entity_id": entity_id, "operation_mode": off_mode}, "state", off_mode)
             return
         if current == off_mode:
             back = load_rt.pop("_tank_mode_before_off", None)
             if back not in modes or back == off_mode:
                 back = next((m for m in modes if m != off_mode), None)
             if back is not None:
-                await hass.services.async_call(
-                    "water_heater", "set_operation_mode",
-                    {"entity_id": entity_id, "operation_mode": back}, blocking=False)
+                await call_device(
+                    hass, load_rt, "water_heater", "set_operation_mode",
+                    {"entity_id": entity_id, "operation_mode": back}, "state", back)
     target = setpoint if permitted or off_mode else attrs.get("min_temp")
     if target is None:
         return
@@ -552,9 +561,12 @@ async def _command_water_heater(hass, entity_id, state, permitted, setpoint, loa
             return
     except (TypeError, ValueError):
         pass
-    await hass.services.async_call(
+    await call_device(
+        hass,
+        load_rt,
         "water_heater",
         "set_temperature",
         {"entity_id": entity_id, "temperature": target},
-        blocking=False,
+        "temperature",
+        target,
     )

@@ -18,7 +18,7 @@ from ..const import (
     PLUG_RESTART_RECOVERY_S,
 )
 from ..helpers import get_entry_value
-from . import stamp_command
+from . import call_device, stamp_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -184,11 +184,14 @@ async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
         _LOGGER.debug(
             f"Smart load {sensor._attr_name}: turning {'ON' if on else 'OFF'} (limit={limit}A)"
         )
-        await sensor.hass.services.async_call(
+        await call_device(
+            sensor.hass,
+            sensor._runtime(),
             "switch",
             "turn_on" if on else "turn_off",
             {"entity_id": plug_switch_entity},
-            blocking=False,
+            "state",
+            "on" if on else "off",
         )
     except Exception as e:
         _LOGGER.warning(
