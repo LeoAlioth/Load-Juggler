@@ -577,10 +577,16 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 # the grace window whenever it was actually charging (the
                 # was-charging gate stops an idle station from cycling
                 # 200 W on/off through the night). This is what stops the
-                # reserve flapping over BLE on marginal days.
+                # reserve flapping over BLE on marginal days. Like a binary
+                # load it rides ONE window per collapse: the stop that ends a
+                # window waits a cycle for confirmation, and the station is
+                # still "charging" on that cycle, so without the exhausted
+                # latch the window re-armed for ever and the station charged
+                # at its minimum from the grid all evening (Home, 2026-10-13).
                 if (
                     device_type == DEVICE_TYPE_POWER_STATION
                     and load_rt.get("station_charging")
+                    and not self._grace_exhausted
                 ) or (
                     binary_load
                     and self._binary_last_permit > 0
@@ -612,11 +618,11 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                             grace_period_minutes,
                         )
                         self._grace_started_at = None
-                        if binary_load:
+                        if binary_load or device_type == DEVICE_TYPE_POWER_STATION:
                             # Do not re-arm next cycle: for a binary load the
                             # permit is the on/off answer, so a re-arming window
                             # would switch it back on for another grace period,
-                            # forever.
+                            # forever - and a station would hold its minimum.
                             self._grace_exhausted = True
                 else:
                     if self._grace_started_at is not None:
