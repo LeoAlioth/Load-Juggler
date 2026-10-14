@@ -1,6 +1,8 @@
-"""Manual override: Dynamic Control off - by hand, or by someone operating the
-device outside Load Juggler - hands a load to the user for its Manual override
-timeout, then turns itself back on.
+"""Manual override: someone operating the device outside Load Juggler hands
+the load to the user for its Manual override timeout, with the Dynamic Control
+switch still on; Load Juggler takes it back after. The switch is the user's
+alone: off stays off, and switching it off cancels an override (Anze,
+2026-10-14).
 
 Machine-authored tests - not yet human-reviewed.
 
@@ -42,6 +44,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     DEVICE_TYPE_HOT_WATER_TANK,
 )
 from custom_components.dynamic_ocpp_evse.control import call_device
+from custom_components.dynamic_ocpp_evse.control.status import hands_off_status
 
 PLUG = "switch.washer_relay"
 TANK = "climate.boiler"
@@ -104,60 +107,92 @@ def _resumes_at(hass):
     return dt_util.parse_datetime(hass.states.get(OURS).attributes["resumes_at"])
 
 
-async def test_switched_off_by_hand_it_resumes_after_the_timeout(
-    hass: HomeAssistant, mock_hub_entry
-):
-    rt = await _plug(hass, mock_hub_entry)
-    await hass.services.async_call("switch", "turn_off", {"entity_id": OURS}, blocking=True)
+def _on_without_override(hass, rt):
+    assert hass.states.get(OURS).state == "on"
+    assert "resumes_at" not in hass.states.get(OURS).attributes
+    assert rt["dynamic_control"] is True
 
-    assert hass.states.get(OURS).state == "off"
+
+def _overridden(hass, rt):
+    """In a manual override: the switch still on, the load not Load Juggler's."""
+    assert hass.states.get(OURS).state == "on"
+    assert "resumes_at" in hass.states.get(OURS).attributes
     assert rt["dynamic_control"] is False
-    left = _resumes_at(hass) - dt_util.utcnow()
-    assert timedelta(minutes=29) < left <= timedelta(minutes=30)
 
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=29))
+
+async def _later(hass, minutes):
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=minutes))
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "off"
-
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=31))
-    await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
-    assert rt["dynamic_control"] is True
-    assert "resumes_at" not in hass.states.get(OURS).attributes
 
 
-async def test_switched_back_on_by_hand_the_override_ends_at_once(
-    hass: HomeAssistant, mock_hub_entry
-):
-    rt = await _plug(hass, mock_hub_entry)
-    await hass.services.async_call("switch", "turn_off", {"entity_id": OURS}, blocking=True)
-    await hass.services.async_call("switch", "turn_on", {"entity_id": OURS}, blocking=True)
-
-    assert hass.states.get(OURS).state == "on"
-    assert rt["dynamic_control"] is True
-    assert "resumes_at" not in hass.states.get(OURS).attributes
-    # And the old timer is gone: nothing turns it off or on later.
-    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=31))
-    await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
-
-
-async def test_a_plug_switched_outside_load_juggler_starts_the_override(
-    hass: HomeAssistant, mock_hub_entry
-):
-    rt = await _plug(hass, mock_hub_entry)
+async def _operated_by_hand(hass, rt):
+    """Load Juggler switches the plug on, the relay answers, then its button
+    is pressed."""
     calls = async_mock_service(hass, "switch", "turn_on")
     ctx = await _lj(hass, rt, calls, "switch", "turn_on", {"entity_id": PLUG}, "state", "on")
-    hass.states.async_set(PLUG, "on", context=ctx)  # the relay answers
+    hass.states.async_set(PLUG, "on", context=ctx)
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
+    _on_without_override(hass, rt)
+    hass.states.async_set(PLUG, "off")
+    await hass.async_block_till_done()
 
-    hass.states.async_set(PLUG, "off")  # its button pressed
-    await hass.async_block_till_done()
+
+async def test_switched_off_by_hand_it_stays_off_past_the_timeout(
+    hass: HomeAssistant, mock_hub_entry
+):
+    rt = await _plug(hass, mock_hub_entry)
+    await hass.services.async_call("switch", "turn_off", {"entity_id": OURS}, blocking=True)
+
+    assert hass.states.get(OURS).state == "off"
+    assert "resumes_at" not in hass.states.get(OURS).attributes
+    assert rt["dynamic_control"] is False
+    assert hands_off_status(rt) == "Dynamic Control Off"
+
+    await _later(hass, 24 * 60)
     assert hass.states.get(OURS).state == "off"
     assert rt["dynamic_control"] is False
-    left = _resumes_at(hass) - dt_util.utcnow()
+
+
+async def test_a_plug_switched_outside_load_juggler_is_manual_until_the_timeout(
+    hass: HomeAssistant, mock_hub_entry
+):
+    rt = await _plug(hass, mock_hub_entry)
+    await _operated_by_hand(hass, rt)
+
+    _overridden(hass, rt)
+    until = _resumes_at(hass)
+    left = until - dt_util.utcnow()
     assert timedelta(minutes=29) < left <= timedelta(minutes=30)
+    assert hands_off_status(rt) == f"Manual until {dt_util.as_local(until):%H:%M}"
+
+    await _later(hass, 29)
+    _overridden(hass, rt)
+    await _later(hass, 31)
+    _on_without_override(hass, rt)
+
+
+async def test_load_juggler_leaves_an_overridden_load_alone(
+    hass: HomeAssistant, mock_hub_entry
+):
+    """A site cycle in an override sends the plug nothing; once it times out,
+    the same cycle does."""
+    rt = await _plug(hass, mock_hub_entry)
+    await _operated_by_hand(hass, rt)
+    hass.states.async_set(PLUG, "on")  # the user wants it on, against the site
+    await hass.async_block_till_done()
+    _overridden(hass, rt)
+    coordinator = hass.data[DOMAIN]["hub_coordinators"][mock_hub_entry.entry_id]
+    sent = async_mock_service(hass, "switch", "turn_off")
+
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert not sent
+
+    await _later(hass, 31)
+    _on_without_override(hass, rt)
+    await coordinator.async_refresh()
+    await hass.async_block_till_done()
+    assert [c.data["entity_id"] for c in sent] == [PLUG]
 
 
 async def test_load_juggler_s_own_commands_do_not_start_it(
@@ -178,8 +213,7 @@ async def test_load_juggler_s_own_commands_do_not_start_it(
     hass.states.async_set(PLUG, "unavailable")
     hass.states.async_set(PLUG, "on")
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
-    assert rt["dynamic_control"] is True
+    _on_without_override(hass, rt)
 
 
 async def test_nothing_commanded_yet_nothing_to_override(
@@ -187,10 +221,10 @@ async def test_nothing_commanded_yet_nothing_to_override(
 ):
     """After a start, before Load Juggler has asked the device anything, a
     change is no departure from a command."""
-    await _plug(hass, mock_hub_entry)
+    rt = await _plug(hass, mock_hub_entry)
     hass.states.async_set(PLUG, "on")
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
+    _on_without_override(hass, rt)
 
 
 async def _tank(hass, hub):
@@ -205,7 +239,7 @@ async def _tank(hass, hub):
     )
     hass.states.async_set(TANK, "heat", {"temperature": 60, "current_temperature": 48}, context=ctx)
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
+    _on_without_override(hass, rt)
     return rt
 
 
@@ -216,12 +250,11 @@ async def test_a_tank_s_target_raised_on_its_thermostat_starts_the_override(
     # Its own readings move: nothing Load Juggler commands changed.
     hass.states.async_set(TANK, "heat", {"temperature": 60, "current_temperature": 52})
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
+    _on_without_override(hass, rt)
 
     hass.states.async_set(TANK, "heat", {"temperature": 70, "current_temperature": 52})
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "off"
-    assert rt["dynamic_control"] is False
+    _overridden(hass, rt)
 
 
 async def test_a_tank_turned_off_on_its_thermostat_starts_the_override(
@@ -236,7 +269,7 @@ async def test_a_tank_turned_off_on_its_thermostat_starts_the_override(
     hass.states.async_set(TANK, "heat", {"temperature": 60, "current_temperature": 48}, context=ctx)
     hass.states.async_set(TANK, "off", {"temperature": 60, "current_temperature": 48})
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "off"
+    _overridden(hass, rt)
 
 
 async def test_a_lower_target_starts_it_only_when_a_user_set_it(
@@ -244,52 +277,114 @@ async def test_a_lower_target_starts_it_only_when_a_user_set_it(
 ):
     """A device that keeps a lower target than asked (a MELCloud poll reading
     back 55 for 60) is no hand on the dial; an HA user lowering it is."""
-    await _tank(hass, mock_hub_entry)
+    rt = await _tank(hass, mock_hub_entry)
     hass.states.async_set(TANK, "heat", {"temperature": 55, "current_temperature": 48})
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
+    _on_without_override(hass, rt)
 
     hass.states.async_set(
         TANK, "heat", {"temperature": 45, "current_temperature": 48},
         context=Context(user_id="anze"),
     )
     await hass.async_block_till_done()
+    _overridden(hass, rt)
+
+
+async def _tank_by_hand(hass, hub):
+    """A tank in an override: its target raised on the thermostat. (A tank,
+    not the plug: the plug's mocked switch.turn_on would stand in for the
+    Dynamic Control switch's own.)"""
+    rt = await _tank(hass, hub)
+    hass.states.async_set(TANK, "heat", {"temperature": 70, "current_temperature": 52})
+    await hass.async_block_till_done()
+    _overridden(hass, rt)
+    return rt
+
+
+async def test_switching_dynamic_control_off_cancels_an_override(
+    hass: HomeAssistant, mock_hub_entry
+):
+    rt = await _tank_by_hand(hass, mock_hub_entry)
+
+    await hass.services.async_call("switch", "turn_off", {"entity_id": OURS}, blocking=True)
     assert hass.states.get(OURS).state == "off"
+    assert "resumes_at" not in hass.states.get(OURS).attributes
+    assert hands_off_status(rt) == "Dynamic Control Off"
+    # Its timer is gone: the off is not ended by it.
+    await _later(hass, 31)
+    assert hass.states.get(OURS).state == "off"
+    assert rt["dynamic_control"] is False
+
+    await hass.services.async_call("switch", "turn_on", {"entity_id": OURS}, blocking=True)
+    _on_without_override(hass, rt)
+
+
+async def test_switched_back_on_before_the_timeout_there_is_no_override(
+    hass: HomeAssistant, mock_hub_entry
+):
+    rt = await _tank_by_hand(hass, mock_hub_entry)
+    await hass.services.async_call("switch", "turn_off", {"entity_id": OURS}, blocking=True)
+    await hass.services.async_call("switch", "turn_on", {"entity_id": OURS}, blocking=True)
+    _on_without_override(hass, rt)
+    await _later(hass, 31)
+    _on_without_override(hass, rt)
 
 
 async def test_an_override_survives_a_restart_unchanged(hass: HomeAssistant, mock_hub_entry):
     until = dt_util.utcnow() + timedelta(minutes=17)
-    mock_restore_cache(hass, [State(OURS, "off", {"resumes_at": until.isoformat()})])
+    mock_restore_cache(hass, [State(OURS, "on", {"resumes_at": until.isoformat()})])
     rt = await _plug(hass, mock_hub_entry)
 
-    assert hass.states.get(OURS).state == "off"
-    assert rt["dynamic_control"] is False
+    _overridden(hass, rt)
     assert _resumes_at(hass) == until
 
     async_fire_time_changed(hass, until + timedelta(seconds=1))
     await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
+    _on_without_override(hass, rt)
 
 
 async def test_an_override_that_ran_out_while_down_ends_on_start(
     hass: HomeAssistant, mock_hub_entry
 ):
     until = dt_util.utcnow() - timedelta(minutes=1)
-    mock_restore_cache(hass, [State(OURS, "off", {"resumes_at": until.isoformat()})])
-    await _plug(hass, mock_hub_entry)
-    async_fire_time_changed(hass, dt_util.utcnow())
-    await hass.async_block_till_done()
-    assert hass.states.get(OURS).state == "on"
+    mock_restore_cache(hass, [State(OURS, "on", {"resumes_at": until.isoformat()})])
+    rt = await _plug(hass, mock_hub_entry)
+    _on_without_override(hass, rt)
 
 
-async def test_an_off_from_before_overrides_gets_a_full_timeout(
+async def test_a_pre_release_timed_off_becomes_an_override(
     hass: HomeAssistant, mock_hub_entry
 ):
+    """The version before kept an override as the switch off with resumes_at:
+    it comes back on, in an override until then - not off for good."""
+    until = dt_util.utcnow() + timedelta(minutes=17)
+    mock_restore_cache(hass, [State(OURS, "off", {"resumes_at": until.isoformat()})])
+    rt = await _plug(hass, mock_hub_entry)
+
+    _overridden(hass, rt)
+    assert _resumes_at(hass) == until
+    async_fire_time_changed(hass, until + timedelta(seconds=1))
+    await hass.async_block_till_done()
+    _on_without_override(hass, rt)
+
+
+async def test_a_pre_release_timed_off_that_ran_out_comes_back_on(
+    hass: HomeAssistant, mock_hub_entry
+):
+    until = dt_util.utcnow() - timedelta(minutes=1)
+    mock_restore_cache(hass, [State(OURS, "off", {"resumes_at": until.isoformat()})])
+    rt = await _plug(hass, mock_hub_entry)
+    _on_without_override(hass, rt)
+
+
+async def test_an_off_without_an_end_stays_off(hass: HomeAssistant, mock_hub_entry):
     mock_restore_cache(hass, [State(OURS, "off")])
-    await _plug(hass, mock_hub_entry)
+    rt = await _plug(hass, mock_hub_entry)
     assert hass.states.get(OURS).state == "off"
-    left = _resumes_at(hass) - dt_util.utcnow()
-    assert timedelta(minutes=29) < left <= timedelta(minutes=30)
+    assert "resumes_at" not in hass.states.get(OURS).attributes
+    assert rt["dynamic_control"] is False
+    await _later(hass, 24 * 60)
+    assert hass.states.get(OURS).state == "off"
 
 
 async def test_the_timeout_is_never_under_five_minutes(hass: HomeAssistant, mock_hub_entry):
@@ -301,7 +396,7 @@ async def test_the_timeout_is_never_under_five_minutes(hass: HomeAssistant, mock
     assert field(5) == 5
 
     # A stored value under it (none the form takes) is held at five.
-    await _plug(hass, mock_hub_entry, timeout=1)
-    await hass.services.async_call("switch", "turn_off", {"entity_id": OURS}, blocking=True)
+    rt = await _plug(hass, mock_hub_entry, timeout=1)
+    await _operated_by_hand(hass, rt)
     left = _resumes_at(hass) - dt_util.utcnow()
     assert timedelta(minutes=4) < left <= timedelta(minutes=5)

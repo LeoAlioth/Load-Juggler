@@ -226,7 +226,7 @@
                     "plug_finish_for": "Kako dolgo mora moč ostati pod zgornjo vrednostjo, da cikel šteje za končan. Dlje od tihih premorov stroja sredi cikla (namakanje pralnega stroja: približno 10-15 min).",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
-                    "manual_override_timeout": "Kako dolgo je porabnik po ročnem posegu prepuščen vam - ko izklopite stikalo Dynamic Control ali ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala) - preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik."
                 }
@@ -266,7 +266,7 @@
                     "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoje porabnike in se iz omrežja ne polni višje. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno - polni se iz katerega koli vira in se ne prazni pod to raven. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
-                    "manual_override_timeout": "Kako dolgo je porabnik po ročnem posegu prepuščen vam - ko izklopite stikalo Dynamic Control ali ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve) - preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje."
@@ -300,7 +300,7 @@
                     "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
                     "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
-                    "manual_override_timeout": "Kako dolgo je porabnik po ročnem posegu prepuščen vam - ko izklopite stikalo Dynamic Control ali ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata) - preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije."
                 }
@@ -359,8 +359,7 @@
                     "charge_pause_duration": "Trajanje premora polnjenja",
                     "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
-                    "solar_grace_period": "Odlog za način Solar/Excess",
-                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina polnilnih postaj OCPP uporablja ampere. Nekatere (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -370,8 +369,7 @@
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilna postaja drži na 0 A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
                     "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
-                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
-                    "manual_override_timeout": "Kako dolgo polnilna postaja polni z največjim tokom, potem ko izklopite stikalo Dynamic Control, preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control."
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "group_config": {
@@ -689,7 +687,7 @@
                     "plug_finish_for": "Kako dolgo mora moč ostati pod zgornjo vrednostjo, da cikel šteje za končan. Dlje od tihih premorov stroja sredi cikla (namakanje pralnega stroja: približno 10-15 min).",
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
-                    "manual_override_timeout": "Kako dolgo je porabnik po ročnem posegu prepuščen vam - ko izklopite stikalo Dynamic Control ali ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala) - preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik."
                 }
@@ -726,7 +724,7 @@
                     "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoje porabnike in se iz omrežja ne polni višje. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "station_storm_reserve": "Vzdrževana, ko je stikalo Rezerva za nevihto vklopljeno - polni se iz katerega koli vira in se ne prazni pod to raven. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
-                    "manual_override_timeout": "Kako dolgo je porabnik po ročnem posegu prepuščen vam - ko izklopite stikalo Dynamic Control ali ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve) - preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje."
@@ -758,7 +756,7 @@
                     "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
                     "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
-                    "manual_override_timeout": "Kako dolgo je porabnik po ročnem posegu prepuščen vam - ko izklopite stikalo Dynamic Control ali ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata) - preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                 }
             },
@@ -803,8 +801,7 @@
                     "charge_pause_duration": "Trajanje premora polnjenja",
                     "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
-                    "solar_grace_period": "Odlog za način Solar/Excess",
-                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja"
+                    "solar_grace_period": "Odlog za način Solar/Excess"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina polnilnih postaj OCPP uporablja ampere. Nekatere (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -814,8 +811,7 @@
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilna postaja drži na 0 A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
                     "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
-                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
-                    "manual_override_timeout": "Kako dolgo polnilna postaja polni z največjim tokom, potem ko izklopite stikalo Dynamic Control, preden se Dynamic Control samo spet vklopi. Najmanj 5 minut: vsak ročni poseg se konča. Za prej vklopite Dynamic Control."
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
                 }
             },
             "group": {

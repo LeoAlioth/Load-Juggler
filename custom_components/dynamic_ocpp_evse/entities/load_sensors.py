@@ -32,6 +32,7 @@ from ..const import (
     EVSE_RT_READOUT_WATCH,
     LOAD_RT_SUN_PROBE,
 )
+from ..control.status import hands_off_status
 from ..helpers import get_entry_value
 from .. import units
 from .mixins import LoadEntityMixin, SiteCycleConsumerMixin
@@ -217,15 +218,16 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
 
     A plug has no connector to plug a car into, so the EVSE charging-status
     vocabulary ("Unplugged", "Charging", ...) does not apply. This simply
-    reflects the controlled switch: ``On`` / ``Off``, ``Manual`` while Dynamic
-    Control is off, or an error state when the switch entity is missing or
-    unavailable.
+    reflects the controlled switch: ``On`` / ``Off``, ``Manual until HH:MM``
+    in a manual override, ``Dynamic Control Off``, or an error state when the
+    switch entity is missing or unavailable.
     """
 
     _PLUG_ICONS = {
         "On": "mdi:power-plug",
         "Off": "mdi:power-plug-off",
         "Manual": "mdi:hand-back-right",
+        "Dynamic Control Off": "mdi:hand-back-right",
     }
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
@@ -259,13 +261,13 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
             if units.is_unavailable(switch_state):
                 self._attr_native_value = "Unavailable"
             elif not self._runtime().get("dynamic_control", True):
-                self._attr_native_value = "Manual"
+                self._attr_native_value = hands_off_status(self._runtime())
             elif switch_state.state == "on":
                 self._attr_native_value = "On"
             else:
                 self._attr_native_value = "Off"
         self._attr_icon = self._PLUG_ICONS.get(
-            self._attr_native_value, "mdi:power-plug-off-outline"
+            self._attr_native_value.split(" until ")[0], "mdi:power-plug-off-outline"
         )
         # A restart, or the give-up, says so until the load draws again or
         # its permit goes away; hands off (Dynamic Control off), it is stale.
@@ -295,6 +297,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
         "Full": "mdi:battery",
         "Idle": "mdi:battery-arrow-down",
         "Manual": "mdi:hand-back-right",
+        "Dynamic Control Off": "mdi:hand-back-right",
     }
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
@@ -339,7 +342,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
             # vendor app taking over looks exactly like this.
             self._attr_native_value = "Unavailable"
         elif not load_rt.get("dynamic_control", True):
-            self._attr_native_value = "Manual"
+            self._attr_native_value = hands_off_status(load_rt)
         elif load_rt.get("station_storm_reserve"):
             self._attr_native_value = "Storm Reserve"
         elif soc is not None and charge_limit is not None and soc >= charge_limit:
@@ -350,7 +353,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
             self._attr_native_value = "Idle"
 
         self._attr_icon = self._STATION_ICONS.get(
-            self._attr_native_value, "mdi:battery-unknown"
+            self._attr_native_value.split(" until ")[0], "mdi:battery-unknown"
         )
         self._attrs = {
             "operating_mode": load_rt.get("operating_mode"),
@@ -443,9 +446,9 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
         if units.is_unavailable(climate_state):
             self._attr_native_value = "Unavailable"
         elif not load_rt.get("dynamic_control", True):
-            # Dynamic Control off - Load Juggler is not managing the tank;
-            # the thermostat runs on its own.
-            self._attr_native_value = "Manual"
+            # Dynamic Control off or a manual override - Load Juggler is
+            # not managing the tank; the thermostat runs on its own.
+            self._attr_native_value = hands_off_status(load_rt)
         elif not load_rt.get("tank_heating_permitted", True):
             self._attr_native_value = "Waiting for Power"
         else:

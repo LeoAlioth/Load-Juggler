@@ -406,10 +406,10 @@ BEHAVIOR_BINARY_ABOVE_MIN = "binary_above_min"        # run while battery > mini
 CONF_BINARY_MIN_OFF_TIME = "binary_min_off_time"
 DEFAULT_BINARY_MIN_OFF_TIME = 5  # minutes
 
-# A manual override - Dynamic Control switched off, or the device operated
-# outside Load Juggler - hands the load to the user for this long, then
-# Dynamic Control turns itself back on. Minutes, per load; never 0, so every
-# override ends (Anze, 2026-10-13).
+# A manual override - the device operated outside Load Juggler - hands the
+# load to the user for this long, then Load Juggler takes it back. Minutes,
+# per load; never 0, so every override ends (Anze, 2026-10-13). The Dynamic
+# Control switch is no override: off stays off (Anze, 2026-10-14).
 CONF_MANUAL_OVERRIDE_TIMEOUT = "manual_override_timeout"
 DEFAULT_MANUAL_OVERRIDE_TIMEOUT = 120
 MIN_MANUAL_OVERRIDE_TIMEOUT = 5
