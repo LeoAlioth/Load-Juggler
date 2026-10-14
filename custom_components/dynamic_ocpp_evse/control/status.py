@@ -9,10 +9,20 @@ from ..const import (
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_CHARGE_PAUSE_DURATION,
 )
+from homeassistant.util import dt as dt_util
 from ..helpers import get_entry_value
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def hands_off_status(load_rt: dict) -> str:
+    """The status of a load Load Juggler is not controlling: "Manual until
+    HH:MM" while a manual override runs, "Dynamic Control Off" otherwise."""
+    until = load_rt.get("manual_until")
+    if until:
+        return f"Manual until {dt_util.as_local(until).strftime('%H:%M')}"
+    return "Dynamic Control Off"
 
 
 def determine_charging_status(
@@ -32,7 +42,7 @@ def determine_charging_status(
     if connector_status == "Available" or units.is_unavailable_state(connector_status):
         return "Unplugged"
     if not dynamic_control_on:
-        return "Manual"
+        return hands_off_status(sensor._runtime())
 
     if (
         sensor._grace_started_at is not None

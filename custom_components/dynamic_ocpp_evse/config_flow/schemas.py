@@ -956,10 +956,6 @@ def _charger_timing_schema(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
-                _num(
-                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
-                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
-                ),
             ]
         )
     )

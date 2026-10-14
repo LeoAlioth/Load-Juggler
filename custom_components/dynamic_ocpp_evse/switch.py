@@ -135,18 +135,23 @@ class AllowGridChargingSwitch(HubEntityMixin, _FlagSwitch):
 
 
 class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
-    """Per-load switch to enable/disable dynamic current control.
+    """Per-load switch to enable/disable dynamic current control - the user's
+    alone: Load Juggler never turns it off or on (Anze, 2026-10-14).
 
-    When ON (default): the load receives dynamically calculated current.
-    When OFF: a manual override - the load is the user's (a charger charges
-    at its configured maximum current, any other load is left alone) until
-    its Manual override timeout runs out and the switch turns itself back on.
-    Every override ends: turned off by hand, or by someone operating the
-    device outside Load Juggler (control.manual_change - a plug switched, a
-    tank's thermostat or a station's charge speed or reserve set; a charger
-    has no such signal, so only this switch overrides it). Turning it on
-    ends the override at once. The end time is the ``resumes_at`` attribute,
-    restored with the state, so a restart neither cancels nor extends it.
+    When ON (default): the load receives dynamically calculated current,
+    unless a manual override runs. When OFF: the load is the user's (a
+    charger charges at its configured maximum current, any other load is left
+    alone) until the switch is turned back on.
+
+    A manual override is the same hands-off with the switch still on, started
+    by someone operating the device outside Load Juggler (control.manual_change
+    - a plug switched, a tank's thermostat or a station's charge speed or
+    reserve set; a charger has no such signal, so it has no override) and
+    lasting the load's Manual override timeout. Its end time is the
+    ``resumes_at`` attribute, restored with the state, so a restart neither
+    cancels nor extends it. Turning the switch off cancels it; turning it on
+    starts plain dynamic control. The engine reads ``dynamic_control`` (on
+    and no override), the status ``manual_until`` (the override's end).
     """
 
     _data_key = "dynamic_control"
@@ -167,10 +172,16 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
     async def async_added_to_hass(self):
         await super().async_added_to_hass()
         self.async_on_remove(self._cancel_resume)
-        if not self.is_on:
-            # An off saved before overrides timed out gets a full timeout now.
-            last = await self.async_get_last_state()
-            self._override(dt_util.parse_datetime(last.attributes.get("resumes_at") or ""))
+        last = await self.async_get_last_state()
+        until = last and dt_util.parse_datetime(last.attributes.get("resumes_at") or "")
+        if until:
+            # On with an override, or a pre-release's timed off (the switch
+            # was the override then): on, with what is left of it.
+            self._attr_is_on = True
+            if until > dt_util.utcnow():
+                self._override(until)
+            else:
+                self._apply()
         entry = self.config_entry
         watched = {
             DEVICE_TYPE_PLUG: [get_entry_value(entry, CONF_PLUG_SWITCH_ENTITY_ID, None)],
@@ -191,12 +202,27 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
         await super().async_turn_on(**kwargs)
 
     async def async_turn_off(self, **kwargs):
-        self._override()
-        _LOGGER.info("%s turned off until %s", self.entity_id, self._resumes_at)
+        self._cancel_resume()
+        await super().async_turn_off(**kwargs)
+
+    def _set(self, on: bool) -> None:
+        self._attr_is_on = on
+        self._apply()
+
+    def _apply(self) -> None:
+        """Publish the state: Load Juggler controls the load only while on
+        with no override."""
+        rt = self._runtime()
+        rt["manual_until"] = self._resumes_at
+        controlled = bool(self.is_on) and not self._resumes_at
+        if not controlled:
+            # What was asked before the hands-off is no reference after it.
+            rt.pop("_commanded", None)
+        self._publish(controlled)
 
     @callback
     def _device_changed(self, event):
-        if not self.is_on:
+        if not self.is_on or self._resumes_at:
             return
         change = manual_change(
             self._runtime(), event.data["old_state"], event.data["new_state"]
@@ -218,20 +244,17 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
         )
         self._cancel_resume()
         self._resumes_at = until or dt_util.utcnow() + timedelta(minutes=minutes)
-        # A past end (it ran out while HA was down) fires at once.
         self._unsub_resume = async_track_point_in_utc_time(
             self.hass, self._resume, self._resumes_at
         )
-        # What was asked before the override is no reference after it.
-        self._runtime().pop("_commanded", None)
-        self._set(False)
+        self._apply()
 
     @callback
     def _resume(self, _now):
         self._unsub_resume = None
         self._resumes_at = None
-        self._set(True)
-        _LOGGER.info("%s back on - manual override timed out", self.entity_id)
+        self._apply()
+        _LOGGER.info("%s manual override timed out - back to dynamic control", self.entity_id)
 
     def _cancel_resume(self):
         if self._unsub_resume:

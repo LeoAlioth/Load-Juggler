@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_registry import (
 from .. import units
 from ..entities.readout import status_with_readout_note
 from ..entities.sun_probe import status_with_sun_probe_note
+from ..control.status import hands_off_status
 from ..const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -772,7 +773,9 @@ def _load_overview_lines(hass, entry) -> list[str]:
         lines.append(f"- Drawing on phases: {mask}")
     load_runtime = (runtime.get("loads") or {}).get(entry.entry_id) or {}
     if load_runtime.get("dynamic_control") is False:
-        lines.append("- ⚠️ Dynamic control is OFF - Load Juggler is not limiting this load")
+        lines.append(
+            f"- ⚠️ {hands_off_status(load_runtime)} - Load Juggler is not limiting this load"
+        )
 
     cap = _group_cap_for(hass, hub_entry_id, entry.entry_id)
     lines += ["", "**⛓ Circuit group**"]
