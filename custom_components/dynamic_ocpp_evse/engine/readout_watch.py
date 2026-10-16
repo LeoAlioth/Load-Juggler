@@ -367,7 +367,7 @@ def assumed_legs(state: dict, status: str | None, commanded: float | None) -> tu
 # A reading taken AFTER a raise can still predate the car's answer to it: a
 # car climbs to a higher limit over tens of seconds, while it must come down
 # to a lower one within 5 s (IEC 61851-1). The third field case (2026-10-07,
-# Andrej's Nova, a go-eCharger V4 alone on the site, meter values and commands
+# the third site's Nova, a go-eCharger V4 alone on the site, meter values and commands
 # both every 30 s): a value landed a few seconds after each raise, showing the
 # car a third of the way up; the grid saw it reach the limit, the feedback
 # booked the rest as house load - 4 to 7 kW of it - and the allocation fell
@@ -484,7 +484,7 @@ def assumed_before_new_reading(
 
 # ── Frozen LOW: the household follows our own commands ──────────────────
 #
-# The field case (Anze, 2026-09-23): the readout sticks at 0 while the car
+# The field case (2026-09-23): the readout sticks at 0 while the car
 # really draws. The feedback loop subtracts each managed draw from the grid
 # CTs, so every amp the reading misses is booked as HOUSE load - the charger
 # starts at 5 kW, the "household" jumps 1 -> 6 kW, the 6 kW allowance is gone,

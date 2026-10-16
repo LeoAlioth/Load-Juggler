@@ -90,7 +90,7 @@ def via_device_id(hass, hub_entry_id):
     integration is created explicitly - they all exist because some entity's
     device_info created them. A child that set up first would otherwise
     resolve to None and land at the top level of the device page, silently,
-    until a reload (Anze's log, 2026-09-18).
+    until a reload (the owner's log, 2026-09-18).
 
     Both ``via_device_id`` and ``async_get_device_by_identifier`` arrived in
     HA 2026.8, which is why hacs.json asks for it; ``async_get_device`` is

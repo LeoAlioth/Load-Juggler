@@ -1,7 +1,7 @@
 """Manual override: someone operating the device outside Load Juggler hands
 the load to the user for its Manual override timeout, with the Dynamic Control
 switch still on; Load Juggler takes it back after. The switch is the user's
-alone: off stays off, and switching it off cancels an override (Anze,
+alone: off stays off, and switching it off cancels an override (the owner,
 2026-10-14).
 
 Machine-authored tests - not yet human-reviewed.
@@ -284,7 +284,7 @@ async def test_a_lower_target_starts_it_only_when_a_user_set_it(
 
     hass.states.async_set(
         TANK, "heat", {"temperature": 45, "current_temperature": 48},
-        context=Context(user_id="anze"),
+        context=Context(user_id="<user>"),
     )
     await hass.async_block_till_done()
     _overridden(hass, rt)

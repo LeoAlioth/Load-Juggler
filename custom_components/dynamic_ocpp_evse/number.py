@@ -285,7 +285,7 @@ class TankTemperatureSlider(LoadSlider):
     """Slider for a hot water tank setpoint temperature (away / normal / boost).
 
     The only place these are set: the setup and settings pages no longer ask
-    (Anze, 2026-09-25) - an entry from before keeps its saved value as the
+    (2026-09-25) - an entry from before keeps its saved value as the
     starting one. Bounded by the thermostat's own min_temp / max_temp, which
     both climate and water_heater entities publish, and moved into them when
     they change; 10-90 °C until the thermostat reports. Load Juggler itself

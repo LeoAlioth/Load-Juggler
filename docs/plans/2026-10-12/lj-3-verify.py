@@ -6,12 +6,12 @@ Usage:  python3 lj-3-verify.py [1|2|3|4 ...]      (no args = all)
 
 Prints one verdict per item: PASS / FAIL / REVIEW (look at the listed cases) / NOT EXERCISED / N/A.
 Only GETs /api/history/period and /api/error_log. Tokens are read from files, never printed.
-Plan: /Users/anzek/Projects/plans/2026-10-12/lj-3-verify-shipped.md
+Plan: ~/Projects/plans/2026-10-12/lj-3-verify-shipped.md
 """
 import bisect, datetime as dt, json, os, pathlib, sys, urllib.error, urllib.parse, urllib.request
 from zoneinfo import ZoneInfo
 
-HOSTS = {'home': 'ha.alpacasbarn.com', 'kozolec': 'ha.kozolec.hlevcek.com', 'andrejg': 'andrejg.duckdns.org:8123'}
+HOSTS = {'home': 'ha.alpacasbarn.com', 'kozolec': 'ha.kozolec.hlevcek.com', 'third': 'andrejg.duckdns.org:8123'}
 LOCAL = ZoneInfo('Europe/Ljubljana')
 UTC = dt.timezone.utc
 END = os.environ.get('END') or dt.datetime.now(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -20,7 +20,7 @@ ASSUMED = 'waiting for a new reading - assumed current'
 
 
 def _token(site):
-    return pathlib.Path('/Users/anzek/Projects/Load_Insights/data/' + HOSTS[site].split(':')[0]).read_text().strip()
+    return pathlib.Path('~/Projects/Load_Insights/data/' + HOSTS[site].split(':')[0]).read_text().strip()
 
 
 def _get(site, path):
@@ -130,15 +130,15 @@ def max_in_window(times, width_s):
 
 # --------------------------------------------------------------------------------------------- item 1
 def item1():
-    """Slow meter on Andrej's two go-eChargers (c32bbc7 + 2139595, installed 2026-10-04 ~20:30-21:00 local)."""
-    print('\n=== 1. Slow meter: assumed draw on Andrej\'s two go-eChargers')
+    """Slow meter on the third site's two go-eChargers (c32bbc7 + 2139595, installed 2026-10-04 ~20:30-21:00 local)."""
+    print('\n=== 1. Slow meter: assumed draw on the third site\'s two go-eChargers')
     start = '2026-10-04T19:00:00Z'
     end = ts(END)
     C = ('charger', 'charger_nova')  # stara, nova
     # the light entities for the whole span; the meters (every few s) only for the both-plugged windows
     ids = [f'sensor.{c}_{k}' for c in C for k in ('status_connector', 'charging_status', 'effective_priority')]
     ids += ['select.site_load_management_distribution_mode']
-    H = hist('andrejg', ids, start)
+    H = hist('third', ids, start)
     ids = [f'sensor.{c}_{k}' for c in C for k in ('allocated_current', 'current_import', 'power_active_import')]
     ids += [f'sensor.site_load_management_available_current_{p}' for p in 'abc']
     ids += [f'sensor.solaredge_i2_m1_ac_current_{p}' for p in 'abc'] + [f'sensor.solaredge_i2_m1_ac_power_{p}' for p in 'abc']
@@ -177,7 +177,7 @@ def item1():
 
     iso = lambda t: t.astimezone(UTC).strftime('%Y-%m-%dT%H:%M:%SZ')
     for w0, w1 in both:
-        H.update(hist('andrejg', ids, iso(w0 - dt.timedelta(minutes=5)), end=iso(w1)))
+        H.update(hist('third', ids, iso(w0 - dt.timedelta(minutes=5)), end=iso(w1)))
         m = mode.at(w0)[0]
         prio = {c: g(f'sensor.{c}_effective_priority').at(w0)[0] for c in C}
         first = min(C, key=lambda c: float(prio[c]) if prio[c] not in (None, 'unknown', 'unavailable') else 9)
@@ -268,9 +268,9 @@ def item1():
 
 # --------------------------------------------------------------------------------------------- item 2
 def item2():
-    """Leaving boost (ed155b7): Andrej 2026-10-04 ~20:30 local, Home 2026-10-04 ~18:36 local."""
-    print('\n=== 2. Leaving boost: Andrej\'s water_heater.tc and Home\'s climate.workshop_boiler')
-    tanks = [('andrejg', '2026-10-04T18:30:00Z', 'water_heater.tc', 'hot_water_tank'),
+    """Leaving boost (ed155b7): the third site 2026-10-04 ~20:30 local, Home 2026-10-04 ~18:36 local."""
+    print('\n=== 2. Leaving boost: the third site\'s water_heater.tc and Home\'s climate.workshop_boiler')
+    tanks = [('third', '2026-10-04T18:30:00Z', 'water_heater.tc', 'hot_water_tank'),
              ('home', '2026-10-04T16:36:00Z', 'climate.workshop_boiler', 'server_room_hot_water_tank')]
     out = []
     for site, start, dev, pre in tanks:
@@ -310,7 +310,7 @@ def item3():
     print('\n=== 3. Meter-only hybrid saturation latch')
     print('  VERDICT 3: N/A - no site has the topology (grid-tied + battery power read + solar from the meter alone):'
           ' Kozolec is off-grid; Home has no battery (battery_power None) and reads a solar sensor and output'
-          ' sensors; Andrej has no battery. Checked 2026-10-12 from diagnostics and states.')
+          ' sensors; the third site has no battery. Checked 2026-10-12 from diagnostics and states.')
 
 
 # --------------------------------------------------------------------------------------------- item 4

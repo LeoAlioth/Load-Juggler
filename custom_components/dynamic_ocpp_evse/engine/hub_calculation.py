@@ -579,7 +579,7 @@ def _latch_floor(hub_runtime, key, battery_soc, floor, hysteresis):
 
 def _latch_full(hub_runtime, members, hysteresis):
     """Full's hysteresis band sits ABOVE its setting - the target's sits below
-    it, so the target can reach full without the two bands overlapping (Anze,
+    it, so the target can reach full without the two bands overlapping (the owner,
     2026-10-10): a battery counts as full from full + hysteresis (at most 100)
     until it falls below full. Done per member, on its own SOC, by raising
     ``soc_full`` while it is not full - which is what every consumer compares

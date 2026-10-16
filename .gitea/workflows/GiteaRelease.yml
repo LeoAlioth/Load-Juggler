@@ -65,7 +65,7 @@ jobs:
             # one - so the AUTOMATIC path stops as soon as the version already
             # has a tag. Bump manifest.json and the next merge releases; do not,
             # and the merge passes in silence. A tag push and a manual run are
-            # both deliberate acts and are never skipped (Anze, 2026-09-22).
+            # both deliberate acts and are never skipped (2026-09-22).
             if [ "$GITHUB_EVENT_NAME" = "push" ] \
                && git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
               echo "$TAG_NAME is already tagged - nothing to release."

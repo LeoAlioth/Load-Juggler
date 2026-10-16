@@ -131,7 +131,7 @@ def set_load_phase_currents(load, commanded_limit):
 def place_asymmetric_output(demand, total, cap, rating=float("inf")):
     """Per-phase output of an ASYMMETRIC inverter putting out ``total`` A net.
 
-    Anže, 2026-09-24: his asymmetric inverter "puts/pulls power on the phases in
+    The owner, 2026-09-24: his asymmetric inverter "puts/pulls power on the phases in
     a way to always try to balance them on the grid". So it places its net
     output - and its charging draw - to bring every phase's grid current
     (``demand[i] - out[i]``, demand being household + managed loads) to one
@@ -1001,7 +1001,7 @@ def check_physical_invariants(site, household, physical_solar_w):
     import into less import, the engine sized them on surplus that was not
     there. Restricted to ``BEHAVIOR_EXCESS`` on purpose - it is the one
     behaviour the engine SIZES against a surplus pool, so it has no excuse.
-    Binary Excess loads are exempt by decision (Anže, 2026-09-07: a 2 kW
+    Binary Excess loads are exempt by decision (2026-09-07: a 2 kW
     element on a smaller surplus still boosts, because the overshoot costs
     export), and Solar Priority is exempt because it deliberately runs on a
     grid-backed minimum below the SOC target.

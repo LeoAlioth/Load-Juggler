@@ -229,7 +229,7 @@ def _tank(eid="tank", watts=2100.0, priority=2, heating=True, phase="A"):
 
 
 def test_a_lower_ranked_evse_starts_on_what_the_tank_leaves():
-    """Anže's example: a 2.5 kW surplus, a 2.1 kW tank ahead of a 1.4 kW-minimum
+    """The owner's example: a 2.5 kW surplus, a 2.1 kW tank ahead of a 1.4 kW-minimum
     EVSE. The tank takes its 2.1 kW, 400 W are left, and the EVSE still starts at
     its 6 A floor - the leftover is positive, that is all the rule asks.
 
@@ -272,7 +272,7 @@ def test_a_lower_ranked_excess_load_waits_behind_a_tank_that_takes_it_all():
 
 
 def test_the_pool_is_zero_at_the_threshold_and_tracks_above_it():
-    """Anze's arithmetic: at the threshold the pool is exactly 0, and 100 W
+    """The owner's arithmetic: at the threshold the pool is exactly 0, and 100 W
     above it the pool is 100 W."""
     at = _evse("at", min_current=0.9, max_current=10.4)
     _prepare(_site(THRESHOLD, loads=[at]))
@@ -577,7 +577,7 @@ def _site_3ph(export_w, loads=(), breaker=BREAKER, threshold=THRESHOLD):
 # surplus that cannot be EXPORTED, and the export position is a site total. The
 # gross pools (grid, inverter, group, solar, physical) keep the default: a
 # breaker, an inverter leg and a contractual export limit are all per-phase
-# quantities. Anze's rule, 2026-09-07: per-phase -1, -1, 2 is a site total of 0.
+# quantities. The owner's rule, 2026-09-07: per-phase -1, -1, 2 is a site total of 0.
 
 
 def test_the_pool_totals_its_phases():
@@ -698,7 +698,7 @@ def test_a_deduction_never_inflates_the_site_total():
 
 def test_a_single_phase_load_may_reach_the_whole_site_surplus():
     """The export limit is a site TOTAL, so a phase is not charged a third of
-    it. Anze, 2026-09-08: a 3x25 A connection exporting 15/20/25 A is
+    it. The owner, 2026-09-08: a 3x25 A connection exporting 15/20/25 A is
     compliant; it is not pegged at 20/20/20.
 
     1.5 kW of surplus on a balanced three-phase site, one 1ph station on C and
@@ -813,7 +813,7 @@ def test_a_claim_on_another_phase_still_leaves_room_when_there_is_room():
     IT USED TO GET 1.3 A, and this test recorded that as "the conservative
     reading of a real constraint", pending a question it could not settle: may
     an Excess load reach the site total when the total lives on other phases?
-    Settled, 2026-09-08 (Anze) - the export limit is contractually a site
+    Settled, 2026-09-08 (the owner) - the export limit is contractually a site
     TOTAL. A 3x25 A connection exporting 15/20/25 A is compliant; it is not
     pegged at 20/20/20. So charging phase C a third of the allowance was
     bounding it by a quantity that does not exist.

@@ -514,7 +514,7 @@ def test_the_minimum_soc_floor_is_never_held():
 # Leaving boost goes straight to the floor, never through away or off
 # ---------------------------------------------------------------------------
 #
-# Andrej's site, 4 Oct 2026: water_heater.tc (Normal mode, 42 / 46 C) went
+# the third site, 4 Oct 2026: water_heater.tc (Normal mode, 42 / 46 C) went
 # 46 -> 40 at 13:49 and 40 -> 42 at 13:54 - its lowest target for five minutes
 # between boost and normal - and 46 -> 40 -> 46 -> 40 through 11:21-12:13. Home's
 # workshop boiler went 80 heat -> off -> 80 heat -> off. The label held at boost,

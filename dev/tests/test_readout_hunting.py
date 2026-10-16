@@ -549,7 +549,7 @@ async def test_a_slow_meter_charges_through_on_its_assumed_draw(hass, site):
 
 # ── A car that climbs: the reading lands during the climb ─────────────────
 #
-# The field case (2026-10-07, Andrej's Nova, a go-eCharger V4): nothing is
+# The field case (2026-10-07, the third site's Nova, a go-eCharger V4): nothing is
 # stale in the old sense - meter values and commands both every 30 s - but a
 # car climbs to a raised limit over tens of seconds, and a value that lands a
 # few seconds after the raise shows it part of the way up. Believed, the rest

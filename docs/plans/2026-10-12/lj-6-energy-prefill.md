@@ -1,7 +1,7 @@
 # LJ-6: Pre-fill setup from the Energy dashboard
 
-Repos: Load Juggler `/Users/anzek/Projects/Dynamic_OCPP_EVSE` (dev) and Load Insights
-`/Users/anzek/Projects/Load_Insights` (dev, only to split one module). Approved by Anze 2026-10-12
+Repos: Load Juggler `~/Projects/Dynamic_OCPP_EVSE` (dev) and Load Insights
+`~/Projects/Load_Insights` (dev, only to split one module). Approved by the owner 2026-10-12
 (TODO "[FEATURE] Pre-fill the hub from the energy dashboard"). Personal project, so don't log it to
 work-context. Commit locally on dev in both repos and don't push (dev auto-deploys).
 
@@ -30,7 +30,7 @@ work-context. Commit locally on dev in both repos and don't push (dev auto-deplo
   the per-phase readings.
   - History of 2026-10-11 at midnight, importing: `m1_ac_power_a = -1877 W`, so the M1's per-phase power
     is export-positive like its total, while `m1_ac_current_a = +8.21 A` is import-positive.
-  - So the declared inversion holds for the meter's per-phase **power**, not its amps. Anze's working
+  - So the declared inversion holds for the meter's per-phase **power**, not its amps. The owner's working
     config (M1 amps, `invert_phases: false`) agrees.
   - Today's auto-detect (`_power_beside`, watts first) would offer the M1 watts with invert **off** at
     Home, which is the wrong sign. The dashboard's declaration fixes that.
@@ -108,7 +108,7 @@ These are **not** pre-filled:
   form shows what the user typed, so a field they cleared stays cleared.
 - An entity suggestion is dropped when `hass.states.get(eid)` is `None`. On submit it still goes through
   `_validate_entity_units`, which accepts W and kW, so kW sensors need no special handling.
-- **Only on the initial setup forms** (Anze, 2026-10-12): the hub wizard (`hub_grid`) and the inverter
+- **Only on the initial setup forms** (2026-10-12): the hub wizard (`hub_grid`) and the inverter
   wizard while a new inverter entry is being created. Never on an options/Configure page: there an empty
   field may be one he cleared on purpose.
 - Inverter suggestions go only to the hub's **first** inverter, i.e. when `get_inverters_for_hub(hass, hub_id)`
@@ -157,7 +157,7 @@ These are **not** pre-filled:
   - `CONF_INVERT_PHASES` comes from `meter` when it is present.
 
 ### LJ `config_flow/options.py`
-- No change. The Configure pages never pre-fill (Anze, 2026-10-12).
+- No change. The Configure pages never pre-fill (2026-10-12).
 
 ### LJ `config_flow/schemas.py`
 - No change. The builders already read defaults, and the entity fields use `suggested_value`, so they
@@ -217,23 +217,23 @@ It is static, with no placeholder.
 
 ### LJ `dev/TODO.md`
 - Remove the "[FEATURE] Pre-fill the hub from the energy dashboard" item when it lands.
-- Add nothing for multi-array production unless Anze asks. It is a non-goal, recorded here.
+- Add nothing for multi-array production unless the owner asks. It is a non-goal, recorded here.
 
 ## Order of work
-1. LI: split `model.py`, move the tests, add the byte-for-byte test. Run `cd /Users/anzek/Projects/Load_Insights && .venv/bin/python tests/run_all.py`
+1. LI: split `model.py`, move the tests, add the byte-for-byte test. Run `cd ~/Projects/Load_Insights && .venv/bin/python tests/run_all.py`
    (the verbatim test passes vacuously until step 2). Commit on LI dev.
 2. LJ: `cp ../Load_Insights/custom_components/load_insights/insights/model.py custom_components/dynamic_ocpp_evse/energy_prefs.py`,
    update `AGENTS.md`, then make the helpers, flow and translations changes and add the tests.
 3. Verify:
-   - `cd /Users/anzek/Projects/Dynamic_OCPP_EVSE && .venv/bin/python -m pytest dev/tests -q -n 8`
+   - `cd ~/Projects/Dynamic_OCPP_EVSE && .venv/bin/python -m pytest dev/tests -q -n 8`
    - `.venv/bin/python -m pytest dev/tests/test_energy_prefill.py dev/tests/test_config_flow_e2e.py -q`
-   - `cd /Users/anzek/Projects/Load_Insights && .venv/bin/python tests/test_model.py`, which now checks
+   - `cd ~/Projects/Load_Insights && .venv/bin/python tests/test_model.py`, which now checks
      the LJ copy for real.
    - The existing translation-key tests in both repos.
 4. RELEASE_NOTES + TODO, then commit on LJ dev. No push, no HA install.
 
-## Non-goals / open for Anze
-- **Options / Configure pages: no pre-fill** (Anze, 2026-10-12). It would go against fields cleared on purpose.
+## Non-goals / open for the owner
+- **Options / Configure pages: no pre-fill** (2026-10-12). It would go against fields cleared on purpose.
 - **Multi-array production:** LJ takes one sensor; a min_max/template sum (Kozolec's `sensor.kozolec_total_pv_power`) stays manual.
 - **Possible LI bug, outside LJ:** with HA 2026.3+ prefs, `PowerSpec` carries both `rate` (HA's
   generated sensor) and `rate_inverted` (the raw one), and `polarity` answers -1. That is right for the

@@ -4,7 +4,7 @@ Machine-authored tests - not yet human-reviewed.
 
 Kozolec's Pond EVSE sits behind switch.pond_evse and cuts out on high
 temperature. The switch still reads on, a turn_on to it does nothing, and
-Load Juggler never acted. Anze's stand-in automation cycled the plug every
+Load Juggler never acted. The owner's stand-in automation cycled the plug every
 15 min whenever it drew under 10 W - also with the car full or the load not
 permitted, ten times in a row on 3 Oct. "Restart if it stops drawing"
 (control/plug.py) cycles it only while permitted and on, at most once per

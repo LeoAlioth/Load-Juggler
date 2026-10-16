@@ -1,12 +1,12 @@
-# lj-7 - Tank target flipping (Andrej 42 <-> 40, Home 80 <-> 10)
+# lj-7 - Tank target flipping (the third site 42 <-> 40, Home 80 <-> 10)
 
-Repo `/Users/anzek/Projects/Dynamic_OCPP_EVSE`, branch `dev`. Personal project - never log to work-context.
+Repo `~/Projects/Dynamic_OCPP_EVSE`, branch `dev`. Personal project - never log to work-context.
 Planned 2026-10-12 from read-only history/diagnostics probes; nothing was changed. Runs after lj-1 in the
 batch (lj-1 touches the command gate in `entities/load.py`; re-check the line numbers below after it).
 
 ## What the history shows
 
-**Andrej, `water_heater.tc`** (MELCloud Ecodan; LJ "Hot Water Tank", Normal, away/normal/boost sliders
+**The third site, `water_heater.tc`** (MELCloud Ecodan; LJ "Hot Water Tank", Normal, away/normal/boost sliders
 40/42/45, element slider 900 W on ABC = 1.304 A/phase, min off 5 min, grace 5 min, update 15 s, priority 3;
 hub Sequential - Optimized, 20 A main breaker; the heater's own `min_temp` 40 - a capability attribute,
 so not in recorder history - read live):
@@ -54,15 +54,15 @@ B, Priority mode, export limit 13.5 kW, trigger margin 500 W): the 10-11 80 <-> 
 Excess verdict at its edge. Export sat around 13 kW, so each boost lasted ~1 min and then waited 10-20 min
 at away. Since 37fd304 (installed 10-12 ~10:30): 80 @10:55, 12:05, 12:34, 13:15, 13:41, each held 5-23 min
 (`grace_active` true while permit 0), ~30 min apart, plus one restart drop at 13:18. **Damped - no change
-in this plan**, only watched (below). Neither of Andrej's causes applies: Priority mode, and the tank is
+in this plan**, only watched (below). Neither of the third site's causes applies: Priority mode, and the tank is
 far above its 10 C floor.
 
 ## Root cause (one line each)
 
-- Andrej's flip: a denied tank under its floor temperature is set to its lowest target even when its
+- The third site's flip: a denied tank under its floor temperature is set to its lowest target even when its
   device is idle **at the floor target** (`control/hot_water_tank.py:299-319`). With `min_off_hold`
   (5 min) and a permit that flickers under charger contention, that is one cloud write every ~5 min.
-- Andrej's heat runs cut short: Optimized/Strict judge a rounded allocation against an unrounded minimum
+- The third site's heat runs cut short: Optimized/Strict judge a rounded allocation against an unrounded minimum
   (`calculations/target_calculator.py:2480-2482, 2571-2572`), so an active 900 W/3 ph tank gets 0.
 
 ## Fix (two rules, both in shared code, no tank special case)
@@ -108,7 +108,7 @@ except (AttributeError, KeyError, TypeError, ValueError):
     pass
 ```
 
-Extend the comment block above it with one or two sentences and the Andrej evidence (10-11, 72 writes a day,
+Extend the comment block above it with one or two sentences and the the third site evidence (10-11, 72 writes a day,
 Ecodan idle at 39-41 C under 42). Known ceiling, the same one the TODO already names for the at-floor case:
 a thermostat with a tight tolerance (generic_thermostat 0.3 K) denied while idle at its floor can start one
 heating burst before the next cycle reads `heating` and switches it off. Once off, it reads `off`, not idle,
@@ -116,11 +116,11 @@ so this happens once per denial at most.
 
 Skipped: the status sensor still flickers *Waiting for Power* / *Idle* under contention. That is
 cosmetic, and the permit is honest. Also skipped: `target_setpoint` shows 42 while `min_temp` was written. Add
-either only if Anze asks.
+either only if the owner asks.
 
 ## Tests (`dev/tests/test_hot_water_tank.py`, plus one in `test_distribution_table.py`)
 
-1. **Replay Andrej 10-11 20:05-20:35 UTC** (new, `test_hot_water_tank.py` next to the leaving-boost
+1. **Replay the third site 10-11 20:05-20:35 UTC** (new, `test_hot_water_tank.py` next to the leaving-boost
    replays). The existing `_replay` ticks 15 s with no permit trace, so add a sibling `_replay_permits`
    (or a `permits=` argument): 2 s site ticks running `min_off_hold` on every tick, as `load.py` does, and a
    command every 15 s. `water_heater.tc`, Normal, 40/42/45, `min_temp` 40, `status="idle"`, temp 40.0,
@@ -164,21 +164,21 @@ Run: `.venv/bin/python -m pytest dev/tests -q -n 8` - expect 1671 + new, all pas
 - **A tank or smart load whose rating is not a whole tenth of an amp is no longer refused power once it
   runs, in the Sequential modes**: Sequential - Optimized and Strict rounded a load's allocation to 0.1 A
   and then compared it with its unrounded minimum. A 900 W tank on three phases (1.304 A) came out at 1.3 A,
-  under its own minimum, so it got nothing - and only while it was heating. Andrej's heat pump was denied
+  under its own minimum, so it got nothing - and only while it was heating. The third site's heat pump was denied
   power each time it started heating water and was set to its lowest target, so it heated to 40 C instead of
   42. The minimum is now rounded the same way.
 - **A heat pump's tank denied power no longer flips between its normal and lowest temperature**: a tank
   denied power below its normal temperature was set to its lowest target even when the device said it was
   idle at the normal one. A heat pump idles a few degrees under its target, so it drew nothing there either
   way. With two cars charging on a 20 A supply, the tank's permit came and went every few seconds, and after
-  each *Minimum off time* the target went 42 -> 40 -> 42 C - 72 cloud writes in a day (Andrej's MELCloud
+  each *Minimum off time* the target went 42 -> 40 -> 42 C - 72 cloud writes in a day (the third site's MELCloud
   heat pump, 11 Oct). A denied tank whose device is idle at its floor target now stays there. One that
   starts heating is still set to its lowest target, and is not raised again until power returns.
 
-**`dev/TODO.md`**: extend the existing **[BUG] Leaving boost: verify on Andrej's tank and Home's workshop
-boiler** item (line 10). Rename it to "Tank target: verify on Andrej's tank and Home's workshop boiler"
+**`dev/TODO.md`**: extend the existing **[BUG] Leaving boost: verify on the third site's tank and Home's workshop
+boiler** item (line 10). Rename it to "Tank target: verify on the third site's tank and Home's workshop boiler"
 and add: `water_heater.tc` holds 42 through charger contention (no 42 <-> 40 every 5 min); each
-`heat_water` run shows *Heating* with `heating_permitted: true` and reaches ~42 C; and, until Andrej's
+`heat_water` run shows *Heating* with `heating_permitted: true` and reaches ~42 C; and, until the third site's
 install, Home's boiler boosts hold >= 5 min (37fd304). Mention the generic_thermostat one-burst ceiling
 next to the existing ceiling sentence. No new backlog item.
 
@@ -189,7 +189,7 @@ next to the existing ceiling sentence. No new backlog item.
 3. Fix A (two comparisons + comment). Fix B (`at_floor` + comment).
 4. Run the full suite (`.venv/bin/python -m pytest dev/tests -q -n 8`).
 5. RELEASE_NOTES + TODO as above. `manifest.json` is already 2.1.6 - leave it.
-6. Commit locally on dev: "Tank target flipping: ... N passed". **No push** until Anze says - a push
+6. Commit locally on dev: "Tank target flipping: ... N passed". **No push** until the owner says - a push
    auto-deploys to Home and Kozolec.
 
 ## Verify after install
@@ -204,7 +204,7 @@ so fix A is inert there; fix B is what could change behaviour.
   `bee_room_heater`, `bathroom_ir_panel`): over a day, check for the same thing - no heating bursts under
   30 s while denied, and no new setpoint churn. Off-grid denial below the minimum SOC is away/protective,
   so it should behave as before.
-- **Andrej's site - only if Anze approves the build there** (HACS download + restart, snapshots,
+- **The third site - only if the owner approves the build there** (HACS download + restart, snapshots,
   NOTES.md). Then watch `water_heater.tc` for 2-3 days:
   - target changes/day drop from 28-72 to the boost windows only (42 <-> 45). A 40 should appear only when
     the heat pump starts heating while both cars hold the supply.

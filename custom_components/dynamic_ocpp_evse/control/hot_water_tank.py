@@ -92,7 +92,7 @@ def resolve_tank_setpoint(
         # At or over the target SOC, OR the hub says the site cannot place its
         # own production anywhere else.
         #
-        # The excess half was missing (Anze, 2026-09-09, kozolec): this branch
+        # The excess half was missing (2026-09-09, kozolec): this branch
         # read SOC alone, so a tank sat at its normal setpoint while the hub
         # published excess_available - and excess means the battery is already
         # taking every watt it is PERMITTED to take, so "the battery has
@@ -284,7 +284,7 @@ async def send_hot_water_tank_command(
     # kept for a tank that would heat. A boost ending went through off or the
     # lowest target first, because the label rides the dip at boost while the
     # allocator sizes a boosting tank by the surplus alone and withdraws its
-    # power at once, and the minimum off time then held it there (Andrej's
+    # power at once, and the minimum off time then held it there (the third site's
     # site, 4 Oct 2026: water_heater.tc 46 -> 40 at 13:49, 40 -> 42 at 13:54,
     # and 46 -> 40 -> 46 -> 40 through 11:21-12:13; Home's workshop boiler
     # 80 heat -> off -> 80 heat -> off, its normal 42 never shown). Off for

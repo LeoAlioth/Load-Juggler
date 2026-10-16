@@ -136,7 +136,7 @@ class AllowGridChargingSwitch(HubEntityMixin, _FlagSwitch):
 
 class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
     """Per-load switch to enable/disable dynamic current control - the user's
-    alone: Load Juggler never turns it off or on (Anze, 2026-10-14).
+    alone: Load Juggler never turns it off or on (2026-10-14).
 
     When ON (default): the load receives dynamically calculated current,
     unless a manual override runs. When OFF: the load is the user's (a

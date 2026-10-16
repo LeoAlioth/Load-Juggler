@@ -1409,7 +1409,7 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     # BMS at its charge limit - so a trigger exactly AT the limit never fires.
     # Grid-tied the export threshold already sits the margin below the export
     # limit; off-grid the battery is the only sink, so the margin comes off its
-    # allowance. Kozolec (Anze, 2026-10-03): its BMS holds charging at about
+    # allowance. Kozolec (2026-10-03): its BMS holds charging at about
     # 3.5 kW, and entered as 3500 W the battery never read as taking all it
     # may - it had been set to 3000 W to make Excess fire at all.
     if site.is_off_grid and charge_allowance > 0:
@@ -2567,7 +2567,7 @@ def _distribute_per_phase_optimized(
         # the unrounded figure sat on the boundary: a float's width under it
         # (18.3 - 12.3 A), or the load ahead rounded up by 0.04 A, and the
         # next load got 0 instead of its minimum - every few cycles, each one
-        # a stop for a running car (Andrej's second charger, 2026-10-04).
+        # a stop for a running car (the third site's second charger, 2026-10-04).
         wanted = round(wanted, 1)
         if wanted < load.min_current:
             load.allocated_current = 0

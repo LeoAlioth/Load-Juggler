@@ -110,7 +110,7 @@ DEFAULT_FORECAST_SOC_FLOOR = 30
 # How long a forecast source that stops delivering (unavailable, or no usable
 # data) keeps contributing the series it last read - an internet outage takes
 # the forecast integration down with it, and the last forecast it fetched still
-# describes the day (Anze, 2026-10-07: "the last available forecast for up to
+# describes the day (2026-10-07: "the last available forecast for up to
 # 24 hours"). Past it the source counts as missing, as before.
 FORECAST_HOLD_S = 24 * 3600
 FORECAST_SOC_HYSTERESIS = 2  # % - serves every forecast latch, so one

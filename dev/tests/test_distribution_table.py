@@ -1,4 +1,4 @@
-"""Two chargers, every distribution mode - Anze's table (2026-10-04).
+"""Two chargers, every distribution mode - the owner's table (2026-10-04).
 
 Machine-authored tests - not yet human-reviewed.
 

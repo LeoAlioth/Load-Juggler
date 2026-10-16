@@ -1,6 +1,6 @@
 # LJ-5: One household formula, no wiring topology
 
-Repo: Load Juggler `/Users/anzek/Projects/Dynamic_OCPP_EVSE` (branch dev). Anze approved this on 2026-10-12. It
+Repo: Load Juggler `~/Projects/Dynamic_OCPP_EVSE` (branch dev). The owner approved this on 2026-10-12. It
 closes two TODO items, *"[BUG] The wiring-topology labels describe the hardware..."* and *"[FEATURE] The household
 sum telescopes..."*. It is a personal project, so don't log it to work-context. Commit locally on dev and don't push:
 dev auto-deploys. Release section: **2.1.6**. The manifest is already 2.1.6.
@@ -32,7 +32,7 @@ dev auto-deploys. Release section: **2.1.6**. The manifest is already 2.1.6.
   deliberately not modelled. LI keeps its own `topology` flag for this: `insights/grid.py:86-101` uses it for
   DC-vs-AC round-trip efficiencies, and that stays LI's business.
 
-**So the flag goes entirely** (decided by Anze, 2026-10-12). No renamed flag, no new labels. Deleting it is also how
+**So the flag goes entirely** (decided by the owner, 2026-10-12). No renamed flag, no new labels. Deleting it is also how
 the label bug gets fixed.
 
 **Nothing the flag did is lost.** Each former consumer and what replaces it:
@@ -43,7 +43,7 @@ the label bug gets fixed.
 | `compute_household_per_phase`, series or off-grid branch | `out − draws`, grid ignored | `grid + (out − grid) − draws`: the grid-flows-through tick makes the input equal the grid, so the grid cancels. Off-grid the grid is 0 | Yes, exactly |
 | `_mixed_household_per_phase` with `mixed_topologies` | A guessed sum of the two formulas | The same single sum. Each member adds `out − in`; a PV inverter on a hybrid's load port nets through the hybrid's signed output | Exact for all-series fleets. For mixed fleets the old result was a guess, so the new one is the correct value; a PV inverter on the grid side needs the hybrid's input sensors (migration warns) |
 | `fleet_topology` → `site.wiring_topology` | One site-wide word for the calculator and the log | Nothing needs a site-wide word: the household arrives computed, and the cap uses it (next row) | n/a |
-| `_house_on_inverters` (`target_calculator:701`) | Series → `Σ max(0, house − grid import)`; otherwise the solar balance | `Σ max(0, house − grid import)` on every site with a per-phase household; off-grid as before | Kozolec yes. Home and Andrej move by sensor noise (decided OK) |
+| `_house_on_inverters` (`target_calculator:701`) | Series → `Σ max(0, house − grid import)`; otherwise the solar balance | `Σ max(0, house − grid import)` on every site with a per-phase household; off-grid as before | Kozolec yes. Home and the third site move by sensor noise (decided OK) |
 | `member_solar` | Series or off-grid → `out − bp`; parallel → `out` | `(out − in) − bp` for every member | Yes where it runs: all three sites have a solar sensor, so it is unused there. A battery-less parallel member gives `out − 0 − 0`; off-grid gives `out − bp` |
 | `_battery_output_term` (estimate, unmetered members) | Series → `bp`; parallel → `max(0, bp)` | The signed `bp` always: a battery belongs to the inverter it sits behind, and an AC-coupled one is its own inverter entry | Yes on all three sites: two have no battery, Kozolec was series |
 | `sum_outputs(topology=…)` | Split the outputs for the composite | `net_output(members, grid)` | n/a |
@@ -61,14 +61,14 @@ the label bug gets fixed.
   whenever a solar sensor reads. All three sites have one, so this change does not move the published sensor. The
   per-phase household drives allocation (`_get_household_per_phase`) and the inverter cap.
 
-**The three sites** (diagnostics `HA_Configs/{home,kozolec}/snapshots/2026-10-12/configs/diagnostics.json`; Andrej's
+**The three sites** (diagnostics `HA_Configs/{home,kozolec}/snapshots/2026-10-12/configs/diagnostics.json`; the third site's
 read live, read-only, 2026-10-12):
 
 | Site | Grid | Inverter entry | Today | Migrated to | New formula | Same? |
 |---|---|---|---|---|---|---|
 | Home | SE M1 currents a/b/c (A, import +, `invert_phases` false) | SE17K, `parallel`, outputs `i1_ac_current_a/b/c`, solar `i1_ac_power`, no battery | `cons_adj + out − exp_adj` | no input | `grid + out − draws` | yes, `cons_adj − exp_adj = grid − draws` |
 | Kozolec | none (off-grid) | MultiPlus-II, `series`, output `gx_device_consumption_power_l1` (W, L1 only), solar `kozolec_total_pv_power`, battery | `out − draws` | input = grid meter | `0 + (out − 0) − draws` | yes |
-| Andrej | SE M1 power a/b/c (W, `invert_phases` true) | SolarEdge, `parallel`, outputs `i2_ac_current_a/b/c`, solar `i2_dc_power`, no battery | `cons_adj + out − exp_adj` | no input | `grid + out − draws` | yes |
+| the third site | SE M1 power a/b/c (W, `invert_phases` true) | SolarEdge, `parallel`, outputs `i2_ac_current_a/b/c`, solar `i2_dc_power`, no battery | `cons_adj + out − exp_adj` | no input | `grid + out − draws` | yes |
 
 - No site has a mixed fleet, a battery on a parallel member, or a grid-tied series member.
 - All three have a solar sensor, so `member_solar` is unused at every site.
@@ -424,7 +424,7 @@ and reason. Any other moved expectation is a bug.
 ## Verification
 
 ```bash
-cd /Users/anzek/Projects/Dynamic_OCPP_EVSE
+cd ~/Projects/Dynamic_OCPP_EVSE
 .venv/bin/python -m pytest dev/tests -q -n 8
 .venv/bin/python -m pytest dev/tests -q -n 8 -k "household or fleet or inverter_output or inverter_input or arrangement or migration or import"
 grep -rn -E "wiring_topology|WIRING_TOPOLOGY|fleet_topology|mixed_topologies|_battery_output_term|compute_household_per_phase|sum_outputs|inverter_output_per_phase" custom_components dev/tests
@@ -436,9 +436,9 @@ grep -rn -E "wiring_topology|WIRING_TOPOLOGY|fleet_topology|mixed_topologies|_ba
 - Before step 1, record the suite's pass count and every scenario's allocation. After steps 1 and 2, diff them: only
   the three files named under Harness may differ.
 
-## Per-site check after install (Home and Kozolec; Andrej only when Anze says)
+## Per-site check after install (Home and Kozolec; the third site only when the owner says)
 
-Install happens when Anze pushes; the pushed build installs and restarts by itself.
+Install happens when the owner pushes; the pushed build installs and restarts by itself.
 
 1. Before:
    - `node tools/snapshot.mjs home` and `python3 tools/collect_configs.py home` (and the same for kozolec), into
@@ -464,7 +464,7 @@ Install happens when Anze pushes; the pushed build installs and restarts by itse
 ## Risks
 
 - **Other installs with a parallel member that has a battery.** The battery is now taken as behind that inverter.
-  Derived solar becomes `out − bp`, and the estimate's charging is no longer ignored. No site of Anze's has this. The
+  Derived solar becomes `out − bp`, and the estimate's charging is no longer ignored. No site of the owner's has this. The
   release note tells others to give an AC-coupled battery its own inverter entry.
 - **Mixed fleets can't be migrated exactly.** After migration they get `Σ out − draws`, which is right when the PV
   inverter sits on the hybrid's load port. The migration logs a warning, and the release note covers it.
@@ -476,13 +476,13 @@ Install happens when Anze pushes; the pushed build installs and restarts by itse
 - **Derived solar and output total change** for grid-tied, grid-input hybrids without a solar sensor: the import is
   no longer counted as production. This is physically right, and only the three unverified scenario files named
   above can move.
-- **`_house_on_inverters` at Home and Andrej** now follows the per-phase household, which carries the floor hold, so
+- **`_house_on_inverters` at Home and the third site** now follows the per-phase household, which carries the floor hold, so
   it falls more slowly after a load drops. That is conservative, and it only matters near the inverter rating, which
-  neither site reaches (Home 17 kW, Andrej 15 kW with a 7.8 kW export limit).
+  neither site reaches (Home 17 kW, the third site 15 kW with a 7.8 kW export limit).
 
-## Open decisions for Anze
+## Open decisions for the owner
 
-None open. Anze decided all three on 2026-10-12:
+None open. The owner decided all three on 2026-10-12:
 
 1. **Delete `wiring_topology` entirely.** The per-inverter input setup replaces what it did; the "Nothing the flag did
    is lost" table above maps every former consumer to its replacement.
