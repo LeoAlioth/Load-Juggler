@@ -1,6 +1,6 @@
 """Off-grid, below the minimum SOC the battery carries the tanks and heaters -
 at their away setpoint - down to the hub's freeze floor, and nothing else
-(Anze, 2026-10-09: Kozolec's battery regions)."""
+(2026-10-09: Kozolec's battery regions)."""
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,

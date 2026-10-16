@@ -779,7 +779,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # evidence of one: it climbs back to the minimum over some 25 s
             # after any dip, so a dip of a cycle or two that was over well
             # before the command still found it a few tenths short, and the
-            # car was paused for the whole dwell (Andrej's second charger,
+            # car was paused for the whole dwell (the third site's second charger,
             # 2026-10-04). With the engine offering the minimum again, the
             # branch below runs the load at it. And one cycle's raw 0 is one
             # reading: on the first, the decision waits for the next cycle -
@@ -871,7 +871,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # (default 1 h, or the rest of the pause if longer) on top of the
             # usual validity, and is not sent again while it holds: re-sending
             # a 0 A profile every command interval restarted a go-eCharger's
-            # charging cycle every 30 s (Andrej's Nova). A pause outlives its
+            # charging cycle every 30 s (the third site's Nova). A pause outlives its
             # dwell whenever the permit stays under the minimum (Solar Only or
             # Excess after sunset), so the profile is refreshed once its hold
             # runs out - a lapsed one let Home's EVBox fall back to 16 A and

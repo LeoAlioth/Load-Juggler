@@ -44,7 +44,7 @@ async def send_ocpp_command(
     0 A profile every command interval, for as long as the car stayed plugged
     in, to a charger that had finished.
 
-    Reported live on the SE17K site's EvBox Elvi (Anze, 2026-09-09, and seen
+    Reported live on the SE17K site's EvBox Elvi (2026-09-09, and seen
     under 1.1.x too): "Set charging profile failed with response Exception",
     always with a car plugged in, arriving when that car finished charging,
     sometimes many times within the hour - one per command interval. The

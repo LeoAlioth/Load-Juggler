@@ -1,6 +1,6 @@
 # Test scenarios: cold hot-water-tank priority promotion (off-grid)
 #
-# Site = Anže's off-grid setup: Victron MultiPlus 5000/24 (single phase),
+# Site = the owner's off-grid setup: Victron MultiPlus 5000/24 (single phase),
 # 10 kWh battery, 3 MPPTs. Three managed loads, all in Solar Priority:
 #   - pond pump   (smart plug, 1.4 kW, priority 1)
 #   - power strip (smart plug, 200 W,  priority 2)

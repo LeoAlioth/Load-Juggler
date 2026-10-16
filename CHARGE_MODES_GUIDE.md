@@ -785,7 +785,7 @@ warning-based triggers over "the forecast mentions thunder".
 **Official warnings (recommended).** In the EU, [MeteoAlarm](https://www.home-assistant.io/integrations/meteoalarm/)
 covers most countries but is YAML-configured. Where a national integration exists
 it is usually both UI-configurable and more detailed - for Slovenia,
-[the ARSO integration](https://github.com/andrejs2/slovenian_weather_integration)
+the ARSO integration
 exposes a warning binary sensor whose `najvisja_stopnja` attribute is the highest
 active warning level (1 minor → 4 extreme):
 

@@ -1,8 +1,8 @@
-"""Two chargers on one breaker, both reporting every 30 s - Andrej's site.
+"""Two chargers on one breaker, both reporting every 30 s - the third site.
 
 Machine-authored tests - not yet human-reviewed.
 
-The field case (Andrej, 4 Oct 2026, 20 A main breaker, a 15-minute block
+The field case (the third site, 4 Oct 2026, 20 A main breaker, a 15-minute block
 power limit as Max Import Power): two 3-phase go-eCharger V4s, 6-16 A,
 commanded every 30 s, each sending a meter value every 30 s. In Priority mode
 the priority-1 charger ("Charger") was commanded 7 -> 15 -> 8 -> 14 -> 8 ->
@@ -82,7 +82,7 @@ WATTS = {"device_class": "power", "unit_of_measurement": "W"}
 # Room on the breaker for both minimums (6 + 6 A, a 1.7 A house on 20 A)...
 NO_ALLOWANCE_W = 40000.0
 # ...and a block power allowance that leaves them 0.5 A per phase to spare,
-# as Andrej's did at 19:18 (9.55 kW, a 1 kW house).
+# as the third site's did at 19:18 (9.55 kW, a 1 kW house).
 TIGHT_ALLOWANCE_W = (sum(HOUSE_A) + 3 * (2 * MIN_A + 0.5)) * V
 
 # Every mode that runs both minimums when the site carries them. Strict does
@@ -383,7 +383,7 @@ async def test_one_cycle_without_room_at_the_command_does_not_pause_it(hass, mod
 
 @pytest.mark.parametrize("mode", [*MODES, DISTRIBUTION_MODE_SEQUENTIAL_STRICT])
 async def test_a_car_that_stops_hands_its_room_to_the_second(hass, mode):
-    """Andrej, 19:44:40: the priority-1 car stopped taking current
+    """The third site, 19:44:40: the priority-1 car stopped taking current
     (SuspendedEV) and kept its allocation; the second car was paused. In
     every mode - Strict included, where the second car waits for the first
     to finish - the second car must end up with the whole room, and once

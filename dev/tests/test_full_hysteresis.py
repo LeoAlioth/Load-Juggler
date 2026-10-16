@@ -1,6 +1,6 @@
 """Full's hysteresis band sits above its setting: a battery counts as full from
 full + hysteresis until it falls below full, so the target (band below) can
-reach full without the bands overlapping (Anze, 2026-10-10)."""
+reach full without the bands overlapping (2026-10-10)."""
 
 from types import SimpleNamespace
 

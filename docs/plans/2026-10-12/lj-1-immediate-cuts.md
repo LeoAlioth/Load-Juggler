@@ -2,9 +2,9 @@
 
 This is a personal project. Do not log it to any work-context file.
 
-- **Repo:** `/Users/anzek/Projects/Dynamic_OCPP_EVSE`, branch `dev`. Manifest is already `2.1.6`, so there is no version bump.
+- **Repo:** `~/Projects/Dynamic_OCPP_EVSE`, branch `dev`. Manifest is already `2.1.6`, so there is no version bump.
 - **TODO:** `dev/TODO.md:8`, "[BUG] A second car starting overloads the breaker until the first car's cut lands".
-- **Decision (Anze, 2026-10-12):** short peaks slightly over the breaker are tolerable. The goal is to shorten them, not to guarantee they never happen. A decrease that matters goes out immediately, outside the load's *Update frequency*.
+- **Decision (2026-10-12):** short peaks slightly over the breaker are tolerable. The goal is to shorten them, not to guarantee they never happen. A decrease that matters goes out immediately, outside the load's *Update frequency*.
 - **Status:** the plan below was prototyped on a scratch copy of the repo, not on the repo itself. The full suite passed on it (1674, i.e. 1671 + 3 new). The numbers further down come from that prototype.
 
 ## Root cause
@@ -12,7 +12,7 @@ This is a personal project. Do not log it to any work-context file.
 - **One gate serves every load type.** `entities/load.py:713-723` reads `CONF_UPDATE_FREQUENCY` and returns before any command while `now - _last_command_time < interval`. It runs before the limit is built (`:738-818`) and before dispatch (`:838-886`).
   - Plugs, tanks and stations pass through the same gate.
   - `control/ocpp.py` has no gate of its own. It only skips Finishing/Faulted (`:63-70`) and stamps the slot (`:240`, `control/__init__.py:7-12`).
-- **The engine reacts at once, the old charger's command does not.** When a lower-priority car starts, the engine lowers the higher-priority charger's permit (`raw_permit`, `load.py:447`) in the same cycle. That charger's new limit then waits behind the gate for up to 30 s on Andrej's site. Meanwhile the new car's first command goes out at once, because its `_last_command_time` is `-inf` (`load.py:228`).
+- **The engine reacts at once, the old charger's command does not.** When a lower-priority car starts, the engine lowers the higher-priority charger's permit (`raw_permit`, `load.py:447`) in the same cycle. That charger's new limit then waits behind the gate for up to 30 s on the third site. Meanwhile the new car's first command goes out at once, because its `_last_command_time` is `-inf` (`load.py:228`).
 - **Smoothing adds more lag on the way down.** `control/smoothing.py:91-179` (EMA, then Schmitt, then the ramp, `max_down` at `:157`) keeps the command above the permit for 10-20 s even when a slot is open.
 - **Order within one cycle does not matter in practice.** Processors run in `sorted(entry_id)` order (`sensor.py:128`), not by priority, so a start can go out before a cut in the same cycle. The gap is one blocking OCPP call (well under 1 s), while a car takes several seconds to ramp. **Cuts will not be reordered to go first.**
 
@@ -44,7 +44,7 @@ This is a personal project. Do not log it to any work-context file.
    - The tolerance (`:179`) is untouched. That is the separate TODO entry `:9`.
 7. **Rate limits.** OCPP 1.6 has no rate limit, and the ocpp integration serialises calls. In the closed loop the cut adds 2 profiles per 18 minutes (Stara: 36 to 38).
 
-**Rejected alternative:** hold a new car's start until the loads ahead have taken their cuts. It delays every start by up to one interval, and Anze chose immediate cuts instead.
+**Rejected alternative:** hold a new car's start until the loads ahead have taken their cuts. It delays every start by up to one interval, and the owner chose immediate cuts instead.
 
 ## Change (minimal diff)
 
@@ -143,7 +143,7 @@ Docs and strings, in the same commit:
 
 **`dev/TODO.md:8`**: replace the entry with a verify entry.
 
-> - [ ] **[BUG] A charger's cut goes out before its command slot: verify on a real site** *(shipped in 2.1.6, closed-loop tests only)* - `control/smoothing.cut_now` sends a running charger's cut on the site cycle that asks for it, at the engine's permit floored at the minimum, and re-seeds the smoothing there; raises, pauses and stops keep the *Update frequency* slot. Check at Home (the EVBox under the block import limit): a big house load switched on mid-charge logs "Cut for ... goes out before its slot" and moves `last_set_current` within one site cycle, and profiles per hour stay near 3600 / update frequency plus a few. On Andrej's two go-eChargers (only once Anze approves an install there): a second car starting keeps the grid CTs within 20.3 A and Stara's cut lands within one site cycle of Nova's start. Known ceiling: on a flickering Solar-mode supply every dip of more than the dead band is a cut, and each cut restarts the interval - if a cloudy day shows more than about 2 cuts per interval, gate `cut_now` on the limiting pool (grid/breaker) rather than every pool.
+> - [ ] **[BUG] A charger's cut goes out before its command slot: verify on a real site** *(shipped in 2.1.6, closed-loop tests only)* - `control/smoothing.cut_now` sends a running charger's cut on the site cycle that asks for it, at the engine's permit floored at the minimum, and re-seeds the smoothing there; raises, pauses and stops keep the *Update frequency* slot. Check at Home (the EVBox under the block import limit): a big house load switched on mid-charge logs "Cut for ... goes out before its slot" and moves `last_set_current` within one site cycle, and profiles per hour stay near 3600 / update frequency plus a few. On the third site's two go-eChargers (only once the owner approves an install there): a second car starting keeps the grid CTs within 20.3 A and Stara's cut lands within one site cycle of Nova's start. Known ceiling: on a flickering Solar-mode supply every dip of more than the dead band is a cut, and each cut restarts the interval - if a cloudy day shows more than about 2 cuts per interval, gate `cut_now` on the limiting pool (grid/breaker) rather than every pool.
 
 ## Steps
 
@@ -170,7 +170,7 @@ Expected: **1674 passed** (1671 before + 3). The full run takes about 30 s.
   - For one evening, set `custom_components.dynamic_ocpp_evse.entities.load` to debug with `logger.set_level`. This is runtime only and does not persist.
   - While the EVBox charges against the block limit, switch on a 2 kW+ load. Expect the "Cut for ... goes out before its slot" line, and the charger's `last_set_current` dropping within about 2 s of the grid step rather than up to its update frequency.
   - Count the profiles per hour from the ocpp log or the `last_set_current` history. It should be about 3600 / update frequency plus a few.
-- **Andrej's site: only if Anze approves an install there.** On the first two-car evening:
+- **The third site: only if the owner approves an install there.** On the first two-car evening:
   - Reuse `lj-3-verify.py` item 1's both-plugged windows. Max phase on the grid CTs should be ≤ 20.3 A.
   - Stara's `last_set_current` should drop within one site cycle of Nova's first non-zero profile, not up to 30 s later.
 - **Kozolec has no EVSE on OCPP** (Pond EVSE is a plug), so there is nothing to check there.

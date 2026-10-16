@@ -499,7 +499,7 @@ def test_a_boosting_tank_still_holds_its_own_verdict():
 
 # --- The trigger margin on an off-grid battery -------------------------------
 #
-# Kozolec (Anze, 2026-10-03): the BMS holds charging at about 3.5 kW. Entered as
+# Kozolec (2026-10-03): the BMS holds charging at about 3.5 kW. Entered as
 # 3500 W, a battery charging just under its limit never read as taking all it
 # may, and Excess could not engage; it had been entered as 3000 W to make Excess
 # fire at all. Off-grid, the trigger margin comes off the battery's allowance,

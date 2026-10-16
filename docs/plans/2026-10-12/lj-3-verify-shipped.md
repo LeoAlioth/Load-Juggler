@@ -1,17 +1,17 @@
 # LJ-3: Verify four shipped Load Juggler fixes on the real sites
 
-Repo: Load Juggler `/Users/anzek/Projects/Dynamic_OCPP_EVSE`, `dev/TODO.md`, the four entries marked "verify".
-Anze approved the checks on 2026-10-12. This is a personal project, so don't log it to work-context.
+Repo: Load Juggler `~/Projects/Dynamic_OCPP_EVSE`, `dev/TODO.md`, the four entries marked "verify".
+The owner approved the checks on 2026-10-12. This is a personal project, so don't log it to work-context.
 
 The check reads history only. It changes nothing in HA. The only edit afterwards is `dev/TODO.md`: commit
 it locally on dev and don't push (dev auto-deploys).
 
-Script: `/Users/anzek/Projects/plans/2026-10-12/lj-3-verify.py`. It uses only the stdlib and has had a
+Script: `~/Projects/plans/2026-10-12/lj-3-verify.py`. It uses only the stdlib and has had a
 syntax check only; nobody has run it yet.
 
 ```
-python3 /Users/anzek/Projects/plans/2026-10-12/lj-3-verify.py          # all four
-python3 /Users/anzek/Projects/plans/2026-10-12/lj-3-verify.py 1 4      # some
+python3 ~/Projects/plans/2026-10-12/lj-3-verify.py          # all four
+python3 ~/Projects/plans/2026-10-12/lj-3-verify.py 1 4      # some
 END=2026-10-14T06:00:00Z python3 .../lj-3-verify.py 2                  # fixed end (default: now)
 ```
 
@@ -33,14 +33,14 @@ the restart feature.
 
 | Item | Build that shipped it | Site | Installed | Window start (UTC) |
 |---|---|---|---|---|
-| 1 slow meter | c32bbc7 (assumed over, two-cycle pause) + 2139595 (Optimized table / 1 A margin) | Andrej | 2026-10-04 ~20:30 / ~21:00 | `2026-10-04T19:00:00Z` |
+| 1 slow meter | c32bbc7 (assumed over, two-cycle pause) + 2139595 (Optimized table / 1 A margin) | the third site | 2026-10-04 ~20:30 / ~21:00 | `2026-10-04T19:00:00Z` |
 | 2 leaving boost | ed155b7 | Home | 2026-10-04 ~18:36 | `2026-10-04T16:36:00Z` |
-| 2 leaving boost | ed155b7 (in the c32bbc7 build) | Andrej | 2026-10-04 ~20:30 | `2026-10-04T18:30:00Z` |
+| 2 leaving boost | ed155b7 (in the c32bbc7 build) | the third site | 2026-10-04 ~20:30 | `2026-10-04T18:30:00Z` |
 | 3 saturation latch | 2.1.3 | none (see item 3) | - | - |
 | 4 no-draw restart | fed9c6f (2.1.6-dev.20261005.0936) | Kozolec | 2026-10-05 ~12:00 | `2026-10-05T10:00:00Z` |
 
 Later builds inside these windows change what the history should show:
-- **Andrej:** 2d20d71 (climb, 10-07 ~20:00), 2ec16da (reset wait, 10-08 ~21:20), d124219 (the pause's
+- **The third site:** 2d20d71 (climb, 10-07 ~20:00), 2ec16da (reset wait, 10-08 ~21:20), d124219 (the pause's
   0 A is sent once; 1905 build, 10-09), 2.1.6-dev.20261012.0946 and 37fd304 (10-12).
 - **Tanks:** b2bc123 (10-09: a denied tank whose device says it heats at its floor target goes to its
   lowest), 2ecf2cd (10-10: boost on Excess only), 37fd304 (10-12: the boost rides the Solar/Excess grace
@@ -48,7 +48,7 @@ Later builds inside these windows change what the history should show:
 
 ## Did the situation happen? (cheap probe, 2026-10-12 ~14:00 UTC)
 
-1. **Both of Andrej's cars plugged in: once.**
+1. **Both of the third site's cars plugged in: once.**
    - The window ran 2026-10-11 20:06Z -> 2026-10-12 03:07Z (7 h). Both connectors were `Charging` for
      about 68 min, from 23:36Z.
    - `select.site_load_management_distribution_mode` was **Sequential - Optimized for the whole window**,
@@ -58,7 +58,7 @@ Later builds inside these windows change what the history should show:
 2. **Leaving boost:**
    - **Home:** yes, many times (10-05, 10-06, 10-07, 10-11, 10-12). Every probe sample shows 80 -> 10 in
      `heat`, never `off`.
-   - **Andrej:** the boost ended about 9 times (45 -> ...), but the tank always read **below 42**
+   - **The third site:** the boost ended about 9 times (45 -> ...), but the tank always read **below 42**
      (39-41.5 °C) at that moment. There, 42 -> 40 (lowest) is the intended behaviour, so the fixed case
      (tank at or above its floor) has probably **not happened yet**. The script judges this.
 3. **Saturation latch:** no site has the topology (details under item 3).
@@ -68,7 +68,7 @@ Later builds inside these windows change what the history should show:
 
 ---
 
-## Item 1: Slow meter, the assumed draw on Andrej's two go-eChargers (site `andrejg`)
+## Item 1: Slow meter, the assumed draw on the third site's two go-eChargers (site `third`)
 
 **Entities** (from states and the entity registry):
 - **Stara, priority 1, "first":**
@@ -122,12 +122,12 @@ Finishing.
 - NOT EXERCISED if the cars were never both plugged in.
 - The **Priority** half of the TODO stays unexercised while the mode is Optimized. The script says so on
   the PASS line.
-- To exercise it, Anze could switch Andrej's distribution mode to Priority for one two-car evening. That is
-  his call and Andrej's site, so the plan doesn't do it.
+- To exercise it, the owner could switch the third site's distribution mode to Priority for one two-car evening. That is
+  his call and the third site, so the plan doesn't do it.
 
-## Item 2: Leaving boost (Andrej `water_heater.tc`, Home `climate.workshop_boiler`)
+## Item 2: Leaving boost (the third site `water_heater.tc`, Home `climate.workshop_boiler`)
 
-**Andrej entities:**
+**The third site entities:**
 - `water_heater.tc` (MELCloud Ecodan; setpoint in attribute `temperature`, tank in `current_temperature`;
   `min_temp` 40 = its lowest; operation_list auto / force_hot_water, no off mode)
 - LJ `sensor.hot_water_tank_tank_status` (attributes `setpoint_source`, `heating_permitted`)
@@ -154,13 +154,13 @@ Finishing.
 **Pass/fail:**
 - A "boost exit" is a setpoint drop from above normal + 0.5.
 - If the tank was at or above its floor at that moment, the **first** new setpoint must equal the floor and
-  the state must not be `off`. Andrej: 45 -> 42, never 40 or off. Home: 80 -> 10 heat, never off.
+  the state must not be `off`. The third site: 45 -> 42, never 40 or off. Home: 80 -> 10 heat, never off.
 - Exits with the tank below its floor are printed as "by design, not judged".
 - A later floor -> lowest while the device says it heats is b2bc123, not this bug. The original bug went
   straight 46 -> 40, so it shows as the first new setpoint being wrong.
 - Verdicts:
   - PASS if there is at least one judged exit and all judged exits are OK.
-  - NOT EXERCISED if there are none (likely for Andrej, see the probe).
+  - NOT EXERCISED if there are none (likely for the third site, see the probe).
   - FAIL otherwise.
 
 ## Item 3: Meter-only hybrid at its rating (saturation latch)
@@ -176,19 +176,19 @@ The latch runs only on a site that has all of these (`engine/hub_calculation._ap
 - **Kozolec:** off-grid (Victron MultiPlus-II, battery sensor `sensor.gx_device_dc_battery_power_inverted`).
 - **Home:** grid-tied SolarEdge SE17K with **no battery**. The inverter's `battery_power` is None, and LJ
   reads a solar sensor (`_ema_inputs.solar_<inv>`) and per-phase output sensors (`inv_<inv>_0..2`).
-- **Andrej:** grid-tied SolarEdge with **no battery** (no battery entity on the site).
+- **The third site:** grid-tied SolarEdge with **no battery** (no battery entity on the site).
 
 Verdict: N/A. The script prints this; it needs no history.
 
 ## Item 4: Restart if it stops drawing, Kozolec's Pond EVSE
 
-**Already enabled. No steps need Anze's OK.**
+**Already enabled. No steps need the owner's OK.**
 - Since 2026-10-05 ~12:00 local (LJ 2.1.6-dev.20261005.0936), entry `01KVZQN00Y326HES6214DGSRCK`
   (Pond EVSE Smart Load) has `plug_restart_on_no_draw = True` and `plug_restart_after = 10` min on
   `switch.pond_evse`, with monitor `sensor.pond_evse_power` (W).
 - `automation.reset_pond_evse` is **off**. It last triggered 2026-10-05 09:45 UTC (kozolec/NOTES.md line
   338; confirmed live at the probe).
-- The TODO's "Turn it on ..., disable Anze's 15-min automation" is done. Only the check remains.
+- The TODO's "Turn it on ..., disable the owner's 15-min automation" is done. Only the check remains.
 
 **Entities:**
 - `sensor.pond_evse_status` (LJ; attribute `restart_count`, fetched with attributes because consecutive
@@ -241,18 +241,18 @@ by design.
     something a history check can verify. Keep it either way.
 - **Item 2:**
   - Fix the text either way: Home's boiler is in Freeze Protection, so the expectation is 80 -> 10
-    (away) in heat. Andrej's boost is 45 now.
-  - If Home passes and Andrej is not exercised, Anze decides whether one site is enough. The fix is the
+    (away) in heat. The third site's boost is 45 now.
+  - If Home passes and the third site is not exercised, the owner decides whether one site is enough. The fix is the
     same code path for climate and water_heater except `_command_water_heater`. Suggestion: keep the entry
-    for Andrej only.
-- **Item 3:** keep it, annotated *(no site has this topology - Home and Andrej have no battery, Kozolec
+    for the third site only.
+- **Item 3:** keep it, annotated *(no site has this topology - Home and the third site have no battery, Kozolec
   is off-grid; checked 2026-10-12)*, until a site with a meter-only hybrid exists.
 - **Item 4:** drop the "Turn it on ... disable the automation" sentence (done 10-05). Then decide by the
   verdict.
 
-## Seen in passing (not these TODOs; for Anze, nothing changed)
+## Seen in passing (not these TODOs; for the owner, nothing changed)
 
-- **Andrej, `water_heater.tc`:** it flips 42 <-> 40 every ~5 min for hours when the tank is under 42
+- **The third site, `water_heater.tc`:** it flips 42 <-> 40 every ~5 min for hours when the tank is under 42
   (e.g. 10-05 17:20-19:42Z, 10-07 13:15-16:17Z, 10-11 20:07-23:33Z). That is the permit coming and going
   for a tank below its floor. Several of these spans overlap charging sessions.
 - **Home, `climate.workshop_boiler`:** 80 <-> 10 every ~5 min on 10-06, 10-07 and 10-11 (Excess flapping).

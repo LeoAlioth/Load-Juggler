@@ -38,11 +38,11 @@ KIND_BY_DEVICE_CLASS = {
     "current": "current",
     "voltage": "voltage",
     # the meter's own, SIGNED: V x I gives only its size, so a capacitive load
-    # on an inductive floor reads wrong (Anze, 2026-09-30)
+    # on an inductive floor reads wrong (2026-09-30)
     "reactive_power": "var",
     # the meter's own apparent power: a Pro 3EM publishes it to 0.1 VA, where
     # its two-decimal power factor moves the derived VAr by ~26 at 900 W
-    # (Anze, 2026-09-30: small steps read far poorer factors than big ones)
+    # (2026-09-30: small steps read far poorer factors than big ones)
     "apparent_power": "va",
 }
 
@@ -65,7 +65,7 @@ PENALTY = {"import": 6, "export": 6, "returned": 6, "delivered": 6, "reactive": 
            # generator. Without this the shorter name simply won, and
            # Kozolec - which is OFF GRID, so its AC input is zero by
            # definition - spent its backfill watching a flat line and
-           # learned nothing at all (Anze, 2026-09-17).
+           # learned nothing at all (2026-09-17).
            "input": 8, "ac_in": 8}
 # Enough to outrank any difference in NAME LENGTH, which is at most a few
 # dozen, and deliberately NOT enough to outrank a role preference, which is
@@ -73,7 +73,7 @@ PENALTY = {"import": 6, "export": 6, "returned": 6, "delivered": 6, "reactive": 
 # power, current and voltage on its AC input as well as its output, and at
 # Kozolec that input is a generator port sitting at zero. Coherence must
 # never talk us onto the wrong side of an inverter - it breaks ties, it does
-# not decide which circuit we want (Anze, 2026-09-18).
+# not decide which circuit we want (2026-09-18).
 COHERENT_BONUS = 50
 BONUS = {"output": 6, "ac_out": 6, "out": 4, "load": 4, "loads": 4, "consumption": 4}
 # The same device usually publishes both sides, so which one is wanted
@@ -178,7 +178,7 @@ def match_meter_entities(entities: Sequence[dict], role: str = "load") -> Dict[s
     # without, because its volts and amps are what make a power factor a
     # power factor - and it is a better tiebreak than the length of the name,
     # which is what decided between two readings of the same house at Kozolec
-    # (Anze, 2026-09-18). Rows carrying no device are all one device, which
+    # (2026-09-18). Rows carrying no device are all one device, which
     # is how the config flow calls this.
     offers = {}
     for kind, phase, _, _, device in scored:
@@ -202,7 +202,7 @@ def closest_by_name(candidates: Sequence[str], reference: str) -> Optional[str]:
     and the amps we hold belong to exactly one of them: ``mp_output_current_l1``
     goes with ``mp_output_power_l1``, never with the input's. Matching on the
     shared prefix keeps the pair on one circuit without having to know that
-    "output" is the word that matters (Anze, 2026-09-18)."""
+    "output" is the word that matters (2026-09-18)."""
     if not candidates:
         return None
     return max(sorted(candidates), key=lambda eid: len(os.path.commonprefix([eid, reference])))
@@ -237,7 +237,7 @@ def phase_mapping(votes: Mapping[str, Mapping[str, float]], phases: Sequence[str
     tie ``current`` stands, and between equally good answers the one relabelling fewest channels
     wins - one line found on another phase swaps with the line that had it.
 
-    Load Juggler asks the same question about a charger's lines (Anze,
+    Load Juggler asks the same question about a charger's lines (the owner,
     2026-09-23): votes {"l1": {"A": .., "B": ..}}, phases "ABC", current the
     configured {"l1": "A", "l2": "B", "l3": "C"}."""
     prior = {c: c for c in votes}

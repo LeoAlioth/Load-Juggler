@@ -112,7 +112,7 @@ def follow_renames(value, renames: dict):
     """``value`` - an entry's data or options - with every string that IS a
     renamed entity id, key or value, swapped for its new id. Home Assistant
     moves an entity's history on a rename but not the settings that name it:
-    after Anze's renames of 2026-09-28 the well pump's switch, the plugs and
+    after the owner's renames of 2026-09-28 the well pump's switch, the plugs and
     the meters here pointed at entities that no longer existed."""
     if isinstance(value, str):
         return renames.get(value, value)

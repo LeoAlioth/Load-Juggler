@@ -1,6 +1,6 @@
 # Plans 2026-10-12 - Load Juggler + Load Insights batch
 
-Written 2026-10-12, approved by Anze; to be RUN when he says (likely end of week, by weekly plan usage).
+Written 2026-10-12, approved by the owner; to be RUN when he says (likely end of week, by weekly plan usage).
 Every plan is self-contained (an agent can run it cold). Planning agents changed nothing in the repos or on
 the sites. Before running: check plan usage (pause at 90 %, CLAUDE.md), `git status` clean in both repos,
 dev up to date.
@@ -16,15 +16,15 @@ dev up to date.
 | 5 | [li-4-house-from-parts.md](li-4-house-from-parts.md) | LI + Kozolec HA | Whole-house forecast built from its parts; Kozolec minimum SOC helper without Pond EVSE + Power Strip | Part B: count the Well Pump again, no tank spreading (decided) - independent, can run first |
 | 6 | [li-5-running-markdown.md](li-5-running-markdown.md) | LI | `running_markdown` attribute (running loads, named + unnamed, links), #id on the naming page | English only; sub-meter duplicates fixed in the plan |
 | 7 | [lj-1-immediate-cuts.md](lj-1-immediate-cuts.md) | LJ | A cut beyond the dead band goes out at once (cut_now), not at the load's next slot | Watch Solar modes on cloudy days at Home |
-| 8 | [lj-7-tank-flapping.md](lj-7-tank-flapping.md) | LJ | Andrej's tank 42<->40 (Optimized/Strict rounding bug + denied-idle-at-floor rule); Home's boiler only watched | Install on Andrej too (decided) |
+| 8 | [lj-7-tank-flapping.md](lj-7-tank-flapping.md) | LJ | the third site's tank 42<->40 (Optimized/Strict rounding bug + denied-idle-at-floor rule); Home's boiler only watched | Install on the third site too (decided) |
 | 9 | [lj-6-energy-prefill.md](lj-6-energy-prefill.md) | LJ + LI | Setup-form defaults from the Energy dashboard; LI's model.py split, verbatim copy to LJ | Setup forms only, never Configure pages |
 | 10 | [lj-5-household-refactor.md](lj-5-household-refactor.md) | LJ | household = grid + Σ(inverter output − input); wiring_topology deleted; migration step 9 | Biggest; last |
 
-Then: one push per repo, installs on **Home and Kozolec**; the LJ build also on **Andrej** (for lj-7, decided 2026-10-12) - LI builds reach Andrej only when Anze says. Pushed builds
+Then: one push per repo, installs on **Home and Kozolec**; the LJ build also on **the third site** (for lj-7, decided 2026-10-12) - LI builds reach the third site only when the owner says. Pushed builds
 download and restart HA by themselves (automation "Load Juggler family - download pushed build" +
 script.lj_family_restart_after_build, 2 min debounce). Snapshot + NOTES.md per site.
 
-## Anze's decisions (2026-10-12)
+## the owner's decisions (2026-10-12)
 
 - lj-1: 30 s peaks slightly over the breaker are tolerable (meters average ~90 s, slow-blow fuses) - minimise, not guarantee.
 - lj-5: delete wiring_topology; keep the "grid flows through this inverter" tick as a permanent option; inverter-rating cap's house figure from output sensors on every site.
@@ -32,13 +32,13 @@ script.lj_family_restart_after_build, 2 min debounce). Snapshot + NOTES.md per s
 - li-2: yes to the RESTART= dial and to the recorder flush.
 - li-4: minimum SOC excludes only the Pond EVSE and the Power Strip ("loads running over target only").
 - li-5: English for now; fix the sub-meter duplicate / missing-link gap.
-- lj-7: the LJ build with the tank fix ALSO goes to Andrej's site (he is the one on Sequential - Optimized).
+- lj-7: the LJ build with the tank fix ALSO goes to the third site (he is the one on Sequential - Optimized).
 - li-4 Part B: the minimum SOC helper COUNTS the Well Pump again (only Pond EVSE + Power Strip excluded) and drops the even spreading of the tanks - every remaining load as forecast hour by hour (the plan's 'literal' version, ~16 % vs 18 % on 10-12).
 - li-5: the named-load on/off sensors move onto per-load runs in THIS batch (not a follow-up).
 - li-3: run on the plan's defaults (ALPHA 0.005 swept 0.05/0.0005, 3 % floor dropped unless its variant wins, both fixes in, calendars/inputs under the same rule).
 - Rejected / parked: LJ battery SOC sanity check (new-install problem, not LJ's job); entity-backed inverter capacity (edge case); LI multi-step pairing and edge congestion - discuss after this batch.
 
-## Open questions for Anze
+## Open questions for the owner
 
 None (all answered 2026-10-12).
 

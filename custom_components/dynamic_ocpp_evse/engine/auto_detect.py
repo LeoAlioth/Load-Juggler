@@ -22,7 +22,7 @@ _LOGGER = logging.getLogger(__name__)
 # change with the managed draw's change and counted opposite signs, 10 of 15
 # firing. A charger's reading steps once per meter value (30 s) while the
 # grid's change in that one cycle is house load, or Load Juggler's own answer
-# to it; on Andrej's site 11 of 24 samples read "inverted" over 20 hours, a
+# to it; on the third site 11 of 24 samples read "inverted" over 20 hours, a
 # coin toss, and with 10 of 15 in reach of one, two correctly wired sites were
 # warned after their restarts.
 _INV_MIN_DRAW_A = 3.0     # Our loads' measured draw on the phase (A)

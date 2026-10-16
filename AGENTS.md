@@ -18,7 +18,7 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 - Symmetric and asymmetric inverter support
 - Off-grid support (no grid CTs required - infers phases from inverter output)
 
-**Versioning** - `manifest.json` carries the version being worked on, not the last one released: the first change after a release opens its `RELEASE_NOTES.md` section and bumps the manifest to match in the same commit, so every pre-release built from `dev` is named after the release it leads to (`2.1.4-dev.<timestamp>`, never `2.1.3-dev` after 2.1.3 shipped). A merge to `main` then releases that version (Anze, 2026-09-25).
+**Versioning** - `manifest.json` carries the version being worked on, not the last one released: the first change after a release opens its `RELEASE_NOTES.md` section and bumps the manifest to match in the same commit, so every pre-release built from `dev` is named after the release it leads to (`2.1.4-dev.<timestamp>`, never `2.1.3-dev` after 2.1.3 shipped). A merge to `main` then releases that version (2026-09-25).
 
 **Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
@@ -259,7 +259,10 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
-7. **General naming**: When something concerns more than one device type, name it by the general concept - `load`, never `charger`, for the generic managed-device idea. The generic rename is done: `charger` now survives ONLY where the thing can only ever be an EVSE (OCPP discovery and profiles, `CONF_CHARGER_ID`/`CONF_CHARGER_L1..L3_PHASE`, the `charger_*` config-flow steps, `validate_charger_settings`, compliance, the `*_ocpp_evse` service). If a plug, tank or power station can flow through it, it is a `load`. Two deliberate exceptions, both documented in place: the published `charger_priority` entity attribute (public API since 2.0.5) and the EVSE phase-mapping notification text.
+7. **General naming**: When something concerns more than one device type, name it by the general concept - `load`, never `charger`, for the generic managed-device idea. The generic rename is done: `charger` now survives ONLY where the thing can only ever be an EVSE (OCPP discovery and profiles, `CONF_CHARGER_ID`/`CONF_CHARGER_L1..L3_PHASE`, the `charger_*` config-flow steps, `validate_charger_settings`, compliance, the `*_ocpp_evse` service). If a plug, tank or power station can flow through it, it is a `load`. Two deliberate exceptions, both documented in place: the published `charger_priority` entity attribute (public API since 2.0.5) and the EVSE phase-mapping notification text. When a file is touched for another reason, fix nearby poorly-named identifiers too if that is low-risk.
+8. **Release notes**: user-facing changes only, in plain language, under the open version's section. Before listing a fix, check it shipped: releases live on `origin/pre-release` (version tags such as `2.0.5`); a bug that never shipped is omitted. When work completes, remove it from `dev/TODO.md`; completed items collapse to one line under "Recently completed".
+9. **Winners ship as defaults**: a change that measurably beats the current behaviour is built in unconditionally, with no user toggle and no leftover code dial. A dial exists only while measuring.
+10. **Slovenian UI strings** (the owner reviews every one): never "sončno polje" for a PV array; use "sončna elektrarna (PV)" or plain "PV". Keep labels terse, and reuse terms already in `sl.json` before inventing one.
 
 ### Adding New Features
 
@@ -277,10 +280,18 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 5. **Phase assignment defaults**: Don't default to "A" - only set when explicitly specified
 6. **Legacy code**: legacy compatibility should be removed as users are expected to reconfigure the integration
 7. **Grid CT consumption includes load draws**: Grid current sensors measure TOTAL site import, which includes managed-load power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each load's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts load power as both "consumption" and "load demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
+8. **Config keys mean what their UI says**: before changing what a key gates or its precedence, read its label and `data_description` in `strings.json` (and `sl.json`), not the key name. A flag that only creates a slider does not switch off the sensor that overrides it. An unticked box beside a configured sensor is the normal setup, not a leftover.
+
+## Standing rules
+
+- **Private project, not Ixtlan work.** Skip the work-context logging for this repo; never add entries for it to `/Volumes/Razvijam/work-context.md` or `open-tickets.md`.
+- **Git.** Commit each benched or run version locally as a checkpoint before running it; `dev` is fine. Never push `dev` unless the owner asks: a push to `dev` deploys to both live sites automatically. No new branches, worktrees or detached checkouts without asking. A push that fails with "Authentication failed" from the shell often works on one retry.
+- **Plans.** `docs/plans/2026-10-12/` holds the approved batch (its README gives the order and the owner's decisions). Run none of it until the owner says so; check plan usage first, and keep installs to Home and Kozolec.
+- **Deliberate behaviour that looks like a bug** is listed in `docs/design-decisions.md`. Check it before changing anything there, and re-ask the owner before changing a settled decision.
 
 ## Testing and Debugging
 
-**Test procedure**: Do not combine multiple shell commands to one line. Always run one test at a time.
+**Test procedure**: Do not combine multiple shell commands to one line. Always run one test at a time. Ask the owner before running tests (his standing rule).
 
 Every test - unit, HA integration and each YAML scenario - runs under plain pytest from the
 project root (`pip install -r requirements_dev.txt`; `pytest.ini` puts the root on the path):
@@ -368,6 +379,8 @@ pytest run as everything else. The one local way to run it is the uv venv in `de
 
 ## Useful Resources
 
+- `docs/live-sites.md`: the live sites, their settings that differ from defaults, and measured behaviour (dated). Read it before interpreting live behaviour.
+- `docs/design-decisions.md`: deliberate behaviour that looks like a bug (solar modes, Solar Only from the battery above target, config flag meaning).
 - Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
 - Distribution Modes Guide: `DISTRIBUTION_MODES_GUIDE.md`
 - Release notes: `RELEASE_NOTES.md`

@@ -3,7 +3,7 @@
 Machine-authored tests - not yet human-reviewed.
 
 run_tests.place_asymmetric_output is what simulate_grid_ct builds every
-asymmetric inverter's per-phase grid readings from (Anže, 2026-09-24: it
+asymmetric inverter's per-phase grid readings from (2026-09-24: it
 "puts/pulls power on the phases in a way to always try to balance them on
 the grid"). Until then the harness spread its output evenly, and
 3ph-1c-standard-heavy-importing read 25.97 A on a 25 A breaker that the

@@ -1,6 +1,6 @@
 """A smart load finishes its cycle before Load Juggler switches it off.
 
-Kozolec's washing machine on a Solar Priority plug (Anze, 2026-10-09): once
+Kozolec's washing machine on a Solar Priority plug (2026-10-09): once
 the battery drops below its minimum the plug would be cut mid-wash. With
 "Finish its cycle" set, a denied plug stays on until its power has stayed
 under the threshold for the set time; a pause mid-cycle starts that over.
