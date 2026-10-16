@@ -1,4 +1,6 @@
-# AGENTS.md
+# Dynamic OCPP EVSE (Load Juggler)
+
+> **Setup note for agents:** this file holds this folder's instructions. Tools that read `AGENTS.md` (Codex and others) need nothing more. A tool with its own file name needs a file of that name here containing only a pointer to this file, if the folder does not already have one: Claude Code reads `CLAUDE.md` and needs the line `@AGENTS.md`; Gemini CLI reads `GEMINI.md`. Never copy this file's content into it.
 
 This file provides guidance to LLM Agents when working with code in this repository.
 
