@@ -418,6 +418,12 @@ MIN_MANUAL_OVERRIDE_TIMEOUT = 5
 # report of the previous command can land after the next one went out.
 MANUAL_ECHO_S = 120
 
+# Per-load pacing (GitHub issue 22, owner 2026-10-17): an Excess-mode load with
+# this on is held to the planned energy spread over the time left - see
+# calculations/pacing.py. Off by default, so nothing changes until it is ticked.
+CONF_PACE_OVER_HORIZON = "pace_over_horizon"
+DEFAULT_PACE_OVER_HORIZON = False
+
 BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > target SOC
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 

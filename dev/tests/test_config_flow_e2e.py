@@ -43,6 +43,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BASE_CONSUMPTION,
     CONF_FORECAST_SOC_FLOOR,
+    CONF_PACE_OVER_HORIZON,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
@@ -663,16 +666,32 @@ async def test_options_flow_hub_saves_changes(
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
+    # Pacing's two entities live on this page (a Load Insights planning sensor
+    # pair, here stand-ins), and are cleared by leaving them out.
+    hass.states.async_set(
+        "sensor.energy_to_use", "4.6",
+        {"device_class": "energy", "unit_of_measurement": "kWh"},
+    )
+    hass.states.async_set(
+        "sensor.horizon_end", "2026-10-17T17:00:00+00:00",
+        {"device_class": "timestamp"},
+    )
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_policy")
+    assert _schema_has(result["data_schema"], CONF_PACING_ENERGY_ENTITY_ID)
+    assert _schema_has(result["data_schema"], CONF_PACING_HORIZON_ENTITY_ID)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
             CONF_BATTERY_SOC_HYSTERESIS: 5,
             CONF_BASE_CONSUMPTION: 400,
             CONF_FORECAST_SOC_FLOOR: 35,
+            CONF_PACING_ENERGY_ENTITY_ID: "sensor.energy_to_use",
+            CONF_PACING_HORIZON_ENTITY_ID: "sensor.horizon_end",
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert mock_hub_entry.options.get(CONF_PACING_ENERGY_ENTITY_ID) == "sensor.energy_to_use"
+    assert mock_hub_entry.options.get(CONF_PACING_HORIZON_ENTITY_ID) == "sensor.horizon_end"
 
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_timing")
     result = await hass.config_entries.options.async_configure(
@@ -1053,11 +1072,13 @@ async def test_options_flow_charger_saves_changes(
             CONF_OCPP_PROFILE_TIMEOUT: 240,
             CONF_CHARGE_PAUSE_DURATION: 5,
             CONF_STACK_LEVEL: 5,
+            CONF_PACE_OVER_HORIZON: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # Options should now contain the submitted values
+    assert mock_charger_entry.options.get(CONF_PACE_OVER_HORIZON) is True
     assert mock_charger_entry.options.get(CONF_LOAD_PRIORITY) == 2
     assert mock_charger_entry.options.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT) == 8
     assert mock_charger_entry.options.get(CONF_UPDATE_FREQUENCY) == 30

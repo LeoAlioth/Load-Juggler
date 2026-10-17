@@ -98,6 +98,7 @@ from .readers import (
     _fv2,
     _read_fleet_members,
     _read_grid_phases,
+    _read_pacing,
     _resolve_grid_phases,
     _smooth,
     set_ema_interval,
@@ -1565,6 +1566,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         settle_seconds=get_entry_value(
             hub_entry, CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS
         ),
+        pacing=_read_pacing(hass, hub_entry, hub_runtime),
     )
 
     # --- Build circuit groups ---

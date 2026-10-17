@@ -10,6 +10,7 @@ Every scenario runs a 30-cycle simulation:
 
 import yaml
 
+from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_cap_current
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     calculate_all_load_targets,
@@ -652,6 +653,16 @@ def build_site_from_scenario(scenario, excess_on=False):
             dynamic_control=load_data.get("dynamic_control", True),
             rated_current=rated_current,
         )
+        # Pacing, as engine/load_builders.py sets it: the site's energy still
+        # to use over the hours left (site: pace_energy_kwh, pace_hours_left),
+        # for the loads that tick ``pace: true``.
+        if load_data.get("pace") and "pace_energy_kwh" in site_data:
+            load.pace_cap_current = pace_cap_current(
+                site_data["pace_energy_kwh"],
+                site_data.get("pace_hours_left", 0),
+                voltage,
+                phases,
+            )
         site.loads.append(load)
 
     # Build circuit groups

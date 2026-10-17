@@ -124,3 +124,14 @@ A third read-only page in the hub's options ("Configure") menu - **Debug** - nex
 
 ### Why
 Config validation without moving real loads (new installs, phase-mapping experiments); dramatically better support/bug-report loops.
+
+## Pacing beyond Excess mode
+**Status:** Not yet implemented (the owner, 2026-10-17: Excess mode only for now, nothing for Solar Only)
+**Complexity:** Medium
+
+Pacing an Excess load over the planning horizon is in (per-load `pace_over_horizon`, the hub's energy and horizon entities). Left for later, from the design (`Load_Insights/docs/specs/2026-10-17-soc-planning-and-pacing.md`):
+
+- **Solar Only pacing.** Would cap the battery's contribution above the target instead of a per-load ceiling: `min(max_discharge - actual_discharge, (SOC - target) / 100 x capacity / hours_left)` in `_calculate_solar_surplus`, needing a battery capacity and the horizon. Conflicts with the settled "Solar Only uses the battery above target SOC" decision after the horizon (`docs/design-decisions.md`) - re-ask the owner.
+- **A "Sun Only" mode** through `sun_pool`, for the requester's buffer case.
+- **After the horizon.** Today the hours left are floored at 1 h, so a paced load facing leftover energy past the horizon is held to that energy per hour (roughly unpaced for a small remainder). A stricter rule (stop pacing, or stop the load) is a choice for the owner.
+- **Start margin.** `PACE_START_MARGIN` is a constant (20 %); make it a setting only if live use shows one value does not fit.

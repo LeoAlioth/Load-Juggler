@@ -19,6 +19,7 @@ from functools import partial
 
 from ..calculations import LoadContext, CircuitGroup
 from ..calculations.models import INACTIVE_STATUSES
+from ..calculations.pacing import pace_cap_current
 from ..calculations.utils import managed_phase_draws
 from ..const import (
     CONF_CHARGER_L1_PHASE,
@@ -93,6 +94,8 @@ from ..const import (
     tank_boost_is_opportunistic,
     BEHAVIOR_BINARY_EXCESS,
     BEHAVIOR_EXCESS,
+    CONF_PACE_OVER_HORIZON,
+    DEFAULT_PACE_OVER_HORIZON,
     CONF_TANK_AWAY_TEMPERATURE,
     CONF_TANK_BOOST_TEMPERATURE,
     DEFAULT_TANK_AWAY_TEMPERATURE,
@@ -1346,13 +1349,15 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
 
 
 def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
-                       settle_seconds=SETTLE_DRAW_SECONDS):
+                       settle_seconds=SETTLE_DRAW_SECONDS, pacing=None):
     """Build LoadContext objects for all loads and add them to the site.
 
     ``load_entries`` overrides the hub's registered loads (used by tests and
     by any caller that already knows the entries); None reads the registry.
     ``settle_seconds`` is the hub's draw-settle dial (Filters page); the
-    default is the constant it overrides.
+    default is the constant it overrides. ``pacing`` is the hub's
+    ``(energy_kwh, hours_left)`` (readers._read_pacing) or None; it sets the
+    cap of every load whose own pacing option is on.
     """
     if load_entries is None:
         loads = get_loads_for_hub(hass, hub_entry_id)
@@ -1399,6 +1404,13 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
                 clamped,
             )
             load.active_phases_mask = clamped
+
+        if pacing is not None and get_entry_value(
+            entry, CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+        ):
+            load.pace_cap_current = pace_cap_current(
+                *pacing, site.voltage, load.phases
+            )
 
         site.loads.append(load)
 

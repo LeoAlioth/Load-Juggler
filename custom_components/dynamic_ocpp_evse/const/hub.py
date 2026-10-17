@@ -102,6 +102,11 @@ CONF_BASE_CONSUMPTION = "base_consumption"  # W - typical daytime minimum house 
 CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"  # kWh the SOC percentage spans; 0 = off
 CONF_BATTERY_CAPACITY_ENTITY_ID = "battery_capacity_entity_id"  # Wh/kWh sensor; overrides the number while it reads
 CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % - never recommend a ceiling below this
+# Pacing (per-load option CONF_PACE_OVER_HORIZON): the energy still to use
+# (kWh sensor) and when the planning horizon ends (timestamp sensor). With
+# either unset, or unreadable, no load is paced.
+CONF_PACING_ENERGY_ENTITY_ID = "pacing_energy_entity_id"
+CONF_PACING_HORIZON_ENTITY_ID = "pacing_horizon_entity_id"
 DEFAULT_GRID_EXPORT_LIMIT = 0
 DEFAULT_EXCESS_TRIGGER_MARGIN = 500
 DEFAULT_BASE_CONSUMPTION = 300

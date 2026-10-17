@@ -77,6 +77,8 @@ custom_components/dynamic_ocpp_evse/
 ├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
 │   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints, PhaseValues)
 │   ├── target_calculator.py       # Main calculation engine
+│   ├── pacing.py                  # Pacing: per-load cap = energy x 1000 / hours left, off under the minimum,
+│   │                              #   restart margin (applied in _source_limit; entities read in engine/readers.py)
 │   ├── forecast.py                # Forecast-based charging advice
 │   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
 │   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)

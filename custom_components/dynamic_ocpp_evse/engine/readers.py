@@ -15,6 +15,9 @@ defining them; config_flow.py reuses two of them for its live previews.
 import logging
 import math
 import time
+from datetime import datetime, timezone
+
+from homeassistant.util import dt as dt_util
 
 from ..calculations import PhaseValues
 from ..const import (
@@ -36,6 +39,8 @@ from ..const import (
     CONF_INVERT_PHASES,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_NAME,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
@@ -354,6 +359,10 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
         # same source as the grid CTs, which is why every load went
         # unavailable in the same instants.
         ("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID),
+        # Pacing falls back to unpaced when either is unreadable - the very
+        # moment a paced load starts racing, so the status says why.
+        ("Pacing energy sensor", CONF_PACING_ENERGY_ENTITY_ID),
+        ("Pacing horizon sensor", CONF_PACING_HORIZON_ENTITY_ID),
     ))
     # Per-inverter entries: their output and battery sensors feed the fleet
     # aggregation, which fails open member-by-member - the status sensor is
@@ -766,6 +775,54 @@ def _read_capacity(hass, entry, hub_runtime):
     if kwh is not None and kwh > 0:
         held[entry.entry_id] = kwh
     return held.get(entry.entry_id, fixed)
+
+
+def _read_horizon(hass, entity_id):
+    """A timestamp sensor's state as an aware datetime; ``_UNAVAILABLE`` when
+    it is configured but unreadable (same sentinel as ``_read_entity``)."""
+    state = hass.states.get(entity_id)
+    if units.is_unavailable(state):
+        return _UNAVAILABLE
+    when = dt_util.parse_datetime(str(state.state))
+    if when is None:
+        return _UNAVAILABLE
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _read_pacing(hass, hub_entry, hub_runtime, now: datetime | None = None):
+    """``(energy_kwh, hours_left)`` the hub's pacing entities give, or None.
+
+    None - nobody is paced, behaviour is exactly as without the feature - when
+    either entity is not configured, or one has been unreadable past
+    INPUT_STALE_TIMEOUT. A shorter dropout holds the last good reading, like
+    every other input (``_stale_guard``). ``hours_left`` is the time to the
+    horizon, 0 once it has passed; pacing.pace_cap_current floors it.
+    """
+    energy_entity = get_entry_value(hub_entry, CONF_PACING_ENERGY_ENTITY_ID, None)
+    horizon_entity = get_entry_value(hub_entry, CONF_PACING_HORIZON_ENTITY_ID, None)
+    if not energy_entity or not horizon_entity:
+        return None
+    held = hub_runtime.setdefault("_pacing_hold", {})
+
+    def read(key, raw):
+        value = _stale_guard(hub_runtime, held, key, raw, None)
+        if value is _UNAVAILABLE:  # a dropout inside the stale timeout: hold
+            return held.get(key)
+        if value is None:  # past it: the guard has cleared the hold
+            held.pop(key, None)
+        else:
+            held[key] = value
+        return value
+
+    energy = read(
+        "pacing_energy",
+        _read_entity(hass, energy_entity, default=None, unit=units.DOMAIN_KWH),
+    )
+    horizon = read("pacing_horizon", _read_horizon(hass, horizon_entity))
+    if energy is None or horizon is None:
+        return None
+    now = now or dt_util.utcnow()
+    return energy, max((horizon - now).total_seconds() / 3600.0, 0.0)
 
 
 def _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage):
