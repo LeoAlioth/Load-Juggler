@@ -21,7 +21,6 @@ from ..const.hub import (
     FORECAST_EXCESS_SOURCE_TARGET,
     FORECAST_SOC_HYSTERESIS,
 )
-from .pacing import pace_watts
 
 # The planned energy must exceed this to start the verdict and stay above half
 # of it to keep it. 0.2 kWh is what a 2 kW tank element uses in six minutes:
@@ -73,23 +72,3 @@ def forecast_excess_verdict(
             and planned_kwh > FORECAST_EXCESS_RELEASE_KWH
         )
     return soc >= gate_soc and planned_kwh > FORECAST_EXCESS_MIN_KWH
-
-
-def forecast_pace_watts(planned_kwh, hours_left) -> float:
-    """The hub-level cap on the power the forecast adds to the Excess pool: the
-    planned energy spent over the hours left (at least one) - the same pair as
-    the per-load pacing, which stays an additional cap on a load."""
-    if planned_kwh is None or hours_left is None:
-        return 0.0
-    return pace_watts(planned_kwh, hours_left)
-
-
-def forecast_topup_watts(charge_w, pace_w) -> float:
-    """Watts the Excess pool is topped up by: the solar the battery is absorbing
-    (``charge_w``, as it would read with our loads off), up to ``pace_w``.
-
-    A battery that is not charging absorbs nothing, so there is nothing to give
-    back; the planned energy being 0 or unreadable gives ``pace_w`` 0 and so no
-    top-up - the battery keeps what it needs.
-    """
-    return max(0.0, min(charge_w, pace_w))

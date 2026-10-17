@@ -17,9 +17,8 @@ from custom_components.dynamic_ocpp_evse.calculations.catch_up import (
 from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
     forecast_excess_gate,
     forecast_excess_verdict,
-    forecast_pace_watts,
 )
-from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_cap_current
+from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_cap_current, pace_watts
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     calculate_all_load_targets,
@@ -906,7 +905,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
             )
             site.forecast_excess = forecast_on
             site.forecast_excess_pace_w = (
-                forecast_pace_watts(fx['energy_kwh'], fx.get('hours_left', 0))
+                pace_watts(fx['energy_kwh'], fx.get('hours_left', 0))
                 if forecast_on else 0.0
             )
 
