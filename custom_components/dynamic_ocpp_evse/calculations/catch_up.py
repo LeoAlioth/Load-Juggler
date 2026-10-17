@@ -28,14 +28,13 @@ CATCH_UP_BEHAVIORS = frozenset(
     {BEHAVIOR_SOLAR_PRIORITY, BEHAVIOR_SOLAR_ONLY, BEHAVIOR_BINARY_ABOVE_TARGET}
 )
 
-# The load can't keep up from planned rate >= START x its maximum power: it
-# would need every remaining hour at full power just to use the energy, so
-# waiting overfills the battery. No safety factor above 1: the planned energy is
-# a forecast, and being early costs only sun the battery would have taken, never
-# below the SOC floor. A held catch-up releases under RELEASE x the maximum, a
-# 20 % band (as the pacing restart margin, calculations/pacing.py) so a planned
-# energy wobbling at the boundary does not start and stop the load each cycle.
-CATCH_UP_START_RATIO = 1.0
+# The load can't keep up from planned rate >= its maximum power: it would need
+# every remaining hour at full power just to use the energy, so waiting
+# overfills the battery. No safety factor: the planned energy is a forecast, and
+# being early costs only sun the battery would have taken, never below the SOC
+# floor. A held catch-up releases under RELEASE x the maximum, a 20 % band (as
+# the pacing restart margin, calculations/pacing.py) so a planned energy
+# wobbling at the boundary does not start and stop the load each cycle.
 CATCH_UP_RELEASE_RATIO = 0.8
 
 
@@ -60,21 +59,21 @@ def cant_keep_up(planned_kwh, hours_left, load_max_w, was_on=False) -> bool:
             planned_kwh > FORECAST_EXCESS_RELEASE_KWH
             and rate >= CATCH_UP_RELEASE_RATIO * load_max_w
         )
-    return planned_kwh > FORECAST_EXCESS_MIN_KWH and rate >= CATCH_UP_START_RATIO * load_max_w
+    return planned_kwh > FORECAST_EXCESS_MIN_KWH and rate >= load_max_w
 
 
 def catch_up_verdict(
-    enabled, behavior, soc, floor_soc, band_pct, planned_kwh, hours_left,
-    load_max_w, was_on=False,
+    behavior, soc, floor_soc, band_pct, planned_kwh, hours_left, load_max_w, was_on=False,
 ) -> bool:
-    """Is catch-up active for one load this cycle?
+    """Is catch-up active for one load this cycle (the caller has checked the
+    load's option)?
 
-    Needs the load's option, an eligible behaviour, a battery SOC at/above the
-    floor (a held catch-up tolerates ``band_pct`` below it) and the load
-    unable to keep up. No battery, no SOC or no floor: off - the feature is
-    inert, nothing else changes.
+    Needs an eligible behaviour, a battery SOC at/above the floor (a held
+    catch-up tolerates ``band_pct`` below it) and the load unable to keep up.
+    No battery, no SOC or no floor: off - the feature is inert, nothing else
+    changes.
     """
-    if not enabled or behavior not in CATCH_UP_BEHAVIORS:
+    if behavior not in CATCH_UP_BEHAVIORS:
         return False
     if soc is None or floor_soc is None:
         return False

@@ -122,10 +122,8 @@ def test_planned_energy_going_to_zero_releases():
 # --- the verdict: option, behaviour, SOC floor -------------------------------------
 
 def _v(soc=60.0, floor=MIN, band=0.0, planned=3.68, hours=1.0, was_on=False,
-       enabled=True, behavior=BEHAVIOR_SOLAR_ONLY):
-    return catch_up_verdict(
-        enabled, behavior, soc, floor, band, planned, hours, MAX_W, was_on
-    )
+       behavior=BEHAVIOR_SOLAR_ONLY):
+    return catch_up_verdict(behavior, soc, floor, band, planned, hours, MAX_W, was_on)
 
 
 def test_verdict_on_when_everything_holds():
@@ -135,7 +133,6 @@ def test_verdict_on_when_everything_holds():
 @pytest.mark.parametrize(
     "kw",
     [
-        {"enabled": False},
         {"soc": None},  # no battery: inert
         {"floor": None},
         {"soc": 19.9},  # under the minimum floor

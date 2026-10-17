@@ -671,6 +671,19 @@ def _apply_excess_latch(hub_runtime, site, excess_hysteresis):
     return excess_on, margin
 
 
+def _forecast_gate(hub_entry, site):
+    """``(gate_soc, band)`` of the early-Excess option: the hub's own latched
+    minimum or target, or the fixed value (calculations/forecast_excess.py)."""
+    return forecast_excess_gate(
+        get_entry_value(
+            hub_entry, CONF_FORECAST_EXCESS_SOC_SOURCE, DEFAULT_FORECAST_EXCESS_SOC_SOURCE
+        ),
+        site.battery_soc_min,
+        site.battery_soc_target,
+        get_entry_value(hub_entry, CONF_FORECAST_EXCESS_SOC, DEFAULT_FORECAST_EXCESS_SOC),
+    )
+
+
 def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
     """Latch the forecast-driven Excess verdict and hand it to the calculator.
 
@@ -683,16 +696,7 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
     in ``hub_runtime``, like the Excess latch's. See calculations/forecast_excess.py.
     """
     planned, hours_left = pacing if pacing is not None else (None, None)
-    gate, band = forecast_excess_gate(
-        get_entry_value(
-            hub_entry,
-            CONF_FORECAST_EXCESS_SOC_SOURCE,
-            DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
-        ),
-        site.battery_soc_min,
-        site.battery_soc_target,
-        get_entry_value(hub_entry, CONF_FORECAST_EXCESS_SOC, DEFAULT_FORECAST_EXCESS_SOC),
-    )
+    gate, band = _forecast_gate(hub_entry, site)
     on = forecast_excess_verdict(
         get_entry_value(
             hub_entry, CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
@@ -730,18 +734,7 @@ def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
     if get_entry_value(
         hub_entry, CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
     ):
-        floor, band = forecast_excess_gate(
-            get_entry_value(
-                hub_entry,
-                CONF_FORECAST_EXCESS_SOC_SOURCE,
-                DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
-            ),
-            site.battery_soc_min,
-            site.battery_soc_target,
-            get_entry_value(
-                hub_entry, CONF_FORECAST_EXCESS_SOC, DEFAULT_FORECAST_EXCESS_SOC
-            ),
-        )
+        floor, band = _forecast_gate(hub_entry, site)
     else:
         floor, band = site.battery_soc_min, 0.0
     seen = set()
@@ -750,7 +743,6 @@ def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
             continue
         seen.add(load.load_id)
         load.catch_up_active = catch_up_verdict(
-            True,
             load.mode_behavior,
             site.battery_soc,
             floor,
