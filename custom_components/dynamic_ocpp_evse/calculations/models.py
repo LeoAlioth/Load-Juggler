@@ -321,6 +321,13 @@ class SiteContext:
     # engaged, so a load doesn't chatter at the trigger point. The engine owns
     # the latch and sets this; the calculator stays stateless.
     excess_hysteresis: float = 0
+    # Forecast-driven Excess (calculations/forecast_excess.py): the engine's
+    # latched verdict that the day's sun will overfill the battery, and the cap
+    # (W) on the power it adds to the Excess pool - the planned energy over the
+    # hours left. The verdict is OR-ed with the margin's, and tops the pool up
+    # with the charge the battery is absorbing (target_calculator).
+    forecast_excess: bool = False
+    forecast_excess_pace_w: float = 0.0
     # Excess start claims of loads that are INACTIVE this cycle but that the
     # verdict is about to start: ``((rank, mask, amps), ...)`` - set by
     # calculate_all_load_targets around the distribution, consumed by the

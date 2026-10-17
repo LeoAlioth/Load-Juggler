@@ -684,6 +684,8 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             detail = f"{_fmt(abs(margin), 'W', 0)} {'above' if margin >= 0 else 'below'} trigger"
         else:
             detail = f"margin {_fmt(margin, 'W', 0)}"
+        if hub_data.get("forecast_excess"):
+            detail += ", started early by the forecast"
         lines.append(f"- Excess trigger: {'on' if excess else 'off'} ({detail})")
     lines.append(
         "- Per-phase headroom: "

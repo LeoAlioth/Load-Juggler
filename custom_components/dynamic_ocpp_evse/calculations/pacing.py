@@ -21,17 +21,23 @@ PACE_START_MARGIN = 0.2
 PACE_RUNNING_DRAW_A = 1.0
 
 
+def pace_watts(energy_kwh: float, hours_left: float) -> float:
+    """Power (W) that spends ``energy_kwh`` in ``hours_left`` hours.
+
+    A negative energy (the planning sensor publishes its raw value) is 0. The
+    one figure behind both the per-load pace cap and the hub-level cap of the
+    forecast-driven Excess pool (calculations/forecast_excess.py).
+    """
+    return max(energy_kwh, 0.0) * 1000.0 / max(hours_left, PACE_MIN_HOURS)
+
+
 def pace_cap_current(
     energy_kwh: float, hours_left: float, voltage: float, phases: int
 ) -> float:
-    """Per-phase current (A) that spends ``energy_kwh`` in ``hours_left`` hours.
-
-    A negative energy (the planning sensor publishes its raw value) caps at 0.
-    """
+    """Per-phase current (A) that spends ``energy_kwh`` in ``hours_left`` hours."""
     if voltage <= 0:
         return 0.0
-    watts = max(energy_kwh, 0.0) * 1000.0 / max(hours_left, PACE_MIN_HOURS)
-    return watts / (voltage * max(int(phases or 1), 1))
+    return pace_watts(energy_kwh, hours_left) / (voltage * max(int(phases or 1), 1))
 
 
 def pace_limit(limit: float, cap: float, min_current: float, running: bool) -> float:

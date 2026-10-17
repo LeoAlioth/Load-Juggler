@@ -18,6 +18,11 @@ from ..calculations import (
     excess_margin,
     grid_overdraw,
 )
+from ..calculations.forecast_excess import (
+    forecast_excess_gate,
+    forecast_excess_verdict,
+    forecast_pace_watts,
+)
 from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
     CONF_AUTO_DETECT_PHASE_MAPPING,
@@ -28,6 +33,9 @@ from ..const import (
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_EXCESS_HYSTERESIS,
     CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_EXCESS_SOC,
+    CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_GRID_EXPORT_LIMIT,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
@@ -52,6 +60,9 @@ from ..const import (
     DEFAULT_DISTRIBUTION_MODE,
     DEFAULT_EXCESS_HYSTERESIS,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
+    DEFAULT_FORECAST_EXCESS_ENABLED,
+    DEFAULT_FORECAST_EXCESS_SOC,
+    DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
     DEFAULT_GRID_EXPORT_LIMIT,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
@@ -657,6 +668,49 @@ def _apply_excess_latch(hub_runtime, site, excess_hysteresis):
         "Excess %s (margin %+.0fW)", "ON" if excess_on else "off", margin
     )
     return excess_on, margin
+
+
+def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
+    """Latch the forecast-driven Excess verdict and hand it to the calculator.
+
+    Sets ``site.forecast_excess`` and ``site.forecast_excess_pace_w`` and returns
+    the verdict. ``pacing`` is ``readers._read_pacing``'s ``(planned_kwh,
+    hours_left)`` - None when the sensors are not configured or have been
+    unreadable past the stale timeout, which switches the feature off. The
+    gate SOC is the hub's own latched minimum/target already on the site (the
+    battery SOC hysteresis is in them), or the fixed value. The latch bit lives
+    in ``hub_runtime``, like the Excess latch's. See calculations/forecast_excess.py.
+    """
+    planned, hours_left = pacing if pacing is not None else (None, None)
+    gate, band = forecast_excess_gate(
+        get_entry_value(
+            hub_entry,
+            CONF_FORECAST_EXCESS_SOC_SOURCE,
+            DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
+        ),
+        site.battery_soc_min,
+        site.battery_soc_target,
+        get_entry_value(hub_entry, CONF_FORECAST_EXCESS_SOC, DEFAULT_FORECAST_EXCESS_SOC),
+    )
+    on = forecast_excess_verdict(
+        get_entry_value(
+            hub_entry, CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
+        ),
+        site.battery_soc,
+        gate,
+        band,
+        planned,
+        hub_runtime.get("_excess_by_forecast_on", False),
+    )
+    hub_runtime["_excess_by_forecast_on"] = on
+    site.forecast_excess = on
+    site.forecast_excess_pace_w = forecast_pace_watts(planned, hours_left) if on else 0.0
+    if on:
+        _LOGGER.debug(
+            "Forecast Excess ON (SOC %.0f%% >= %s, planned %.2f kWh, paced %.0fW)",
+            site.battery_soc, gate, planned, site.forecast_excess_pace_w,
+        )
+    return on
 
 
 # How long the saturation sign must hold before it is believed: the engine
@@ -1561,12 +1615,13 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     # --- Add loads ---
     hub_entry_id = hub_entry.entry_id
+    pacing = _read_pacing(hass, hub_entry, hub_runtime)
     _add_loads_to_site(
         hass, site, hub_entry_id, load_entries,
         settle_seconds=get_entry_value(
             hub_entry, CONF_FILTER_SETTLE_SECONDS, SETTLE_DRAW_SECONDS
         ),
-        pacing=_read_pacing(hass, hub_entry, hub_runtime),
+        pacing=pacing,
     )
 
     # --- Build circuit groups ---
@@ -1608,6 +1663,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
 
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
+    forecast_on = _apply_forecast_excess(hub_runtime, hub_entry, site, pacing)
 
     _apply_household_figures(
         site,
@@ -1698,8 +1754,11 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_assumed=fleet.solar_is_assumed(members),
         hub_status=hub_status,
         hub_warnings=hub_warnings,
-        excess_available=excess_on,
+        # The one verdict every consumer reads: the surplus margin OR the
+        # forecast's (the tank's setpoint among them).
+        excess_available=excess_on or forecast_on,
         excess_margin_power=margin,
+        forecast_excess=forecast_on,
         forecast_advice=forecast_advice,
         inverters_data=inverters_data,
     )

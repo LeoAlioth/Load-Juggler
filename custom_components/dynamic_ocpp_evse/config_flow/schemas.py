@@ -110,6 +110,9 @@ from ..const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_MANUAL_OVERRIDE_TIMEOUT,
+    CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_EXCESS_SOC,
+    CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_PACE_OVER_HORIZON,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
@@ -165,7 +168,11 @@ from ..const import (
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+    DEFAULT_FORECAST_EXCESS_ENABLED,
+    DEFAULT_FORECAST_EXCESS_SOC,
+    DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
     DEFAULT_PACE_OVER_HORIZON,
+    FORECAST_EXCESS_SOC_SOURCES,
     MIN_MANUAL_OVERRIDE_TIMEOUT,
     DEFAULT_STACK_LEVEL,
     DEFAULT_STATION_MAX_CHARGE_POWER,
@@ -397,6 +404,38 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
         (
             _optional_entity_field(CONF_PACING_HORIZON_ENTITY_ID, defaults),
             _entity_sel(hass, {"timestamp"}, None),
+        ),
+        # Forecast-driven Excess: start Excess before the battery is full, on
+        # the pacing energy above, once the SOC reaches the chosen source.
+        (
+            vol.Required(
+                CONF_FORECAST_EXCESS_ENABLED,
+                default=defaults.get(
+                    CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
+                ),
+            ),
+            bool,
+        ),
+        (
+            vol.Required(
+                CONF_FORECAST_EXCESS_SOC_SOURCE,
+                default=defaults.get(
+                    CONF_FORECAST_EXCESS_SOC_SOURCE, DEFAULT_FORECAST_EXCESS_SOC_SOURCE
+                ),
+            ),
+            selector(
+                {
+                    "select": {
+                        "options": FORECAST_EXCESS_SOC_SOURCES,
+                        "mode": "dropdown",
+                        "translation_key": CONF_FORECAST_EXCESS_SOC_SOURCE,
+                    }
+                }
+            ),
+        ),
+        _num(
+            CONF_FORECAST_EXCESS_SOC, defaults, DEFAULT_FORECAST_EXCESS_SOC,
+            0, 100, 1, "%", mode="slider",
         ),
     ]
 
@@ -737,6 +776,9 @@ HUB_POLICY_KEYS = (
     CONF_FORECAST_SOC_FLOOR,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_EXCESS_SOC_SOURCE,
+    CONF_FORECAST_EXCESS_SOC,
 )
 HUB_TIMING_KEYS = (
     CONF_SITE_UPDATE_FREQUENCY,

@@ -81,7 +81,10 @@
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
                     "pacing_energy_entity_id": "Energija za porabo (neobvezno)",
-                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)"
+                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)",
+                    "forecast_excess_enabled": "Zgodnji začetek Excess po napovedi",
+                    "forecast_excess_soc_source": "Zgodnji Excess od napolnjenosti",
+                    "forecast_excess_soc": "Fiksna napolnjenost za zgodnji Excess"
                 },
                 "data_description": {
                     "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
@@ -100,7 +103,10 @@
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek.",
                     "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do konca obzorja - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s koncem obzorja spodaj.",
-                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura."
+                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
+                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je energija za porabo (zgoraj) nad 0 in je napolnjenost baterije na spodaj izbrani vrednosti ali nad njo - sonce bo baterijo tako ali tako prepolnilo. Zgodaj se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je energija za porabo, deljena s preostalimi urami. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti zgodaj: najnižja, ciljna ali fiksna vrednost spodaj.",
+                    "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
                 }
             },
             "inverter_features": {
@@ -533,7 +539,10 @@
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
                     "pacing_energy_entity_id": "Energija za porabo (neobvezno)",
-                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)"
+                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)",
+                    "forecast_excess_enabled": "Zgodnji začetek Excess po napovedi",
+                    "forecast_excess_soc_source": "Zgodnji Excess od napolnjenosti",
+                    "forecast_excess_soc": "Fiksna napolnjenost za zgodnji Excess"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo. Polna ima pas nad nastavitvijo: z 2 % histereze in polno pri 90 % baterija šteje za polno od 92 %, dokler ne pade pod 90 %.",
@@ -541,7 +550,10 @@
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek.",
                     "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do konca obzorja - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s koncem obzorja spodaj.",
-                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura."
+                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
+                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je energija za porabo (zgoraj) nad 0 in je napolnjenost baterije na spodaj izbrani vrednosti ali nad njo - sonce bo baterijo tako ali tako prepolnilo. Zgodaj se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je energija za porabo, deljena s preostalimi urami. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti zgodaj: najnižja, ciljna ali fiksna vrednost spodaj.",
+                    "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
                 }
             },
             "hub_timing": {
@@ -917,6 +929,13 @@
         }
     },
     "selector": {
+        "forecast_excess_soc_source": {
+            "options": {
+                "minimum": "Najnižja napolnjenost",
+                "target": "Ciljna napolnjenost",
+                "fixed": "Fiksna vrednost"
+            }
+        },
         "inverter_features": {
             "options": {
                 "solar": "PV",

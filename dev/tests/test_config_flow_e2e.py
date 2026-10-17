@@ -42,6 +42,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BASE_CONSUMPTION,
+    CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_EXCESS_SOC,
+    CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_FORECAST_SOC_FLOOR,
     CONF_PACE_OVER_HORIZON,
     CONF_PACING_ENERGY_ENTITY_ID,
@@ -180,6 +183,10 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_GRID_EXPORT_LIMIT: 10500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
+            # Forecast-driven Excess is on the one setup page too.
+            CONF_FORECAST_EXCESS_ENABLED: True,
+            CONF_FORECAST_EXCESS_SOC_SOURCE: "fixed",
+            CONF_FORECAST_EXCESS_SOC: 65,
         },
     )
     # Grid + site policy is the whole hub - no hardware pages at all.
@@ -204,6 +211,10 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert hub_entry.data[CONF_NAME] == "My Solar Hub"
     assert hub_entry.data[CONF_ENTITY_ID] == "my_solar_hub"
     assert hub_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
+    stored = {**hub_entry.data, **hub_entry.options}
+    assert stored[CONF_FORECAST_EXCESS_ENABLED] is True
+    assert stored[CONF_FORECAST_EXCESS_SOC_SOURCE] == "fixed"
+    assert stored[CONF_FORECAST_EXCESS_SOC] == 65
 
 
 def _make_forecast_device(hass, slug, watts=True, name=None):
@@ -679,6 +690,12 @@ async def test_options_flow_hub_saves_changes(
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_policy")
     assert _schema_has(result["data_schema"], CONF_PACING_ENERGY_ENTITY_ID)
     assert _schema_has(result["data_schema"], CONF_PACING_HORIZON_ENTITY_ID)
+    for key in (
+        CONF_FORECAST_EXCESS_ENABLED,
+        CONF_FORECAST_EXCESS_SOC_SOURCE,
+        CONF_FORECAST_EXCESS_SOC,
+    ):
+        assert _schema_has(result["data_schema"], key)
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
@@ -687,9 +704,15 @@ async def test_options_flow_hub_saves_changes(
             CONF_FORECAST_SOC_FLOOR: 35,
             CONF_PACING_ENERGY_ENTITY_ID: "sensor.energy_to_use",
             CONF_PACING_HORIZON_ENTITY_ID: "sensor.horizon_end",
+            CONF_FORECAST_EXCESS_ENABLED: True,
+            CONF_FORECAST_EXCESS_SOC_SOURCE: "minimum",
+            CONF_FORECAST_EXCESS_SOC: 70,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_ENABLED) is True
+    assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_SOC_SOURCE) == "minimum"
+    assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_SOC) == 70
     assert mock_hub_entry.options.get(CONF_PACING_ENERGY_ENTITY_ID) == "sensor.energy_to_use"
     assert mock_hub_entry.options.get(CONF_PACING_HORIZON_ENTITY_ID) == "sensor.horizon_end"
 

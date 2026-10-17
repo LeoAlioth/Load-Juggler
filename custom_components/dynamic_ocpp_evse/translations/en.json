@@ -81,7 +81,10 @@
                     "base_consumption": "Base house consumption",
                     "forecast_soc_floor": "Forecast SOC floor",
                     "pacing_energy_entity_id": "Energy still to use (optional)",
-                    "pacing_horizon_entity_id": "Horizon end (optional)"
+                    "pacing_horizon_entity_id": "Horizon end (optional)",
+                    "forecast_excess_enabled": "Start Excess early on the forecast",
+                    "forecast_excess_soc_source": "Early Excess from SOC",
+                    "forecast_excess_soc": "Early Excess fixed SOC"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -100,7 +103,10 @@
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable - entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus.",
                     "pacing_energy_entity_id": "kWh the paced loads may still use before the horizon ends - for example a Load Insights planning sensor. Wh or kWh; a negative value counts as 0. Only loads with Pace over the planning horizon ticked use it, and only together with the horizon end below.",
-                    "pacing_horizon_entity_id": "Timestamp sensor for when that energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour."
+                    "pacing_horizon_entity_id": "Timestamp sensor for when that energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour.",
+                    "forecast_excess_enabled": "Starts Excess before the battery is full while the energy still to use (above) is over 0 and the battery SOC is at or above the one chosen below - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the energy still to use divided by the hours left. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
+                    "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
+                    "forecast_excess_soc": "Used when the SOC above is the fixed value."
                 }
             },
             "inverter_features": {
@@ -533,7 +539,10 @@
                     "base_consumption": "Base house consumption",
                     "forecast_soc_floor": "Forecast SOC floor",
                     "pacing_energy_entity_id": "Energy still to use (optional)",
-                    "pacing_horizon_entity_id": "Horizon end (optional)"
+                    "pacing_horizon_entity_id": "Horizon end (optional)",
+                    "forecast_excess_enabled": "Start Excess early on the forecast",
+                    "forecast_excess_soc_source": "Early Excess from SOC",
+                    "forecast_excess_soc": "Early Excess fixed SOC"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% - the battery never runs below the floor. Full has its band above: with 2% hysteresis and full at 90%, the battery counts as full from 92% until it drops below 90%.",
@@ -541,7 +550,10 @@
                     "base_consumption": "Typical daytime MINIMUM house draw. Forecast production above export limit + this value counts as unplaceable - entering a peak figure disables the feature in practice.",
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus.",
                     "pacing_energy_entity_id": "kWh the paced loads may still use before the horizon ends - for example a Load Insights planning sensor. Wh or kWh; a negative value counts as 0. Only loads with Pace over the planning horizon ticked use it, and only together with the horizon end below.",
-                    "pacing_horizon_entity_id": "Timestamp sensor for when that energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour."
+                    "pacing_horizon_entity_id": "Timestamp sensor for when that energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour.",
+                    "forecast_excess_enabled": "Starts Excess before the battery is full while the energy still to use (above) is over 0 and the battery SOC is at or above the one chosen below - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the energy still to use divided by the hours left. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
+                    "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
+                    "forecast_excess_soc": "Used when the SOC above is the fixed value."
                 }
             },
             "hub_timing": {
@@ -917,6 +929,13 @@
         }
     },
     "selector": {
+        "forecast_excess_soc_source": {
+            "options": {
+                "minimum": "Minimum SOC",
+                "target": "Target SOC",
+                "fixed": "Fixed value"
+            }
+        },
         "inverter_features": {
             "options": {
                 "solar": "PV",

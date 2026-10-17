@@ -107,6 +107,23 @@ CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % - never recommend a ceiling 
 # either unset, or unreadable, no load is paced.
 CONF_PACING_ENERGY_ENTITY_ID = "pacing_energy_entity_id"
 CONF_PACING_HORIZON_ENTITY_ID = "pacing_horizon_entity_id"
+# Forecast-driven Excess (owner, 2026-10-17): the Excess verdict may start before
+# the battery is full while the pacing energy says the day will overfill it -
+# see calculations/forecast_excess.py. Off by default.
+CONF_FORECAST_EXCESS_ENABLED = "forecast_excess_enabled"
+CONF_FORECAST_EXCESS_SOC_SOURCE = "forecast_excess_soc_source"
+CONF_FORECAST_EXCESS_SOC = "forecast_excess_soc"  # %, used with the fixed source
+FORECAST_EXCESS_SOURCE_MIN = "minimum"
+FORECAST_EXCESS_SOURCE_TARGET = "target"
+FORECAST_EXCESS_SOURCE_FIXED = "fixed"
+FORECAST_EXCESS_SOC_SOURCES = [
+    FORECAST_EXCESS_SOURCE_MIN,
+    FORECAST_EXCESS_SOURCE_TARGET,
+    FORECAST_EXCESS_SOURCE_FIXED,
+]
+DEFAULT_FORECAST_EXCESS_ENABLED = False
+DEFAULT_FORECAST_EXCESS_SOC_SOURCE = FORECAST_EXCESS_SOURCE_TARGET
+DEFAULT_FORECAST_EXCESS_SOC = 80
 DEFAULT_GRID_EXPORT_LIMIT = 0
 DEFAULT_EXCESS_TRIGGER_MARGIN = 500
 DEFAULT_BASE_CONSUMPTION = 300

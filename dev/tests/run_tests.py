@@ -10,6 +10,11 @@ Every scenario runs a 30-cycle simulation:
 
 import yaml
 
+from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
+    forecast_excess_gate,
+    forecast_excess_verdict,
+    forecast_pace_watts,
+)
 from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_cap_current
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
@@ -757,6 +762,9 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     # Excess latch state, the hub_runtime["_excess_on"] equivalent: the widened
     # release band only applies while Excess was already engaged last cycle.
     excess_on = False
+    # The forecast verdict's latch (site: forecast_excess: {energy_kwh, hours_left,
+    # source, soc}) - the hub_runtime["_excess_by_forecast_on"] equivalent.
+    forecast_on = False
     invariant_breaches = set()  # physical guards, deduplicated across cycles
 
     # Per-load draw-settle tracking: last measured draw and the count of
@@ -786,7 +794,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         # 1. Build site from YAML (household consumption, solar production, battery)
         # Last cycle's verdict, so a tank's boost setpoint (and therefore its
         # behavior) is resolved the way the control layer does it.
-        site = build_site_from_scenario(scenario, excess_on=excess_on)
+        site = build_site_from_scenario(scenario, excess_on=excess_on or forecast_on)
 
         # 2. Scale household + solar for cold-start ramp-up (cycles 0-4)
         if cycle < RAMP_UP_CYCLES:
@@ -873,6 +881,23 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         margin = excess_margin(site, hysteresis if excess_on else 0)
         excess_on = margin >= 0
         site.excess_hysteresis = hysteresis if excess_on else 0
+
+        # 6b. The forecast-driven verdict, as engine/hub_calculation.py latches it
+        #     from the pacing energy and the hub's SOC gate.
+        fx = scenario['site'].get('forecast_excess')
+        if fx:
+            gate, band = forecast_excess_gate(
+                fx.get('source', 'target'), site.battery_soc_min,
+                site.battery_soc_target, fx.get('soc', 80),
+            )
+            forecast_on = forecast_excess_verdict(
+                True, site.battery_soc, gate, band, fx['energy_kwh'], forecast_on
+            )
+            site.forecast_excess = forecast_on
+            site.forecast_excess_pace_w = (
+                forecast_pace_watts(fx['energy_kwh'], fx.get('hours_left', 0))
+                if forecast_on else 0.0
+            )
 
         # 7. Run calculation engine
         calculate_all_load_targets(site)

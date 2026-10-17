@@ -1,0 +1,401 @@
+# Test scenarios: forecast-driven Excess (owner, 2026-10-17).
+#
+# The Excess verdict may start BEFORE the battery is full, on the pacing energy
+# (the planned excess still to use today): the battery is at/above the chosen
+# SOC (the hub's target by default), the energy is above 0.2 kWh, and the day's
+# sun will overfill the battery anyway. The Excess pool is then topped up by the
+# charge the battery is absorbing, up to the paced rate energy x 1000 / max(hours, 1).
+# Solar Priority / Solar Only loads are NOT changed (docs/design-decisions.md).
+#
+# Site (1 phase unless stated): 8050 W of sun (35 A), 2 A of house, the battery
+# 85 % (target 80 %, full 97 %) charging at its 3450 W (15 A) limit. Export is
+# 18 A = 4140 W, far under the 13 000 W default trigger, so the surplus verdict is
+# off: without the forecast every Excess load here gets nothing.
+
+scenarios:
+
+  - name: "forecast-excess-off-without-the-forecast"
+    description: "Control: battery charging, below full, no forecast -> the Excess EVSE gets nothing"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-excess-evse-takes-the-paced-battery-charge"
+    description: "3.45 kWh over 2 h = 1725 W = 7.5 A of the battery's 15 A charge goes to the Excess EVSE"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_excess: {energy_kwh: 3.45, hours_left: 2}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 7.5
+
+  - name: "forecast-excess-capped-by-the-battery-charge"
+    description: "The paced rate (8 kWh in 1 h = 34.8 A) is far above what the battery absorbs: the EVSE gets the 15 A charge, not more"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_excess: {energy_kwh: 8, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 15.0
+
+  - name: "forecast-excess-no-planned-energy-no-early-start"
+    description: "Planned energy 0.1 kWh is under the 0.2 kWh start margin: the verdict stays off, the battery keeps its charge"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_excess: {energy_kwh: 0.1, hours_left: 2}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-excess-waits-for-the-gate-soc"
+    description: "SOC 70 % is under the 80 % target gate: the battery is still on its way up, no early Excess"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 70
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_excess: {energy_kwh: 3.45, hours_left: 2}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-excess-minimum-soc-source-and-solar-only-unchanged"
+    description: >
+      Gate = the minimum SOC (20 %), battery at 70 %: the Excess EVSE starts on the forecast,
+      while a Solar Only EVSE at the same site still defers to the battery (below target) -
+      the owner's 2026-09-09 decision stands.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 70
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_excess: {energy_kwh: 3.45, hours_left: 2, source: minimum}
+    loads:
+      - entity_id: "solar_only"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+      - entity_id: "excess"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      solar_only:
+        allocated: 0.0
+      excess:
+        allocated: 7.5
+
+  - name: "forecast-excess-fixed-soc-source"
+    description: "Gate = a fixed 60 %: the battery at 70 % clears it although the target (80 %) is not reached"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 70
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_excess: {energy_kwh: 3.45, hours_left: 2, source: fixed, soc: 60}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 7.5
+
+  - name: "forecast-excess-normal-tank-boosts-before-the-battery-is-full"
+    description: >
+      A Normal-mode tank already at its 45 C normal temperature is satisfied and idle.
+      With the forecast verdict the control layer raises its setpoint to boost (65 C),
+      the tank turns opportunistic (Excess tier) and takes its 2 kW element from the
+      battery's charge - which the day's sun will overfill anyway.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_excess: {energy_kwh: 8, hours_left: 2}
+    loads:
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        current_temperature: 45
+        normal_temperature: 45
+        l1_phase: "A"
+    expected:
+      tank:
+        allocated: 8.7
+
+  - name: "forecast-excess-normal-tank-idle-without-the-forecast"
+    description: "Control for the tank case: no forecast, the satisfied Normal tank stays idle"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "tank"
+        device_type: "hot_water_tank"
+        operating_mode: "Normal"
+        power_rating: 2000
+        phases: 1
+        priority: 1
+        current_temperature: 45
+        normal_temperature: 45
+        l1_phase: "A"
+    expected:
+      tank:
+        allocated: 0.0
+
+  - name: "forecast-excess-3ph-symmetric-evse"
+    description: >
+      Three phases, symmetric inverter: 7 kWh in 1 h = 7000 W = 10.14 A on each phase of a
+      3-phase Excess EVSE; the battery's 6900 W charge is the top-up's ceiling, so the load
+      is held to 6900 W = 10 A per phase.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 24150
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      excess_export_threshold: 30000
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 6900
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 36000
+      forecast_excess: {energy_kwh: 7, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      load_1:
+        allocated: 10.0
+
+  - name: "forecast-excess-3ph-asymmetric-single-phase-evse"
+    description: >
+      Asymmetric inverter, three phases: a single-phase Excess EVSE on phase B may reach
+      the whole top-up (the pool is a site total), here 7 kWh in 1 h = 7000 W capped by
+      the 6900 W charge = 30 A, so the EVSE runs at its 16 A maximum.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 24150
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      excess_export_threshold: 30000
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 6900
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 36000
+      forecast_excess: {energy_kwh: 7, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "B"
+    expected:
+      load_1:
+        allocated: 16.0
+
+  - name: "forecast-excess-off-grid"
+    description: >
+      Off-grid, the battery (5000 W charge rating) absorbing 4.5 kW of surplus without
+      saturating: the surplus verdict is off. The forecast verdict hands the Excess EVSE
+      the paced 3.45 kWh over 2 h = 7.5 A.
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 5000
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 12000
+      inverter_max_power_per_phase: 12000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: parallel
+      forecast_excess: {energy_kwh: 3.45, hours_left: 2}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 7.5
