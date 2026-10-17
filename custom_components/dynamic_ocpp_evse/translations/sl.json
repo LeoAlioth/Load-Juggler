@@ -80,11 +80,11 @@
                     "battery_soc_freeze_floor": "Spodnja meja zaščite pred zmrzaljo",
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
-                    "pacing_energy_entity_id": "Energija za porabo (neobvezno)",
-                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)",
-                    "forecast_excess_enabled": "Zgodnji začetek Excess po napovedi",
-                    "forecast_excess_soc_source": "Zgodnji Excess od napolnjenosti",
-                    "forecast_excess_soc": "Fiksna napolnjenost za zgodnji Excess"
+                    "pacing_energy_entity_id": "Višek energije (neobvezno)",
+                    "pacing_horizon_entity_id": "Sončni zahod (neobvezno)",
+                    "forecast_excess_enabled": "Predčasni začetek glede na viške",
+                    "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
+                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek"
                 },
                 "data_description": {
                     "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
@@ -102,10 +102,10 @@
                     "battery_soc_freeze_floor": "Samo brez omrežja. Pod najnižjo napolnjenostjo vsak bojler in grelec pade na temperaturo odsotnosti in sme za to še vedno črpati baterijo, do te napolnjenosti; vsa druga bremena pod najnižjo napolnjenostjo ostanejo izklopljena. Pod to mejo tudi bojlerji in grelci dobijo samo, kar da sonce.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek.",
-                    "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do konca obzorja - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s koncem obzorja spodaj.",
-                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
-                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je energija za porabo (zgoraj) nad 0 in je napolnjenost baterije na spodaj izbrani vrednosti ali nad njo - sonce bo baterijo tako ali tako prepolnilo. Zgodaj se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je energija za porabo, deljena s preostalimi urami. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
-                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti zgodaj: najnižja, ciljna ali fiksna vrednost spodaj.",
+                    "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do sončnega zahoda - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s senzorjem sončnega zahoda spodaj.",
+                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba ta višek energije porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
+                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
                     "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
                 }
             },
@@ -222,7 +222,7 @@
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
                     "binary_min_off_time": "Najkrajši čas izklopa",
-                    "pace_over_horizon": "Razporedi porabo do obzorja",
+                    "pace_over_horizon": "Razporedi porabo do sončnega zahoda",
                     "catch_up_enabled": "Dohiti, ko bi sonce prepolnilo baterijo"
                 },
                 "data_description": {
@@ -241,8 +241,8 @@
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik.",
-                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: energija za porabo, razporejena po preostalih urah, je vsaj enaka največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, nastavljeno za zgodnji Excess na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je ta izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "power_station_config": {
@@ -266,7 +266,7 @@
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
-                    "pace_over_horizon": "Razporedi porabo do obzorja",
+                    "pace_over_horizon": "Razporedi porabo do sončnega zahoda",
                     "catch_up_enabled": "Dohiti, ko bi sonce prepolnilo baterijo"
                 },
                 "data_description": {
@@ -286,8 +286,8 @@
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
-                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: energija za porabo, razporejena po preostalih urah, je vsaj enaka največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, nastavljeno za zgodnji Excess na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je ta izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "hot_water_tank_config": {
@@ -378,7 +378,7 @@
                     "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
                     "solar_grace_period": "Odlog za način Solar/Excess",
-                    "pace_over_horizon": "Razporedi porabo do obzorja",
+                    "pace_over_horizon": "Razporedi porabo do sončnega zahoda",
                     "catch_up_enabled": "Dohiti, ko bi sonce prepolnilo baterijo"
                 },
                 "data_description": {
@@ -390,8 +390,8 @@
                     "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
-                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: energija za porabo, razporejena po preostalih urah, je vsaj enaka največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, nastavljeno za zgodnji Excess na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je ta izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "group_config": {
@@ -544,21 +544,21 @@
                     "battery_soc_freeze_floor": "Spodnja meja zaščite pred zmrzaljo",
                     "base_consumption": "Osnovna poraba hiše",
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
-                    "pacing_energy_entity_id": "Energija za porabo (neobvezno)",
-                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)",
-                    "forecast_excess_enabled": "Zgodnji začetek Excess po napovedi",
-                    "forecast_excess_soc_source": "Zgodnji Excess od napolnjenosti",
-                    "forecast_excess_soc": "Fiksna napolnjenost za zgodnji Excess"
+                    "pacing_energy_entity_id": "Višek energije (neobvezno)",
+                    "pacing_horizon_entity_id": "Sončni zahod (neobvezno)",
+                    "forecast_excess_enabled": "Predčasni začetek glede na viške",
+                    "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
+                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo. Polna ima pas nad nastavitvijo: z 2 % histereze in polno pri 90 % baterija šteje za polno od 92 %, dokler ne pade pod 90 %.",
                     "battery_soc_freeze_floor": "Samo brez omrežja. Pod najnižjo napolnjenostjo vsak bojler in grelec pade na temperaturo odsotnosti in sme za to še vedno črpati baterijo, do te napolnjenosti; vsa druga bremena pod najnižjo napolnjenostjo ostanejo izklopljena. Pod to mejo tudi bojlerji in grelci dobijo samo, kar da sonce.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
                     "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek.",
-                    "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do konca obzorja - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s koncem obzorja spodaj.",
-                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
-                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je energija za porabo (zgoraj) nad 0 in je napolnjenost baterije na spodaj izbrani vrednosti ali nad njo - sonce bo baterijo tako ali tako prepolnilo. Zgodaj se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je energija za porabo, deljena s preostalimi urami. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
-                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti zgodaj: najnižja, ciljna ali fiksna vrednost spodaj.",
+                    "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do sončnega zahoda - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s senzorjem sončnega zahoda spodaj.",
+                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba ta višek energije porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
+                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
                     "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
                 }
             },
@@ -706,7 +706,7 @@
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
                     "binary_min_off_time": "Najkrajši čas izklopa",
-                    "pace_over_horizon": "Razporedi porabo do obzorja",
+                    "pace_over_horizon": "Razporedi porabo do sončnega zahoda",
                     "catch_up_enabled": "Dohiti, ko bi sonce prepolnilo baterijo"
                 },
                 "data_description": {
@@ -724,8 +724,8 @@
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik.",
-                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: energija za porabo, razporejena po preostalih urah, je vsaj enaka največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, nastavljeno za zgodnji Excess na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je ta izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "power_station": {
@@ -747,7 +747,7 @@
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
-                    "pace_over_horizon": "Razporedi porabo do obzorja",
+                    "pace_over_horizon": "Razporedi porabo do sončnega zahoda",
                     "catch_up_enabled": "Dohiti, ko bi sonce prepolnilo baterijo"
                 },
                 "data_description": {
@@ -766,8 +766,8 @@
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
-                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: energija za porabo, razporejena po preostalih urah, je vsaj enaka največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, nastavljeno za zgodnji Excess na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je ta izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "hot_water_tank": {
@@ -842,7 +842,7 @@
                     "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
                     "solar_grace_period": "Odlog za način Solar/Excess",
-                    "pace_over_horizon": "Razporedi porabo do obzorja",
+                    "pace_over_horizon": "Razporedi porabo do sončnega zahoda",
                     "catch_up_enabled": "Dohiti, ko bi sonce prepolnilo baterijo"
                 },
                 "data_description": {
@@ -854,8 +854,8 @@
                     "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
-                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: energija za porabo, razporejena po preostalih urah, je vsaj enaka največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, nastavljeno za zgodnji Excess na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je ta izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "group": {
