@@ -212,7 +212,7 @@ def test_unreadable_timestamp_with_nothing_held_means_no_pacing():
 
 # --- the wiring: a load's own option decides --------------------------------
 
-def _plug_entry(pace):
+def _plug_entry(pace, phase="A"):
     from custom_components.dynamic_ocpp_evse.const import (
         CONF_CONNECTED_TO_PHASE, CONF_DEVICE_TYPE, CONF_ENTITY_ID,
         CONF_PACE_OVER_HORIZON, CONF_PLUG_POWER_RATING, DEVICE_TYPE_PLUG,
@@ -225,13 +225,13 @@ def _plug_entry(pace):
             CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
             CONF_ENTITY_ID: "plug",
             CONF_PLUG_POWER_RATING: 2300,
-            CONF_CONNECTED_TO_PHASE: "A",
+            CONF_CONNECTED_TO_PHASE: phase,
         },
         options=options,
     )
 
 
-def _built_cap(pace, pacing):
+def _built_cap(pace, pacing, phase="A"):
     from custom_components.dynamic_ocpp_evse.const import DOMAIN
     from custom_components.dynamic_ocpp_evse.engine.load_builders import (
         _add_loads_to_site,
@@ -242,7 +242,7 @@ def _built_cap(pace, pacing):
         data={DOMAIN: {"loads": {"plug1": {"operating_mode": "Excess"}}}},
     )
     site = _site()
-    _add_loads_to_site(hass, site, "hub", [_plug_entry(pace)], pacing=pacing)
+    _add_loads_to_site(hass, site, "hub", [_plug_entry(pace, phase)], pacing=pacing)
     assert site.loads[0].mode_behavior == BEHAVIOR_BINARY_EXCESS
     return site.loads[0].pace_cap_current
 
@@ -250,6 +250,12 @@ def _built_cap(pace, pacing):
 def test_option_on_sets_the_load_cap():
     # 4.6 kWh over 2 h = 2300 W = 10 A on the plug's one phase
     assert _built_cap(True, (4.6, 2.0)) == pytest.approx(10.0)
+
+
+def test_cap_is_per_phase_the_load_really_sits_on():
+    # a plug wired across A and B on a site that has only A: its mask is clamped to A,
+    # so the cap is 2300 W on one phase (10 A), not on the two phases it was wired for (5 A)
+    assert _built_cap(True, (4.6, 2.0), phase="AB") == pytest.approx(10.0)
 
 
 def test_option_off_or_unset_leaves_the_load_unpaced():

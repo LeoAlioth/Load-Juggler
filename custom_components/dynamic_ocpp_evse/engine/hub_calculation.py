@@ -749,7 +749,7 @@ def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
             band,
             planned,
             hours_left,
-            max_power_w(load.max_current, site.voltage, load.phases),
+            max_power_w(load.max_current, site.voltage, len(load.active_phases_mask or "A")),
             latch.get(load.load_id, False),
         )
         latch[load.load_id] = load.catch_up_active
