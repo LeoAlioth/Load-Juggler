@@ -617,7 +617,7 @@ It needs two optional sensors on the hub's *Battery and forecast policy* page:
 | **Excess energy** | kWh (Wh or kWh sensor) the paced loads may still use before sunset, for example a Load Insights planning sensor. A negative value counts as 0 |
 | **Sunset** | Timestamp sensor for when that excess energy has to be used by, for example the end of the day's solar production |
 
-The cap is the same for every site and every phase count:
+The cap applies to each paced load on its own: two paced loads each get the full rate, so together they can use the energy at twice the pace. The cap is the same for every site and every phase count:
 
 ```
 cap (W)       = energy (kWh) x 1000 / max(hours until sunset, 1)
@@ -689,7 +689,7 @@ It starts when that holds with more than 0.2 kWh to use; once on it holds while 
 
 **The SOC floor.** The load never starts below the SOC set for *Early start on forecast excess* (*Minimum SOC for early start*: minimum, target or fixed). With that hub option off, the floor is the minimum SOC - a Solar load never takes the battery below its reserve. Note that with the default source (the target) the floor is the target itself, so catch-up does nothing until the source is set to *minimum* or a *fixed value* below the target.
 
-**Power for the load.** Below the target, a catching-up load takes the solar pool - the export plus the charge the battery is absorbing - capped at its maximum current. The battery's discharge is not added (below the target the battery is not surplus). Solar Priority keeps its minimum as the floor; Solar Only goes from 0 to the pool. It works per phase like every other limit, so it is the same for one, two and three phases, symmetric and asymmetric inverters and off-grid sites; with no battery it does nothing. The per-load *Pace until sunset* option applies to Excess loads only, so it does not affect it.
+**Power for the load.** Below the target, a catching-up load takes the solar pool - the export plus the charge the battery is absorbing - capped at its maximum current. The battery's discharge is not added (below the target the battery is not surplus). Solar Priority keeps its minimum as the floor; Solar Only goes from 0 to the pool. A plug in Solar Only (all or nothing at its rating) catches up only while that pool covers its whole rating, so it never runs from the battery's stored energy. It works per phase like every other limit, so it is the same for one, two and three phases, symmetric and asymmetric inverters and off-grid sites; with no battery it does nothing. The per-load *Pace until sunset* option applies to Excess loads only, so it does not affect it.
 
 ```
 16 A, 1 phase, 230 V = 3680 W maximum. Battery 60 % (target 80 %, minimum 20 %) charging at 3450 W

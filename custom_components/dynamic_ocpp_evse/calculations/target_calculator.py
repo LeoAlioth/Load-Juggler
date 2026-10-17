@@ -1972,9 +1972,13 @@ def _mode_source_limit(
         if site.battery_soc is not None:
             if site.battery_soc_target is None:
                 return 0
-            if (
-                site.battery_soc > site.battery_soc_target or load.catch_up_active
-            ) and _inverter_covers_load(load, site):
+            if not _inverter_covers_load(load, site):
+                return 0
+            if site.battery_soc > site.battery_soc_target:
+                return load.max_current
+            # Catch-up: all or nothing at the rating, so the sun the battery is
+            # absorbing (never its discharge) has to cover the whole rating.
+            if load.catch_up_active and base + solar.get_available(mask) >= load.max_current:
                 return load.max_current
             return 0
         behavior = BEHAVIOR_SOLAR_ONLY

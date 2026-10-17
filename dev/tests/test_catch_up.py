@@ -233,6 +233,16 @@ def test_binary_solar_only_plug_runs_below_target_only_with_catch_up():
     assert _source_limit(plug(True), _site(), POOL, NONE) == 8.7
 
 
+def test_binary_solar_only_plug_catch_up_needs_the_sun_to_cover_its_rating():
+    # all or nothing at the rating: with a pool under it (no sun at 07:00, say)
+    # the plug stays off - catch-up never runs it from the battery's stored energy
+    plug = _load(BEHAVIOR_BINARY_ABOVE_TARGET, True, device_type="plug", min_current=8.7, max_current=8.7)
+    small = PhaseConstraints.from_pool(5, 5, 5, 5)
+    assert _source_limit(plug, _site(), small, NONE) == 0
+    assert _source_limit(plug, _site(), NONE, NONE) == 0
+    assert _source_limit(plug, _site(soc=95.0), small, NONE) == 8.7  # above target: unchanged
+
+
 def test_a_tank_never_catches_up():
     # a tank in Solar Priority: even a stray flag changes nothing it reads from
     # the option; the builder never sets catch_up_enabled for a tank (below)
