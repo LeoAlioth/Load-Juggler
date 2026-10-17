@@ -222,7 +222,8 @@
                     "solar_grace_period": "Solar/Excess grace period",
                     "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time",
-                    "pace_over_horizon": "Pace over the planning horizon"
+                    "pace_over_horizon": "Pace over the planning horizon",
+                    "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.[prefix]_power).",
@@ -240,7 +241,8 @@
                     "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes."
+                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
+                    "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's Energy still to use, spread over the hours left, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC set for the early Excess start on the hub's Battery and forecast policy page (the minimum SOC if that is off). Needs both pacing sensors on that page; without them, or with this off, nothing changes."
                 }
             },
             "power_station_config": {
@@ -264,7 +266,8 @@
                     "update_frequency": "Update frequency",
                     "solar_grace_period": "Solar/Excess grace period",
                     "manual_override_timeout": "Manual override timeout",
-                    "pace_over_horizon": "Pace over the planning horizon"
+                    "pace_over_horizon": "Pace over the planning horizon",
+                    "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
                     "entity_id": "Used as a prefix for entities created by this integration.",
@@ -283,7 +286,8 @@
                     "connected_to_phase": "Which electrical phase(s) the station's AC input is wired to. Determines which phase capacity its charging draws from.",
                     "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "update_frequency": "How often to re-evaluate the station's charging speed and reserve.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes."
+                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
+                    "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's Energy still to use, spread over the hours left, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC set for the early Excess start on the hub's Battery and forecast policy page (the minimum SOC if that is off). Needs both pacing sensors on that page; without them, or with this off, nothing changes."
                 }
             },
             "hot_water_tank_config": {
@@ -374,7 +378,8 @@
                     "pause_profile_validity": "Pause profile validity",
                     "stack_level": "OCPP stack level",
                     "solar_grace_period": "Solar/Excess grace period",
-                    "pace_over_horizon": "Pace over the planning horizon"
+                    "pace_over_horizon": "Pace over the planning horizon",
+                    "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
                     "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
@@ -385,7 +390,8 @@
                     "pause_profile_validity": "How long the 0 A profile sent for a charge pause stays valid. It is renewed before it runs out for as long as the pause lasts, and any new allocation replaces it at once, so a long value costs nothing. It only matters if Home Assistant stops: the charger then stays paused for up to this long before falling back to its own default current.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes."
+                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
+                    "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's Energy still to use, spread over the hours left, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC set for the early Excess start on the hub's Battery and forecast policy page (the minimum SOC if that is off). Needs both pacing sensors on that page; without them, or with this off, nothing changes."
                 }
             },
             "group_config": {
@@ -700,7 +706,8 @@
                     "solar_grace_period": "Solar/Excess grace period",
                     "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time",
-                    "pace_over_horizon": "Pace over the planning horizon"
+                    "pace_over_horizon": "Pace over the planning horizon",
+                    "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
                     "plug_power_rating": "The power this device draws when turned on. Used for allocation calculations. Ignored when a power monitor sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
@@ -717,7 +724,8 @@
                     "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes."
+                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
+                    "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's Energy still to use, spread over the hours left, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC set for the early Excess start on the hub's Battery and forecast policy page (the minimum SOC if that is off). Needs both pacing sensors on that page; without them, or with this off, nothing changes."
                 }
             },
             "power_station": {
@@ -739,7 +747,8 @@
                     "update_frequency": "Update frequency",
                     "solar_grace_period": "Solar/Excess grace period",
                     "manual_override_timeout": "Manual override timeout",
-                    "pace_over_horizon": "Pace over the planning horizon"
+                    "pace_over_horizon": "Pace over the planning horizon",
+                    "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
                     "station_charge_speed_entity_id": "The station's AC charging speed control. Load Juggler writes the charge rate it allocates here.",
@@ -757,7 +766,8 @@
                     "connected_to_phase": "Which electrical phase(s) the station's AC input is wired to. Determines which phase capacity its charging draws from.",
                     "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
                     "update_frequency": "How often to re-evaluate the station's charging speed and reserve.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes."
+                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
+                    "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's Energy still to use, spread over the hours left, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC set for the early Excess start on the hub's Battery and forecast policy page (the minimum SOC if that is off). Needs both pacing sensors on that page; without them, or with this off, nothing changes."
                 }
             },
             "hot_water_tank": {
@@ -832,7 +842,8 @@
                     "pause_profile_validity": "Pause profile validity",
                     "stack_level": "OCPP stack level",
                     "solar_grace_period": "Solar/Excess grace period",
-                    "pace_over_horizon": "Pace over the planning horizon"
+                    "pace_over_horizon": "Pace over the planning horizon",
+                    "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
                     "charge_rate_unit": "Most OCPP chargers use Amperes. Some chargers (e.g., certain Wallbox models) require Watts instead.",
@@ -843,7 +854,8 @@
                     "pause_profile_validity": "How long the 0 A profile sent for a charge pause stays valid. It is renewed before it runs out for as long as the pause lasts, and any new allocation replaces it at once, so a long value costs nothing. It only matters if Home Assistant stops: the charger then stays paused for up to this long before falling back to its own default current.",
                     "stack_level": "OCPP protocol parameter. Only change if your charger ignores charging profiles at the default level.",
                     "solar_grace_period": "In Solar and Excess modes, how long to keep charging at minimum current when conditions are no longer met before pausing. Set to 0 to pause immediately.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes."
+                    "pace_over_horizon": "Excess mode only. Spreads the hub's Energy still to use over the time left to its Horizon end instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
+                    "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's Energy still to use, spread over the hours left, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC set for the early Excess start on the hub's Battery and forecast policy page (the minimum SOC if that is off). Needs both pacing sensors on that page; without them, or with this off, nothing changes."
                 }
             },
             "group": {

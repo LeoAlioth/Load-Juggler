@@ -18,6 +18,7 @@ from ..calculations import (
     excess_margin,
     grid_overdraw,
 )
+from ..calculations.catch_up import catch_up_verdict, max_power_w
 from ..calculations.forecast_excess import (
     forecast_excess_gate,
     forecast_excess_verdict,
@@ -711,6 +712,62 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
             site.battery_soc, gate, planned, site.forecast_excess_pace_w,
         )
     return on
+
+
+def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
+    """Latch each catch-up load's verdict (calculations/catch_up.py) onto
+    ``load.catch_up_active``.
+
+    The SOC floor is the hub's early-Excess gate (``forecast_excess_gate``: the
+    same latched minimum / target values, or the fixed one) while the hub option
+    ``forecast_excess_enabled`` is on; with it off, the latched minimum SOC - a
+    Solar load never takes the battery below its reserve. ``pacing`` is
+    ``readers._read_pacing``'s pair, None when unreadable (feature off). One bit
+    per load id lives in ``hub_runtime``, like the Excess latches'.
+    """
+    latch = hub_runtime.setdefault("_catch_up_on", {})
+    planned, hours_left = pacing if pacing is not None else (None, None)
+    if get_entry_value(
+        hub_entry, CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
+    ):
+        floor, band = forecast_excess_gate(
+            get_entry_value(
+                hub_entry,
+                CONF_FORECAST_EXCESS_SOC_SOURCE,
+                DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
+            ),
+            site.battery_soc_min,
+            site.battery_soc_target,
+            get_entry_value(
+                hub_entry, CONF_FORECAST_EXCESS_SOC, DEFAULT_FORECAST_EXCESS_SOC
+            ),
+        )
+    else:
+        floor, band = site.battery_soc_min, 0.0
+    seen = set()
+    for load in site.loads:
+        if not load.catch_up_enabled:
+            continue
+        seen.add(load.load_id)
+        load.catch_up_active = catch_up_verdict(
+            True,
+            load.mode_behavior,
+            site.battery_soc,
+            floor,
+            band,
+            planned,
+            hours_left,
+            max_power_w(load.max_current, site.voltage, load.phases),
+            latch.get(load.load_id, False),
+        )
+        latch[load.load_id] = load.catch_up_active
+        if load.catch_up_active:
+            _LOGGER.debug(
+                "Catch-up ON for %s (SOC %.0f%% >= %s, planned %.2f kWh, %.1f h left)",
+                load.load_id, site.battery_soc, floor, planned, hours_left,
+            )
+    for gone in set(latch) - seen:
+        del latch[gone]
 
 
 # How long the saturation sign must hold before it is believed: the engine
@@ -1664,6 +1721,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
     forecast_on = _apply_forecast_excess(hub_runtime, hub_entry, site, pacing)
+    _apply_catch_up(hub_runtime, hub_entry, site, pacing)
 
     _apply_household_figures(
         site,

@@ -1973,9 +1973,8 @@ def _mode_source_limit(
             if site.battery_soc_target is None:
                 return 0
             if (
-                site.battery_soc > site.battery_soc_target
-                and _inverter_covers_load(load, site)
-            ):
+                site.battery_soc > site.battery_soc_target or load.catch_up_active
+            ) and _inverter_covers_load(load, site):
                 return load.max_current
             return 0
         behavior = BEHAVIOR_SOLAR_ONLY
@@ -2012,11 +2011,21 @@ def _mode_source_limit(
 
     if behavior == BEHAVIOR_SOLAR_PRIORITY:
         if _below_soc_target(site):
+            if load.catch_up_active:
+                # Catch-up: the sun would overfill the battery anyway. The solar
+                # pool below the target is the sun's charge the battery is
+                # absorbing - never the battery's discharge.
+                return min(
+                    load.max_current,
+                    max(load.min_current, base + solar.get_available(mask)),
+                )
             return load.min_current  # Grid-backed minimum only
         return max(load.min_current, base + solar.get_available(mask))
 
     if behavior == BEHAVIOR_SOLAR_ONLY:
         if _below_soc_target(site):
+            if load.catch_up_active:  # as for Solar Priority above
+                return min(load.max_current, base + solar.get_available(mask))
             return 0  # Battery needs to charge
         return base + solar.get_available(mask)
 

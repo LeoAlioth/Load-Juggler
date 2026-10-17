@@ -7,6 +7,7 @@ the final ConfigEntry structure.
 from unittest.mock import patch, AsyncMock
 
 import pytest
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -47,6 +48,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_FORECAST_SOC_FLOOR,
     CONF_PACE_OVER_HORIZON,
+    CONF_CATCH_UP_ENABLED,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
     CONF_INVERTER_MAX_POWER,
@@ -507,10 +509,12 @@ async def test_charger_discovery_creates_entry(
             CONF_OCPP_PROFILE_TIMEOUT: 120,
             CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
+            CONF_CATCH_UP_ENABLED: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "Wallbox Pro Charger"
+    assert get_entry_value(result["result"], CONF_CATCH_UP_ENABLED, None) is True
 
     # Verify entry data
     entry = result["result"]
@@ -1096,15 +1100,97 @@ async def test_options_flow_charger_saves_changes(
             CONF_CHARGE_PAUSE_DURATION: 5,
             CONF_STACK_LEVEL: 5,
             CONF_PACE_OVER_HORIZON: True,
+            CONF_CATCH_UP_ENABLED: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # Options should now contain the submitted values
     assert mock_charger_entry.options.get(CONF_PACE_OVER_HORIZON) is True
+    assert mock_charger_entry.options.get(CONF_CATCH_UP_ENABLED) is True
     assert mock_charger_entry.options.get(CONF_LOAD_PRIORITY) == 2
     assert mock_charger_entry.options.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT) == 8
     assert mock_charger_entry.options.get(CONF_UPDATE_FREQUENCY) == 30
+
+
+async def test_options_flow_plug_saves_catch_up(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The smart load's settings page offers the catch-up option (off) and saves it."""
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    plug = _plug_entry(mock_hub_entry, "Pond Pump")
+    plug.add_to_hass(hass)
+
+    result = await _open_options(hass, plug.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "plug"
+    keys = {str(k): k for k in result["data_schema"].schema}
+    assert keys[CONF_CATCH_UP_ENABLED].default() is False
+
+    user_input = {
+        str(k): k.default()
+        for k in result["data_schema"].schema
+        if k.default is not vol.UNDEFINED
+    }
+    user_input[CONF_CATCH_UP_ENABLED] = True
+    hass.states.async_set("switch.pond_pump", "off")
+    user_input["plug_switch_entity_id"] = "switch.pond_pump"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=user_input
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert plug.options.get(CONF_CATCH_UP_ENABLED) is True
+
+
+async def test_options_flow_power_station_saves_catch_up(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The power station's settings page offers the catch-up option (off) and saves it."""
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    station = MockConfigEntry(
+        domain=DOMAIN,
+        title="Power Station",
+        data={
+            CONF_NAME: "Power Station",
+            CONF_ENTITY_ID: "lj_power_station",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_DEVICE_TYPE: "power_station",
+            CONF_HUB_ENTRY_ID: mock_hub_entry.entry_id,
+            "station_charge_speed_entity_id": "number.ef_speed",
+            "station_reserve_entity_id": "number.ef_reserve",
+        },
+        options={CONF_LOAD_PRIORITY: 1},
+    )
+    station.add_to_hass(hass)
+    for entity in ("number.ef_speed", "number.ef_reserve", "sensor.ef_soc"):
+        hass.states.async_set(entity, "50")
+
+    result = await _open_options(hass, station.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "power_station"
+    keys = {str(k): k for k in result["data_schema"].schema}
+    assert keys[CONF_CATCH_UP_ENABLED].default() is False
+
+    user_input = {
+        str(k): k.default()
+        for k in result["data_schema"].schema
+        if k.default is not vol.UNDEFINED
+    }
+    user_input["station_battery_level_entity_id"] = "sensor.ef_soc"
+    user_input[CONF_CATCH_UP_ENABLED] = True
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=user_input
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert station.options.get(CONF_CATCH_UP_ENABLED) is True
 
 
 async def test_options_flow_charger_validates(

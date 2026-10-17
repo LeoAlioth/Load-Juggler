@@ -10,6 +10,10 @@ Every scenario runs a 30-cycle simulation:
 
 import yaml
 
+from custom_components.dynamic_ocpp_evse.calculations.catch_up import (
+    catch_up_verdict,
+    max_power_w,
+)
 from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
     forecast_excess_gate,
     forecast_excess_verdict,
@@ -668,6 +672,9 @@ def build_site_from_scenario(scenario, excess_on=False):
                 voltage,
                 phases,
             )
+        # Catch-up's per-load option (loads: catch_up: true); the verdict is
+        # latched per cycle in run_scenario_simulation.
+        load.catch_up_enabled = bool(load_data.get("catch_up"))
         site.loads.append(load)
 
     # Build circuit groups
@@ -765,6 +772,10 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     # The forecast verdict's latch (site: forecast_excess: {energy_kwh, hours_left,
     # source, soc}) - the hub_runtime["_excess_by_forecast_on"] equivalent.
     forecast_on = False
+    # Catch-up's per-load latch (site: catch_up: {energy_kwh, hours_left, source,
+    # soc}; source minimum = the hub's early-Excess option off) - the
+    # hub_runtime["_catch_up_on"] equivalent.
+    catch_on = {}
     invariant_breaches = set()  # physical guards, deduplicated across cycles
 
     # Per-load draw-settle tracking: last measured draw and the count of
@@ -898,6 +909,25 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
                 forecast_pace_watts(fx['energy_kwh'], fx.get('hours_left', 0))
                 if forecast_on else 0.0
             )
+
+        # 6c. Catch-up, as engine/hub_calculation.py latches it per load.
+        cu = scenario['site'].get('catch_up')
+        if cu:
+            if cu.get('source', 'minimum') == 'minimum':
+                cu_floor, cu_band = site.battery_soc_min, 0.0
+            else:
+                cu_floor, cu_band = forecast_excess_gate(
+                    cu['source'], site.battery_soc_min,
+                    site.battery_soc_target, cu.get('soc', 80),
+                )
+            for ld in site.loads:
+                if ld.catch_up_enabled:
+                    ld.catch_up_active = catch_on[ld.load_id] = catch_up_verdict(
+                        True, ld.mode_behavior, site.battery_soc, cu_floor, cu_band,
+                        cu['energy_kwh'], cu.get('hours_left', 0),
+                        max_power_w(ld.max_current, site.voltage, ld.phases),
+                        catch_on.get(ld.load_id, False),
+                    )
 
         # 7. Run calculation engine
         calculate_all_load_targets(site)
