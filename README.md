@@ -9,6 +9,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - [Operating Modes](#operating-modes)
 - [Distribution Modes](#distribution-modes)
 - [Battery System Support](#battery-system-support)
+- [With Load Insights](#with-load-insights)
 - [Installation](#installation)
 - [Configuration](#configuration)
 - [Services & Automations](#services--automations)
@@ -171,6 +172,15 @@ The two features meet in Excess mode: while the limit is engaged, Excess counts 
 **Your inverter's work mode.** The charge control assumes the work mode keeps battery discharge off the meter - a Deye in *Zero-Export-to-CT*, or any equivalent self-consumption mode where the pack serves the house and never sells. Both places the site's own readings feed a decision are robust to a battery that does sell: the Excess verdict counts only **solar** export (the pack's discharge is netted off the meter reading, so stored energy can never start an Excess load), and the charge limit treats a discharging pack as exactly that - the value it would need is a discharge, which a charge cap cannot ask for, so it floors at zero instead of chasing the meter. What is *not* supported is running a sell-down **underneath** the charge control: a work mode or automation that actively empties the battery below its destination while this control is trying to hold or refill it is two controllers fighting over one pack, and which one wins depends on which wrote last. Arm the charge control or the sell-down, not both at once.
 
 The charge *rate* is the register every hybrid exposes, and slowing the fill leaves the battery charging all day rather than stopping it dead. Where a real SOC ceiling exists, the same page can write that instead - or as well. On a Deye the ceiling is not one register but one per **time-of-use slot**, so *Battery SOC ceiling entities* takes a list: select every slot the battery may charge in and the recommended max SOC is written to all of them together. *Normal SOC ceiling source* names the entity your everyday ceiling lives in (an `input_number`, a template sensor, whatever your automations already set); Load Juggler writes the **lower** of that and the recommendation, so it can only ever hold the battery below what you asked for, and changes you make there propagate to the slots on the next cycle. That same entity is what the clipping reserve is measured down from (see above), so it is worth pointing at your real everyday ceiling even if you never arm the write. Without it the everyday ceiling - and the reserve's anchor - is 100%; if it is configured but unavailable, nothing is written that cycle rather than a ceiling being guessed, and the advice keeps using the last value it published. A separate **Battery SOC Control** switch arms it (default off), writes are paced by the same interval setting with a fixed 1-point deadband applied per slot, and no release write is needed - the recommendation climbing back to your ceiling as the peak passes hands the slots back by itself. A **SOC Control** sensor reports the ceiling being enforced, with each slot's read-back as an attribute.
+
+## With Load Insights
+
+[Load Insights](https://github.com/LeoAlioth/Load-Insights) is a companion integration that forecasts a
+site's consumption from the Energy dashboard and plans its battery's SOC target and minimum, the planned
+excess for each day, and when the sun starts and stops producing. Neither integration needs the other. Where
+you use both, Load Juggler can take the planned excess and the production end as its "Energy still to use" and
+"Horizon end" settings (Battery and forecast policy), to pace a load over the day and to start the Excess
+verdict before the battery is full. See the [Charge Modes Guide](CHARGE_MODES_GUIDE.md).
 
 ## Installation
 
