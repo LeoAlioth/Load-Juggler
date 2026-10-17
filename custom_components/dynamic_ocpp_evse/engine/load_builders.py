@@ -96,6 +96,8 @@ from ..const import (
     BEHAVIOR_EXCESS,
     CONF_PACE_OVER_HORIZON,
     DEFAULT_PACE_OVER_HORIZON,
+    CONF_CATCH_UP_ENABLED,
+    DEFAULT_CATCH_UP_ENABLED,
     CONF_TANK_AWAY_TEMPERATURE,
     CONF_TANK_BOOST_TEMPERATURE,
     DEFAULT_TANK_AWAY_TEMPERATURE,
@@ -1411,6 +1413,13 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
             load.pace_cap_current = pace_cap_current(
                 *pacing, site.voltage, load.phases
             )
+
+        load.catch_up_enabled = (
+            device_type != DEVICE_TYPE_HOT_WATER_TANK
+            and bool(
+                get_entry_value(entry, CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED)
+            )
+        )
 
         site.loads.append(load)
 

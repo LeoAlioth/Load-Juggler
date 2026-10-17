@@ -114,6 +114,7 @@ from ..const import (
     CONF_FORECAST_EXCESS_SOC,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_PACE_OVER_HORIZON,
+    CONF_CATCH_UP_ENABLED,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -172,6 +173,7 @@ from ..const import (
     DEFAULT_FORECAST_EXCESS_SOC,
     DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
     DEFAULT_PACE_OVER_HORIZON,
+    DEFAULT_CATCH_UP_ENABLED,
     FORECAST_EXCESS_SOC_SOURCES,
     MIN_MANUAL_OVERRIDE_TIMEOUT,
     DEFAULT_STACK_LEVEL,
@@ -1023,6 +1025,15 @@ def _charger_timing_schema(
                     ),
                     bool,
                 ),
+                (
+                    vol.Required(
+                        CONF_CATCH_UP_ENABLED,
+                        default=defaults.get(
+                            CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED
+                        ),
+                    ),
+                    bool,
+                ),
             ]
         )
     )
@@ -1107,6 +1118,15 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                         CONF_PACE_OVER_HORIZON,
                         default=defaults.get(
                             CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+                        ),
+                    ),
+                    bool,
+                ),
+                (
+                    vol.Required(
+                        CONF_CATCH_UP_ENABLED,
+                        default=defaults.get(
+                            CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED
                         ),
                     ),
                     bool,
@@ -1292,6 +1312,15 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                         CONF_PACE_OVER_HORIZON,
                         default=defaults.get(
                             CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+                        ),
+                    ),
+                    bool,
+                ),
+                (
+                    vol.Required(
+                        CONF_CATCH_UP_ENABLED,
+                        default=defaults.get(
+                            CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED
                         ),
                     ),
                     bool,

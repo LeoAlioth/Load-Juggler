@@ -155,6 +155,13 @@ class LoadContext:
     # the calculator holds an Excess-mode load to it (_source_limit).
     pace_cap_current: float | None = None
 
+    # Catch-up (calculations/catch_up.py): the load's own option, and the
+    # engine's latched verdict that its maximum power cannot keep up with the
+    # planned energy. Active, a Solar Only / Solar Priority load takes the solar
+    # pool below the target SOC too (_mode_source_limit).
+    catch_up_enabled: bool = False
+    catch_up_active: bool = False
+
     # Device hardware current rating (A) - the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which
     # is separate from the set-power slider (the slider tracks the connected

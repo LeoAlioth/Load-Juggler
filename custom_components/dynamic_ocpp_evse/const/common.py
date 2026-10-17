@@ -424,6 +424,12 @@ MANUAL_ECHO_S = 120
 CONF_PACE_OVER_HORIZON = "pace_over_horizon"
 DEFAULT_PACE_OVER_HORIZON = False
 
+# Per-load catch-up (owner 2026-10-17): a Solar Only / Solar Priority load may
+# start below the target SOC when its own maximum power could not otherwise
+# keep up with the planned energy - see calculations/catch_up.py. Off by default.
+CONF_CATCH_UP_ENABLED = "catch_up_enabled"
+DEFAULT_CATCH_UP_ENABLED = False
+
 BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > target SOC
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
 

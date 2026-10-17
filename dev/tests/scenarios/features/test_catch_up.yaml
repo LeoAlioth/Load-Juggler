@@ -1,0 +1,384 @@
+# Test scenarios: per-load catch-up (owner, 2026-10-17).
+#
+# A Solar Only / Solar Priority load with catch_up: true may start BELOW the target
+# SOC when its own maximum power cannot keep up with the planned energy: the pacing
+# energy x 1000 / max(hours_left, 1) is at least max_current x voltage x phases.
+# It takes the solar pool (the sun the battery is absorbing), never the battery's
+# discharge, and only at/above the SOC floor (the hub's early-Excess gate; the
+# minimum SOC when that is off - site.catch_up.source: minimum, the default here).
+# Without the option, or while the load can keep up, nothing changes.
+#
+# 1 phase: 8050 W of sun (35 A), 2 A house, battery 60 % (target 80, min 20) charging
+# at its 3450 W (15 A) limit; the 16 A load's maximum is 3680 W.
+
+scenarios:
+
+  - name: "catch-up-1ph-solar-only-starts-below-target"
+    description: "Planned 3680 W = the load's maximum: Solar Only starts at 60 % although the target is 80 %"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.68, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 16.0
+
+  - name: "catch-up-1ph-solar-only-option-off"
+    description: "Control: same site, option off - Solar Only waits for the target"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.68, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "catch-up-1ph-solar-only-can-keep-up"
+    description: "Planned 3000 W is under the load's 3680 W maximum - it can keep up, so it waits"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.0, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "catch-up-1ph-solar-only-below-the-floor"
+    description: "Battery at 15 % is under the 20 % minimum floor - no catch-up"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 15
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.68, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "catch-up-1ph-solar-priority-starts-below-target"
+    description: "Solar Priority takes the solar pool (16 A) instead of its 6 A minimum"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.68, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 16.0
+
+  - name: "catch-up-1ph-solar-priority-option-off"
+    description: "Control: option off - Solar Priority holds its grid-backed 6 A minimum"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.68, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 6.0
+
+  - name: "catch-up-1ph-gate-at-target-waits"
+    description: "Early-Excess gate = target (80 %): a battery at 60 % is under the floor, no catch-up"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.68, hours_left: 1, source: target}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "catch-up-1ph-fixed-gate-met"
+    description: "Fixed gate 50 %: battery at 60 % is over the floor, catch-up starts"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      catch_up: {energy_kwh: 3.68, hours_left: 1, source: fixed, soc: 50}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 16.0
+
+  # 3 phases, symmetric inverter: 24150 W of sun (35 A a phase), 2 A house a phase,
+  # battery 60 % charging at 6900 W; the 3-phase 16 A load's maximum is 11 040 W.
+  - name: "catch-up-3ph-solar-only-starts-below-target"
+    description: "Planned 11.04 kWh in 1 h = the 3-phase load's maximum: Solar Only starts at 60 %"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 24150
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 6900
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 36000
+      catch_up: {energy_kwh: 11.04, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 16.0
+
+  - name: "catch-up-3ph-solar-only-can-keep-up"
+    description: "Planned 9 kWh in 1 h is under the 3-phase load's 11 040 W maximum: it waits for the target"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 24150
+      phase_a_consumption: 2.0
+      phase_b_consumption: 2.0
+      phase_c_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 6900
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 36000
+      catch_up: {energy_kwh: 9, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 0.0
+
+  # Off-grid (no grid CTs): the same algorithm over the inverter's own flow.
+  - name: "catch-up-off-grid-solar-only-starts-below-target"
+    description: "Off-grid 12 kW inverter, 8 kW of sun, battery 60 % charging: Solar Only catches up"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_max_power: 12000
+      inverter_max_power_per_phase: 12000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+      catch_up: {energy_kwh: 3.68, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        catch_up: true
+    expected:
+      load_1:
+        allocated: 16.0
+
+  - name: "catch-up-off-grid-option-off"
+    description: "Control: off-grid, option off - Solar Only waits for the target"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_max_power: 12000
+      inverter_max_power_per_phase: 12000
+      inverter_supports_asymmetric: false
+      inverter_output_sensors: true
+      wiring_topology: series
+      catch_up: {energy_kwh: 3.68, hours_left: 1}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
