@@ -20,7 +20,7 @@ ASSUMED = 'waiting for a new reading - assumed current'
 
 
 def _token(site):
-    return pathlib.Path('~/Projects/Load_Insights/data/' + HOSTS[site].split(':')[0]).read_text().strip()
+    return pathlib.Path(str(pathlib.Path.home()) + '/Documents/Load_Insights/data/' + HOSTS[site].split(':')[0]).read_text().strip()
 
 
 def _get(site, path):
