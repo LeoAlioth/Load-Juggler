@@ -675,7 +675,29 @@ Battery 85 % (target 80 %) charging at 3000 W, 3.45 kWh left, 2 h to the horizon
 Same, but 8 kWh left and 1 h -> paced rate 8000 W -> the pool is the 3000 W the battery takes
 ```
 
-Solar Priority and Solar Only chargers, smart loads and stations are not changed: they still wait for the battery to reach its target (`docs/design-decisions.md`).
+Solar Priority and Solar Only chargers, smart loads and stations are not changed by this hub option: they still wait for the battery to reach its target, unless the load has its own catch-up option (next section; `docs/design-decisions.md`).
+
+### Catching up below the target SOC
+
+Solar Only and Solar Priority loads wait for the battery to reach its target SOC (Solar Only gets nothing before it, Solar Priority only its minimum from the grid). If the day's planned energy is more than the load could use even running flat out, waiting only lets the battery overfill. Tick **Catch up when the sun would overfill the battery** on a charger's, smart load's or power station's settings page (off by default) and that load may start earlier. It is a per-load option and works on loads in Solar Only or Solar Priority; tanks follow the Excess verdict instead, and a plug in Solar Priority already runs above the minimum SOC. It uses the same *Energy still to use* and *Horizon end* sensors as pacing - without both it does nothing.
+
+```
+can't keep up  =  energy x 1000 / max(hours left, 1)  >=  max current x voltage x the load's phases   (W)
+```
+
+It starts when that holds with more than 0.2 kWh to use; once on it holds while the rate stays at or above 80 % of the load's maximum power and the energy above 0.1 kWh, so a planning value wobbling at the boundary does not start and stop the load. The state is kept per load.
+
+**The SOC floor.** The load never starts below the SOC set for *Start Excess early on the forecast* (*Early Excess from SOC*: minimum, target or fixed). With that hub option off, the floor is the minimum SOC - a Solar load never takes the battery below its reserve. Note that with the default source (the target) the floor is the target itself, so catch-up does nothing until the source is set to *minimum* or a *fixed value* below the target.
+
+**Power for the load.** Below the target, a catching-up load takes the solar pool - the export plus the charge the battery is absorbing - capped at its maximum current. The battery's discharge is not added (below the target the battery is not surplus). Solar Priority keeps its minimum as the floor; Solar Only goes from 0 to the pool. It works per phase like every other limit, so it is the same for one, two and three phases, symmetric and asymmetric inverters and off-grid sites; with no battery it does nothing. The per-load *Pace over the planning horizon* option applies to Excess loads only, so it does not affect it.
+
+```
+16 A, 1 phase, 230 V = 3680 W maximum. Battery 60 % (target 80 %, minimum 20 %) charging at 3450 W
+3.68 kWh left, 1 h to the horizon -> 3680 W >= 3680 W -> Solar Only takes the 16 A the sun allows
+3.0 kWh left -> 3000 W < 3680 W -> it can keep up, so it waits for 80 %
+```
+
+The decision is recorded in `docs/design-decisions.md` (2026-10-17): a narrow, opt-in exception to the 2026-09-09 decision.
 
 ---
 
@@ -978,6 +1000,7 @@ Standard and Solar Priority modes work identically - the grid portion of availab
 | **Update Frequency** | How often to recalculate (seconds) | 15s |
 | **Charge Pause Duration** | Min time before restarting (minutes) | 3 |
 | **Pace over the planning horizon** | Hold an Excess-mode load to the hub's energy still to use over the hours left | Off |
+| **Catch up when the sun would overfill the battery** | Let a Solar Only / Solar Priority load start below the target SOC when its maximum power could not otherwise keep up with the energy still to use | Off |
 
 ---
 
@@ -1084,6 +1107,8 @@ Falling (once above):
 **Without Battery:**
 - **Check:** Is solar exporting to grid?
 - **Check:** Is export > minimum current threshold?
+
+**Below the target with catch-up ticked:** needs both pacing sensors, a planned rate (energy x 1000 / hours left) at or above the load's maximum power, and a SOC at or above the early-Excess floor (the target by default - set *Early Excess from SOC* to *minimum* or a fixed value below the target).
 
 ### Excess Mode Not Starting
 

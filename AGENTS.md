@@ -81,6 +81,9 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   restart margin (applied in _source_limit; entities read in engine/readers.py)
 │   ├── forecast_excess.py         # Forecast-driven Excess verdict latch and pool top-up (gate SOC, planned
 │   │                              #   energy > 0.2 kWh, paced rate); the engine latches it, the calculator reads it
+│   ├── catch_up.py                # Per-load catch-up: a Solar Only / Solar Priority load may start below the target
+│                                  #   SOC when its max power can't keep up with the pacing energy (rate >= max W,
+│                                  #   latched per load); the engine sets LoadContext.catch_up_active
 │   ├── forecast.py                # Forecast-based charging advice
 │   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
 │   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
