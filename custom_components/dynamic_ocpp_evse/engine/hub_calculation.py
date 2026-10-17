@@ -22,8 +22,8 @@ from ..calculations.catch_up import catch_up_verdict, max_power_w
 from ..calculations.forecast_excess import (
     forecast_excess_gate,
     forecast_excess_verdict,
-    forecast_pace_watts,
 )
+from ..calculations.pacing import pace_watts
 from ..calculations.models import INACTIVE_STATUSES
 from ..const import (
     CONF_AUTO_DETECT_PHASE_MAPPING,
@@ -709,7 +709,7 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
     )
     hub_runtime["_excess_by_forecast_on"] = on
     site.forecast_excess = on
-    site.forecast_excess_pace_w = forecast_pace_watts(planned, hours_left) if on else 0.0
+    site.forecast_excess_pace_w = pace_watts(planned, hours_left) if on else 0.0
     if on:
         _LOGGER.debug(
             "Forecast Excess ON (SOC %.0f%% >= %s, planned %.2f kWh, paced %.0fW)",

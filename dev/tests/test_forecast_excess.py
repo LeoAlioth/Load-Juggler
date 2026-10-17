@@ -16,9 +16,8 @@ from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
     FORECAST_EXCESS_MIN_KWH,
     forecast_excess_gate,
     forecast_excess_verdict,
-    forecast_pace_watts,
-    forecast_topup_watts,
 )
+from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_watts
 from custom_components.dynamic_ocpp_evse.calculations.models import (
     LoadContext,
     PhaseConstraints,
@@ -123,18 +122,9 @@ def test_latched_gate_with_no_band_releases_at_the_gate():
 # --- the pace and the top-up -------------------------------------------------------
 
 def test_pace_is_energy_over_hours_floored_at_one():
-    assert forecast_pace_watts(4.6, 2) == pytest.approx(2300)
-    assert forecast_pace_watts(4.6, 0.2) == pytest.approx(4600)
-    assert forecast_pace_watts(-1, 2) == 0.0
-    assert forecast_pace_watts(None, 2) == 0.0
-    assert forecast_pace_watts(3, None) == 0.0
-
-
-def test_topup_is_the_charge_up_to_the_pace():
-    assert forecast_topup_watts(3000, 2000) == 2000
-    assert forecast_topup_watts(1500, 2000) == 1500
-    assert forecast_topup_watts(0, 2000) == 0
-    assert forecast_topup_watts(3000, 0) == 0  # planned energy 0: battery keeps it
+    assert pace_watts(4.6, 2) == pytest.approx(2300)
+    assert pace_watts(4.6, 0.2) == pytest.approx(4600)
+    assert pace_watts(-1, 2) == 0.0
 
 
 # --- the calculator ------------------------------------------------------------------

@@ -22,7 +22,6 @@ from .models import (
     PhaseConstraints,
     PhaseValues,
 )
-from .forecast_excess import forecast_topup_watts
 from .pacing import PACE_RUNNING_DRAW_A, pace_limit
 from .utils import managed_phase_draws
 from ..const import (
@@ -1566,10 +1565,7 @@ def _forecast_topup_w(site: SiteContext, absorbed: float, charge_off: float) -> 
     """
     if not site.forecast_excess:
         return 0.0
-    return min(
-        forecast_topup_watts(charge_off, site.forecast_excess_pace_w),
-        max(0.0, absorbed),
-    )
+    return min(max(0.0, min(charge_off, site.forecast_excess_pace_w)), max(0.0, absorbed))
 
 
 def _forecast_topup_per_phase(site: SiteContext) -> float:
