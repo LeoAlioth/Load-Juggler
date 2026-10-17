@@ -178,9 +178,9 @@ The charge *rate* is the register every hybrid exposes, and slowing the fill lea
 [Load Insights](https://github.com/LeoAlioth/Load-Insights) is a companion integration that forecasts a
 site's consumption from the Energy dashboard and plans its battery's SOC target and minimum, the planned
 excess for each day, and when the sun starts and stops producing. Neither integration needs the other. Where
-you use both, Load Juggler can take the planned excess and the production end as its "Energy still to use" and
-"Horizon end" settings (Battery and forecast policy), to pace a load over the day and to start the Excess
-verdict before the battery is full. See the [Charge Modes Guide](CHARGE_MODES_GUIDE.md).
+you use both, Load Juggler can take the planned excess and the production end as its "Excess energy" and
+"Sunset" settings (Battery and forecast policy), to pace a load until sunset and to start the Excess
+verdict before the battery is full (early start on forecast excess). See the [Charge Modes Guide](CHARGE_MODES_GUIDE.md).
 
 ## Installation
 
