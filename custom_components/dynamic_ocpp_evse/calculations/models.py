@@ -149,6 +149,12 @@ class LoadContext:
     # not start on a surplus the tank is about to take (SE17K, 2026-09-04).
     excess_claim_current: float = 0.0
 
+    # Pacing (calculations/pacing.py): the per-phase current (A) this load's
+    # planned energy allows over the time left, or None when it is not paced -
+    # the option off, or no energy / horizon to pace on. Set by the HA layer;
+    # the calculator holds an Excess-mode load to it (_source_limit).
+    pace_cap_current: float | None = None
+
     # Device hardware current rating (A) - the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which
     # is separate from the set-power slider (the slider tracks the connected

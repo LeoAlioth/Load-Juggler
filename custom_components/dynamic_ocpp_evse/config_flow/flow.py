@@ -83,6 +83,8 @@ from ..helpers import (
 from .helpers import (
     _BATTERY_UNIT_MAP,
     _GRID_ENTITY_KEYS,
+    _PACING_ENTITY_KEYS,
+    _PACING_UNIT_MAP,
     _GRID_UNIT_MAP,
     _INVERTER_ENTITY_KEYS,
     _INVERTER_OUTPUT_UNIT_MAP,
@@ -297,8 +299,12 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input = _normalize_optional_inputs(user_input, _GRID_ENTITY_KEYS)
-            _validate_entity_units(self.hass, user_input, _GRID_UNIT_MAP, errors)
+            user_input = _normalize_optional_inputs(
+                user_input, _GRID_ENTITY_KEYS + _PACING_ENTITY_KEYS
+            )
+            _validate_entity_units(
+                self.hass, user_input, _GRID_UNIT_MAP | _PACING_UNIT_MAP, errors
+            )
             if not errors:
                 self._data.update(user_input)
                 return self._create(

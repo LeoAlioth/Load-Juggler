@@ -606,6 +606,39 @@ Result: No charging - stored energy is not surplus, whatever the meter reads.
         Counting it would start a load on the house battery
 ```
 
+### Pacing an Excess load
+
+By default an Excess load takes whatever the surplus gives it, as fast as it comes. With **Pace over the planning horizon** ticked on a load's settings (Excess mode only - the charger, smart load and power station pages; not Solar Only or any other mode), the load spreads a planned amount of energy over the time left instead (GitHub issue 22).
+
+It needs two optional sensors on the hub's *Battery and forecast policy* page:
+
+| Hub setting | Meaning |
+|-------------|---------|
+| **Energy still to use** | kWh (Wh or kWh sensor) the paced loads may still use, for example a Load Insights planning sensor. A negative value counts as 0 |
+| **Horizon end** | Timestamp sensor for when that energy has to be used by, for example the end of the day's solar production |
+
+The cap is the same for every site and every phase count:
+
+```
+cap (W)       = energy (kWh) x 1000 / max(hours until the horizon, 1)
+cap (A/phase) = cap (W) / (site voltage x the load's phases)
+load ceiling  = min(what Excess allows, cap)
+```
+
+The cap is applied where every ceiling is read (`_source_limit` in `target_calculator.py`), per load, on top of the Excess pool - it only ever lowers what Excess would give.
+
+**Minimum current.** A load cannot run below its minimum current, so a cap under it means off. An off load restarts only once the cap exceeds the minimum by 20 % (`PACE_START_MARGIN`); a load already drawing keeps running down to the minimum itself. A binary load (a smart load, whose minimum is its rating) follows the same rule against its rating.
+
+```
+Charger 6-16 A, 1 phase, 230 V; Excess surplus 8 A
+Energy 3.45 kWh, 2 h to the horizon -> cap 7.5 A    -> 7.5 A  (the cap binds)
+Energy 3.17 kWh, 2 h to the horizon -> cap 6.9 A    -> off    (an off load needs 7.2 A)
+Energy 5.52 kWh, 2 h to the horizon -> cap 12 A     -> 8 A    (the surplus binds)
+Energy 1.73 kWh, 15 min to the horizon -> 1 h counted -> 7.5 A
+```
+
+Without either sensor, with one unreadable for over a minute, or with the load's option off, nothing changes. A sensor that drops out for less than a minute holds its last reading. The hub's Status names an unreadable pacing sensor.
+
 ---
 
 ## Hot Water Tank Modes
@@ -878,6 +911,7 @@ condition, and lives in Home Assistant's own storage.
 | **Battery SOC Target** | Target battery SOC (%) | 80% | Solar Priority, Solar Only |
 | **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Solar Priority, Solar Only |
 | **Battery Full SOC** | SOC at/above which the battery counts as full (%) | 97% | Excess mode - zeroes the battery's absorption capacity; also the Smart Plug on-trigger |
+| **Energy still to use / Horizon end** | Optional sensors that pace the loads which tick *Pace over the planning horizon* (kWh to use, and when) | - | Excess mode, per load |
 | **Battery Max Charge Power** | Maximum battery charging power (W) | 5000W | Excess mode (the battery's share of the absorption capacity) |
 | **Battery Max Discharge Power** | Maximum battery discharge power (W) | 5000W | Standard, Solar Priority |
 | **Power Buffer** | Safety buffer in Standard mode (W) | 0W | Standard mode |
@@ -904,6 +938,7 @@ Standard and Solar Priority modes work identically - the grid portion of availab
 | **Load Priority** | Priority for distribution (1-10, lower=higher) | 1 |
 | **Update Frequency** | How often to recalculate (seconds) | 15s |
 | **Charge Pause Duration** | Min time before restarting (minutes) | 3 |
+| **Pace over the planning horizon** | Hold an Excess-mode load to the hub's energy still to use over the hours left | Off |
 
 ---
 

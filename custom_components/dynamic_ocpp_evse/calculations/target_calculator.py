@@ -22,6 +22,7 @@ from .models import (
     PhaseConstraints,
     PhaseValues,
 )
+from .pacing import PACE_RUNNING_DRAW_A, pace_limit
 from .utils import managed_phase_draws
 from ..const import (
     BEHAVIOR_FULL_POWER,
@@ -1824,6 +1825,20 @@ def _source_limit(
     below the target is what the physical pool held before the battery's
     rating went back in for the tanks (_discharge_floor)."""
     limit = _mode_source_limit(load, site, solar, excess, base, excess_ahead)
+    # Pacing holds an Excess-mode load to its planned energy over the time left.
+    # Here rather than in the Excess pool: the cap is per load (its own
+    # setting, phases and minimum), the pool is shared, and this is the one
+    # place every call site - both passes and the permit of an inactive load -
+    # reads a load's ceiling from.
+    if load.pace_cap_current is not None and load.mode_behavior in (
+        BEHAVIOR_EXCESS,
+        BEHAVIOR_BINARY_EXCESS,
+    ):
+        running = (
+            load.l1_current + load.l2_current + load.l3_current
+            >= PACE_RUNNING_DRAW_A
+        )
+        limit = pace_limit(limit, load.pace_cap_current, load.min_current, running)
     if _freeze_reserve(site) and load.device_type != DEVICE_TYPE_HOT_WATER_TANK:
         return min(limit, base + solar.get_available(load.active_phases_mask))
     return limit

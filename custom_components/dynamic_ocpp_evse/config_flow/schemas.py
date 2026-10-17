@@ -110,6 +110,9 @@ from ..const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_MANUAL_OVERRIDE_TIMEOUT,
+    CONF_PACE_OVER_HORIZON,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STACK_LEVEL,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -162,6 +165,7 @@ from ..const import (
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+    DEFAULT_PACE_OVER_HORIZON,
     MIN_MANUAL_OVERRIDE_TIMEOUT,
     DEFAULT_STACK_LEVEL,
     DEFAULT_STATION_MAX_CHARGE_POWER,
@@ -383,6 +387,16 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
         _num(
             CONF_FORECAST_SOC_FLOOR, defaults, DEFAULT_FORECAST_SOC_FLOOR,
             0, 90, 1, "%", mode="slider",
+        ),
+        # Pacing: the energy a paced Excess load may still use, and when the
+        # time to use it ends (a load opts in on its own settings page).
+        (
+            _optional_entity_field(CONF_PACING_ENERGY_ENTITY_ID, defaults),
+            _entity_sel(hass, {"energy", None}, _ENERGY_UNITS, ["sensor", "input_number"]),
+        ),
+        (
+            _optional_entity_field(CONF_PACING_HORIZON_ENTITY_ID, defaults),
+            _entity_sel(hass, {"timestamp"}, None),
         ),
     ]
 
@@ -721,6 +735,8 @@ HUB_POLICY_KEYS = (
     CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BASE_CONSUMPTION,
     CONF_FORECAST_SOC_FLOOR,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
 )
 HUB_TIMING_KEYS = (
     CONF_SITE_UPDATE_FREQUENCY,
@@ -956,6 +972,15 @@ def _charger_timing_schema(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
+                (
+                    vol.Required(
+                        CONF_PACE_OVER_HORIZON,
+                        default=defaults.get(
+                            CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+                        ),
+                    ),
+                    bool,
+                ),
             ]
         )
     )
@@ -1034,6 +1059,15 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                 _num(
                     CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
                     MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
+                ),
+                (
+                    vol.Required(
+                        CONF_PACE_OVER_HORIZON,
+                        default=defaults.get(
+                            CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+                        ),
+                    ),
+                    bool,
                 ),
             ]
         )
@@ -1210,6 +1244,15 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                 _num(
                     CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
                     MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
+                ),
+                (
+                    vol.Required(
+                        CONF_PACE_OVER_HORIZON,
+                        default=defaults.get(
+                            CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+                        ),
+                    ),
+                    bool,
                 ),
             ]
         )

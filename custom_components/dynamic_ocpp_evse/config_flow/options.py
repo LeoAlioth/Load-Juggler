@@ -58,6 +58,8 @@ from ..helpers import hub_has_battery, inverter_features, strip_unfeatured_inver
 from .helpers import (
     _BATTERY_UNIT_MAP,
     _GRID_ENTITY_KEYS,
+    _PACING_ENTITY_KEYS,
+    _PACING_UNIT_MAP,
     _GRID_UNIT_MAP,
     _INVERTER_ENTITY_KEYS,
     _INVERTER_OUTPUT_UNIT_MAP,
@@ -481,6 +483,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             schema=lambda defaults: _hub_section_schema(
                 self.hass, defaults, HUB_POLICY_KEYS
             ),
+            entity_keys=_PACING_ENTITY_KEYS,
+            unit_map=_PACING_UNIT_MAP,
         )
 
     async def async_step_hub_timing(

@@ -79,7 +79,9 @@
                     "battery_soc_hysteresis": "Histereza napolnjenosti baterije",
                     "battery_soc_freeze_floor": "Spodnja meja zaščite pred zmrzaljo",
                     "base_consumption": "Osnovna poraba hiše",
-                    "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti"
+                    "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
+                    "pacing_energy_entity_id": "Energija za porabo (neobvezno)",
+                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)"
                 },
                 "data_description": {
                     "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
@@ -96,7 +98,9 @@
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo. Polna ima pas nad nastavitvijo: z 2 % histereze in polno pri 90 % baterija šteje za polno od 92 %, dokler ne pade pod 90 %.",
                     "battery_soc_freeze_floor": "Samo brez omrežja. Pod najnižjo napolnjenostjo vsak bojler in grelec pade na temperaturo odsotnosti in sme za to še vedno črpati baterijo, do te napolnjenosti; vsa druga bremena pod najnižjo napolnjenostjo ostanejo izklopljena. Pod to mejo tudi bojlerji in grelci dobijo samo, kar da sonce.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
-                    "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
+                    "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek.",
+                    "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do konca obzorja - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s koncem obzorja spodaj.",
+                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura."
                 }
             },
             "inverter_features": {
@@ -211,7 +215,8 @@
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
-                    "binary_min_off_time": "Najkrajši čas izklopa"
+                    "binary_min_off_time": "Najkrajši čas izklopa",
+                    "pace_over_horizon": "Razporedi porabo do obzorja"
                 },
                 "data_description": {
                     "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power).",
@@ -228,7 +233,8 @@
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
-                    "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik."
+                    "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik.",
+                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "power_station_config": {
@@ -251,7 +257,8 @@
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
-                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja"
+                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
+                    "pace_over_horizon": "Razporedi porabo do obzorja"
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
@@ -269,7 +276,8 @@
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
-                    "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje."
+                    "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
+                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "hot_water_tank_config": {
@@ -359,7 +367,8 @@
                     "charge_pause_duration": "Trajanje premora polnjenja",
                     "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
-                    "solar_grace_period": "Odlog za način Solar/Excess"
+                    "solar_grace_period": "Odlog za način Solar/Excess",
+                    "pace_over_horizon": "Razporedi porabo do obzorja"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina polnilnih postaj OCPP uporablja ampere. Nekatere (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -369,7 +378,8 @@
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilna postaja drži na 0 A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
                     "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
-                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
+                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "group_config": {
@@ -521,13 +531,17 @@
                     "battery_soc_hysteresis": "Histereza napolnjenosti baterije",
                     "battery_soc_freeze_floor": "Spodnja meja zaščite pred zmrzaljo",
                     "base_consumption": "Osnovna poraba hiše",
-                    "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti"
+                    "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
+                    "pacing_energy_entity_id": "Energija za porabo (neobvezno)",
+                    "pacing_horizon_entity_id": "Konec obzorja (neobvezno)"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo. Polna ima pas nad nastavitvijo: z 2 % histereze in polno pri 90 % baterija šteje za polno od 92 %, dokler ne pade pod 90 %.",
                     "battery_soc_freeze_floor": "Samo brez omrežja. Pod najnižjo napolnjenostjo vsak bojler in grelec pade na temperaturo odsotnosti in sme za to še vedno črpati baterijo, do te napolnjenosti; vsa druga bremena pod najnižjo napolnjenostjo ostanejo izklopljena. Pod to mejo tudi bojlerji in grelci dobijo samo, kar da sonce.",
                     "base_consumption": "Tipična dnevna MINIMALNA poraba hiše. Napovedana proizvodnja nad omejitvijo izvoza + to vrednostjo šteje kot neuporabljiva - vnos vršne porabe funkcijo v praksi izklopi.",
-                    "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek."
+                    "forecast_soc_floor": "Priporočena največja napolnjenost baterije nikoli ne pade pod to vrednost, ne glede na napovedani presežek.",
+                    "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do konca obzorja - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s koncem obzorja spodaj.",
+                    "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba to energijo porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura."
                 }
             },
             "hub_timing": {
@@ -673,7 +687,8 @@
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
-                    "binary_min_off_time": "Najkrajši čas izklopa"
+                    "binary_min_off_time": "Najkrajši čas izklopa",
+                    "pace_over_horizon": "Razporedi porabo do obzorja"
                 },
                 "data_description": {
                     "plug_power_rating": "Moč, ki jo naprava porabi, ko je vklopljena. Uporablja se za izračune dodeljevanja. Prezrta, ko je konfiguriran senzor spremljanja moči. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
@@ -689,7 +704,8 @@
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
-                    "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik."
+                    "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik.",
+                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "power_station": {
@@ -710,7 +726,8 @@
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
-                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja"
+                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
+                    "pace_over_horizon": "Razporedi porabo do obzorja"
                 },
                 "data_description": {
                     "station_charge_speed_entity_id": "Nastavitev hitrosti AC polnjenja postaje. Load Juggler sem zapiše dodeljeno moč polnjenja.",
@@ -727,7 +744,8 @@
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                     "connected_to_phase": "Na katero fazo (ali faze) je priklopljen izmenični vhod postaje. Določa, iz katere fazne kapacitete se črpa njeno polnjenje.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
-                    "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje."
+                    "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
+                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "hot_water_tank": {
@@ -801,7 +819,8 @@
                     "charge_pause_duration": "Trajanje premora polnjenja",
                     "pause_profile_validity": "Veljavnost profila premora",
                     "stack_level": "Nivo sklada OCPP",
-                    "solar_grace_period": "Odlog za način Solar/Excess"
+                    "solar_grace_period": "Odlog za način Solar/Excess",
+                    "pace_over_horizon": "Razporedi porabo do obzorja"
                 },
                 "data_description": {
                     "charge_rate_unit": "Večina polnilnih postaj OCPP uporablja ampere. Nekatere (npr. nekateri modeli Wallbox) zahtevajo vate.",
@@ -811,7 +830,8 @@
                     "charge_pause_duration": "Ko dodeljeni tok pade pod minimum, se polnilna postaja drži na 0 A za to trajanje pred ponovnim izračunom. Preprečuje hitro ponavljajoče vklapljanje/izklapljanje.",
                     "pause_profile_validity": "Kako dolgo ostane veljaven profil 0 A, poslan ob premoru polnjenja. Dokler premor traja, se obnovi, preden poteče, vsaka nova dodelitev pa ga takoj zamenja, zato dolga vrednost nič ne stane. Pomembna je le, če se Home Assistant ustavi: polnilna postaja takrat ostane v premoru največ toliko časa, nato se vrne na svoj privzeti tok.",
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
-                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev."
+                    "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
+                    "pace_over_horizon": "Samo način Excess. Energijo za porabo na merilnem mestu razporedi po času do konca obzorja namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "group": {
