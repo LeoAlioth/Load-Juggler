@@ -29,6 +29,7 @@ from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     _excess_phase_is_importing,
     _excess_verdict,
     _source_limit,
+    excess_figures,
     excess_margin,
 )
 from custom_components.dynamic_ocpp_evse.const import (
@@ -193,7 +194,7 @@ def test_the_pool_never_exceeds_what_the_site_places():
     # charge above the rating our control holds it to: the margin already
     # counts the excess charge, the top-up must not count it again
     site = _site(3000, pace_w=9000, threshold=1000.0, charge_rating=1000.0, export=8.0)
-    _, absorbed, _ = excess_margin(site, 0.0, with_figures=True)
+    _, absorbed, _ = excess_figures(site, 0.0)
     pool = _calculate_excess_available(site)
     assert pool.get_available("A") * 230 == pytest.approx(absorbed)
 
