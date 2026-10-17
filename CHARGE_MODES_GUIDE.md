@@ -639,6 +639,44 @@ Energy 1.73 kWh, 15 min to the horizon -> 1 h counted -> 7.5 A
 
 Without either sensor, with one unreadable for over a minute, or with the load's option off, nothing changes. A sensor that drops out for less than a minute holds its last reading. The hub's Status names an unreadable pacing sensor.
 
+### Starting Excess early on the forecast
+
+Excess normally starts when the battery is full (or taking all it may) and the site exports past its threshold. Until then the battery absorbs the sun and the Excess pool is empty. With **Start Excess early on the forecast** ticked on the hub's *Battery and forecast policy* page (off by default), the verdict can start earlier, because the day's sun will overfill the battery anyway. It uses the same *Energy still to use* and *Horizon end* sensors as pacing - without both it does nothing.
+
+| Hub setting | Meaning |
+|-------------|---------|
+| **Start Excess early on the forecast** | The option, off by default |
+| **Early Excess from SOC** | The SOC from which it may start: the *minimum* SOC, the *target* SOC (default) or a *fixed value* |
+| **Early Excess fixed SOC** | The percentage for the fixed value (default 80 %) |
+
+The forecast verdict is on while ALL of these hold:
+
+```
+the option is on
+energy still to use  > 0.2 kWh   (held while above 0.1 kWh)
+battery SOC          >= the chosen SOC   (no battery or no SOC: off)
+both pacing sensors readable     (an unreadable one holds its last value for a minute, then it is off)
+```
+
+The minimum and the target are the values Load Juggler already works with, with the battery SOC hysteresis in them, so they need no second band. A fixed value is held down to 2 % below it (`FORECAST_SOC_HYSTERESIS`). The verdict is added to the usual one (`excess_available`, published on the hub), so every reader of it follows: tank boost (Freeze Protection, Normal and Solar Priority tanks, as with any Excess verdict - below the minimum SOC the tank still falls back to its away temperature), Excess chargers, smart loads and power stations, and Excess plugs.
+
+**Power for the loads.** While the forecast verdict is on, the Excess pool is topped up with the solar the battery is absorbing right now, at most the paced rate:
+
+```
+top-up (W) = min(battery charge with our loads off, energy x 1000 / max(hours left, 1))
+pool       = the usual Excess pool + top-up        (never more than the site places)
+```
+
+It is the same for every site and phase count: the top-up is spread over the phases like the battery's own charge. The per-load *Pace over the planning horizon* option stays an additional per-load cap. A battery that is not charging has nothing to give, and with the energy at 0 or unreadable the pool is not topped up - the battery keeps what it needs.
+
+```
+Battery 85 % (target 80 %) charging at 3000 W, 3.45 kWh left, 2 h to the horizon
+-> paced rate 1725 W -> the Excess pool is 1725 W (7.5 A on one phase); the battery keeps 1275 W
+Same, but 8 kWh left and 1 h -> paced rate 8000 W -> the pool is the 3000 W the battery takes
+```
+
+Solar Priority and Solar Only chargers, smart loads and stations are not changed: they still wait for the battery to reach its target (`docs/design-decisions.md`).
+
 ---
 
 ## Hot Water Tank Modes
@@ -912,6 +950,7 @@ condition, and lives in Home Assistant's own storage.
 | **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Solar Priority, Solar Only |
 | **Battery Full SOC** | SOC at/above which the battery counts as full (%) | 97% | Excess mode - zeroes the battery's absorption capacity; also the Smart Plug on-trigger |
 | **Energy still to use / Horizon end** | Optional sensors that pace the loads which tick *Pace over the planning horizon* (kWh to use, and when) | - | Excess mode, per load |
+| **Start Excess early on the forecast** | Starts the Excess verdict before the battery is full on the Energy still to use sensor, from the chosen SOC (minimum, target or fixed) | Off | Everything that follows the Excess verdict |
 | **Battery Max Charge Power** | Maximum battery charging power (W) | 5000W | Excess mode (the battery's share of the absorption capacity) |
 | **Battery Max Discharge Power** | Maximum battery discharge power (W) | 5000W | Standard, Solar Priority |
 | **Power Buffer** | Safety buffer in Standard mode (W) | 0W | Standard mode |
