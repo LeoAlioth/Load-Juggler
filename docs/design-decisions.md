@@ -33,6 +33,17 @@ Priority or Solar Only still defers to the battery until target SOC. If a
 future session notices that inconsistency, it is a decision, not an oversight -
 re-ask before changing it. "For now" was his wording, so it may come back.
 
+## Excess may start before the battery is full (forecast driven)
+
+
+Decided by the owner 2026-10-17; the 2026-09-09 note above stays as history.
+
+**What:** with the hub option `forecast_excess_enabled` on, the Excess verdict is also true while the pacing energy (`pacing_energy_entity_id`, the planned excess still to use today) is above 0.2 kWh and the battery SOC is at/above the minimum, target or a fixed value - the day's sun will overfill the battery anyway. It is OR-ed into the hub's `excess_available` and the calculator's `_excess_verdict`, so everything that reads the verdict follows it: tank boost (Freeze Protection, Normal, Solar Priority) and the Excess behaviours (`BEHAVIOR_EXCESS`, `BEHAVIOR_BINARY_EXCESS`). The Excess pool is topped up with the solar the battery is absorbing, at most `planned kWh x 1000 / max(hours left, 1)` W. Code: `calculations/forecast_excess.py`, `_calculate_excess_available`, `engine/hub_calculation._apply_forecast_excess`.
+
+**Not changed, still declined:** the Solar Priority and Solar Only LOAD behaviours (`_source_limit` gates both on `_below_soc_target`). The owner declined that on 2026-09-09 and this feature did not reopen it: it reaches only what follows the Excess verdict or the Excess pool. So a Solar Only or Solar Priority EVSE below its target SOC still waits for the battery while an Excess one (or a Normal tank, boosting) starts on the forecast.
+
+**How to apply:** a tank boosting or an Excess load running with the battery below full and a surplus verdict of off is this feature, not a bug - look at `forecast_excess` in the hub data. A Solar Only load idle beside it is the 2026-09-09 decision.
+
 ## Solar Only uses the battery above target SOC
 
 

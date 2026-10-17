@@ -135,3 +135,14 @@ Pacing an Excess load over the planning horizon is in (per-load `pace_over_horiz
 - **A "Sun Only" mode** through `sun_pool`, for the requester's buffer case.
 - **After the horizon.** Today the hours left are floored at 1 h, so a paced load facing leftover energy past the horizon is held to that energy per hour (roughly unpaced for a small remainder). A stricter rule (stop pacing, or stop the load) is a choice for the owner.
 - **Start margin.** `PACE_START_MARGIN` is a constant (20 %); make it a setting only if live use shows one value does not fit.
+
+## Forecast-driven Excess beyond the verdict
+**Status:** Not yet implemented (the owner, 2026-10-17: the verdict and the Excess pool only)
+**Complexity:** Small to medium
+
+*Start Excess early on the forecast* is in (hub options `forecast_excess_*`). Left for later:
+
+- **Solar Priority / Solar Only loads.** They still gate on `_below_soc_target`; letting the forecast verdict override it was declined on 2026-09-09 and not reopened - re-ask the owner (`docs/design-decisions.md`).
+- **Per-device opt-out.** The verdict is hub-wide, as the owner asked; a per-load switch only if a device should not follow it.
+- **The 0.2 / 0.1 kWh start and release margins** (`FORECAST_EXCESS_MIN_KWH`) are constants; make them settings only if the planning sensor's noise on a live site says otherwise.
+- **A battery that does not charge.** The verdict holds while the planned energy lasts even in a cloud, so a modulating Excess load sits at its minimum on the battery or grid; a release on a missing charge (the pool empty for N minutes) is a choice for the owner.
