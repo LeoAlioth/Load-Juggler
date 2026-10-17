@@ -923,7 +923,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
             for ld in site.loads:
                 if ld.catch_up_enabled:
                     ld.catch_up_active = catch_on[ld.load_id] = catch_up_verdict(
-                        True, ld.mode_behavior, site.battery_soc, cu_floor, cu_band,
+                        ld.mode_behavior, site.battery_soc, cu_floor, cu_band,
                         cu['energy_kwh'], cu.get('hours_left', 0),
                         max_power_w(ld.max_current, site.voltage, ld.phases),
                         catch_on.get(ld.load_id, False),

@@ -153,6 +153,6 @@ Pacing an Excess load over the planning horizon is in (per-load `pace_over_horiz
 
 - **Floor default.** The floor is the early-Excess gate, whose default source is the target - so catch-up does nothing until the owner sets the source to the minimum or a fixed value. A separate catch-up floor setting, or a different default, is a choice for the owner.
 - **Peak vs planned rate.** The owner's words were "peak production higher than the max the EVSE can deliver"; the test uses the planned rate (energy / hours left), the one figure the hub has. A peak-production input would need the forecast curve.
-- **Constants.** Start ratio 1.0 and release ratio 0.8 (`CATCH_UP_START_RATIO`, `CATCH_UP_RELEASE_RATIO`) are constants; make them settings only if live use says otherwise.
+- **Constants.** The start is the load's own maximum power and the release ratio is 0.8 (`CATCH_UP_RELEASE_RATIO`), a constant; make them settings only if live use says otherwise.
 - **Several loads.** Each load is judged on the whole planned energy against its own maximum; two catch-up loads in one site both start, and the distribution then shares the one solar pool between them.
 - **Plug Solar Priority.** Its binary rule runs above the minimum SOC, which is the lowest floor, so catch-up has nothing to add there.
