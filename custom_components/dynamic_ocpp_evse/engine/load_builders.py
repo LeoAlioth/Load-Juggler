@@ -1411,7 +1411,7 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
             entry, CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
         ):
             load.pace_cap_current = pace_cap_current(
-                *pacing, site.voltage, load.phases
+                *pacing, site.voltage, len(load.active_phases_mask or "A")
             )
 
         load.catch_up_enabled = (
