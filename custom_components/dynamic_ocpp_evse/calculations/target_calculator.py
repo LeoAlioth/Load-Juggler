@@ -1282,10 +1282,10 @@ def _outranking_draw_power(site: SiteContext) -> float:
     )
 
 
-def excess_margin(
-    site: SiteContext, hysteresis: float = 0.0, *, with_figures: bool = False
-):
-    """Watts by which the site is over the point where Excess mode triggers.
+def excess_figures(site: SiteContext, hysteresis: float = 0.0) -> tuple:
+    """``(margin, absorbed, charge_off)``: the watts by which the site is over the
+    point where Excess mode triggers, and the two figures the forecast verdict's
+    top-up is sized on. ``excess_margin`` is the first alone.
 
     Excess means the site can no longer place its own production anywhere else:
     the grid export allowance is used up AND the battery is taking all it can.
@@ -1392,7 +1392,6 @@ def excess_margin(
     than there: the advice steers the meter, so it wants the physical export,
     and a discharging pack is handled inside its own arithmetic.
 
-    ``with_figures`` returns ``(margin, absorbed, charge_off)`` instead:
     ``absorbed`` is the watts the site is placing, before the allowance comes
     off - the ceiling on any pool - and ``charge_off`` the battery's charge as it
     would read with our loads off (what it takes now plus the draw handed back
@@ -1524,9 +1523,13 @@ def excess_margin(
         charge_allowance,
         hysteresis,
     )
-    if with_figures:
-        return margin, absorbed, charge_power + battery_restored
-    return margin
+    return margin, absorbed, charge_power + battery_restored
+
+
+def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
+    """Watts by which the site is over the point where Excess mode triggers
+    (see ``excess_figures``)."""
+    return excess_figures(site, hysteresis)[0]
 
 
 def _margin_verdict(site: SiteContext) -> bool:
@@ -1574,7 +1577,7 @@ def _forecast_topup_per_phase(site: SiteContext) -> float:
     count = site.export_current.active_count
     if not site.forecast_excess or not count or site.voltage <= 0:
         return 0.0
-    _, absorbed, charge_off = excess_margin(site, 0.0, with_figures=True)
+    _, absorbed, charge_off = excess_figures(site, 0.0)
     return _forecast_topup_w(site, absorbed, charge_off) / count / site.voltage
 
 
@@ -1615,7 +1618,7 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     # top-up. The top-up is spread per phase like the battery's own charge
     # (``topup_phase``), which the symmetric arm below needs: there each phase
     # is bounded by its own flow, and a battery absorbing the sun leaves none.
-    margin0, absorbed, charge_off = excess_margin(site, 0.0, with_figures=True)
+    margin0, absorbed, charge_off = excess_figures(site, 0.0)
     outranking = _outranking_draw_power(site)
     topup = _forecast_topup_w(site, absorbed, charge_off)
     margin = (margin0 + outranking if margin_on else 0.0) + topup
@@ -1903,9 +1906,10 @@ def _source_limit(
         BEHAVIOR_EXCESS,
         BEHAVIOR_BINARY_EXCESS,
     ):
+        # a load whose minimum is under 2 A is running at half of it, not at 1 A
         running = (
             load.l1_current + load.l2_current + load.l3_current
-            >= PACE_RUNNING_DRAW_A
+            >= min(PACE_RUNNING_DRAW_A, load.min_current / 2)
         )
         limit = pace_limit(limit, load.pace_cap_current, load.min_current, running)
     if _freeze_reserve(site) and load.device_type != DEVICE_TYPE_HOT_WATER_TANK:

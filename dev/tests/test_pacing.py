@@ -90,9 +90,9 @@ def _site():
     )
 
 
-def _load(behavior, cap, draw=0.0, **kw):
+def _load(behavior, cap, draw=0.0, min_current=6, **kw):
     return LoadContext(
-        load_id="l", entity_id="l", min_current=6, max_current=16, phases=1,
+        load_id="l", entity_id="l", min_current=min_current, max_current=16, phases=1,
         mode_behavior=behavior, l1_current=draw, pace_cap_current=cap, **kw
     )
 
@@ -109,6 +109,14 @@ def test_excess_load_is_held_to_its_cap_when_running():
 def test_excess_load_off_in_the_start_band_until_it_runs():
     assert _limit(_load(BEHAVIOR_EXCESS, 6.5, draw=0.0)) == 0.0
     assert _limit(_load(BEHAVIOR_EXCESS, 6.5, draw=6.0)) == pytest.approx(6.5)
+
+
+def test_a_small_load_counts_as_running_at_half_its_minimum():
+    # a 0.8 A minimum plug drawing 0.5 A is running (it would never reach the 1 A
+    # threshold): the restart margin must not hold it off while the cap rides down to its minimum
+    small = lambda draw: _load(BEHAVIOR_EXCESS, 0.85, draw=draw, min_current=0.8)  # noqa: E731
+    assert _limit(small(0.5)) == pytest.approx(0.85)
+    assert _limit(small(0.0)) == 0.0          # off: the 20 % start margin applies (0.96 A)
 
 
 def test_not_paced_is_untouched():
