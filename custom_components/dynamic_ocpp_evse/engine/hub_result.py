@@ -638,6 +638,7 @@ def _build_hub_result(
     hub_warnings=None,
     excess_available=False,
     excess_margin_power=0,
+    forecast_excess=False,
     forecast_advice=None,
     inverters_data=None,
 ):
@@ -1076,6 +1077,9 @@ def _build_hub_result(
         # of) the trigger the site is; the per-sink split is in the debug log.
         "excess_available": excess_available,
         "excess_margin_power": round(excess_margin_power, 0),
+        # True when the forecast (calculations/forecast_excess.py), not the
+        # surplus margin, is what started Excess before the battery was full.
+        "forecast_excess": forecast_excess,
         # Per-load targets
         "load_targets": load_targets,
         "load_available": {c.load_id: c.available_current for c in site.loads},

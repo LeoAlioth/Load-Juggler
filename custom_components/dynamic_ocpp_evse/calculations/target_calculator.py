@@ -22,6 +22,7 @@ from .models import (
     PhaseConstraints,
     PhaseValues,
 )
+from .forecast_excess import forecast_topup_watts
 from .pacing import PACE_RUNNING_DRAW_A, pace_limit
 from .utils import managed_phase_draws
 from ..const import (
@@ -1282,7 +1283,9 @@ def _outranking_draw_power(site: SiteContext) -> float:
     )
 
 
-def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
+def excess_margin(
+    site: SiteContext, hysteresis: float = 0.0, *, with_figures: bool = False
+):
     """Watts by which the site is over the point where Excess mode triggers.
 
     Excess means the site can no longer place its own production anywhere else:
@@ -1389,6 +1392,12 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
     steers on the same figures. The solar-only subtraction stays HERE rather
     than there: the advice steers the meter, so it wants the physical export,
     and a discharging pack is handled inside its own arithmetic.
+
+    ``with_figures`` returns ``(margin, absorbed, charge_off)`` instead:
+    ``absorbed`` is the watts the site is placing, before the allowance comes
+    off - the ceiling on any pool - and ``charge_off`` the battery's charge as it
+    would read with our loads off (what it takes now plus the draw handed back
+    to it), which the forecast verdict's top-up gives to the Excess loads.
 
     Pure function - unit-testable.
     """
@@ -1516,7 +1525,14 @@ def excess_margin(site: SiteContext, hysteresis: float = 0.0) -> float:
         charge_allowance,
         hysteresis,
     )
+    if with_figures:
+        return margin, absorbed, charge_power + battery_restored
     return margin
+
+
+def _margin_verdict(site: SiteContext) -> bool:
+    """The surplus half of the verdict: the margin, read with the latch's band."""
+    return excess_margin(site, site.excess_hysteresis) >= 0
 
 
 def _excess_verdict(site: SiteContext) -> bool:
@@ -1528,8 +1544,42 @@ def _excess_verdict(site: SiteContext) -> bool:
     so reading the margin with it reproduces the latch's answer exactly. Kept
     separate because the pool is not the verdict - a margin of 0 IS Excess (the
     saturated case) and yet buys a pool of 0 amps.
+
+    The forecast verdict (``site.forecast_excess``, the engine's latch - see
+    calculations/forecast_excess.py) is OR-ed in: the day's sun will overfill the
+    battery, so every reader of this verdict behaves as if it were full.
     """
-    return excess_margin(site, site.excess_hysteresis) >= 0
+    return site.forecast_excess or _margin_verdict(site)
+
+
+def _forecast_topup_w(site: SiteContext, absorbed: float, charge_off: float) -> float:
+    """Watts the forecast verdict adds to the Excess pool this cycle (0 when it
+    is off): the solar the battery is absorbing, up to the paced rate.
+
+    The battery's charge is read as it would be with our loads off
+    (``charge_off``, as everything the pool is sized on is), so a load that
+    starts and takes its power out of the charge does not shrink the top-up it
+    is running on. Capped at ``absorbed`` as well - everything the site is
+    placing with its loads off - so a charge the margin already counted (a
+    battery charging above the allowance our control holds it to) is never
+    promised twice.
+    """
+    if not site.forecast_excess:
+        return 0.0
+    return min(
+        forecast_topup_watts(charge_off, site.forecast_excess_pace_w),
+        max(0.0, absorbed),
+    )
+
+
+def _forecast_topup_per_phase(site: SiteContext) -> float:
+    """The top-up as amps per phase that exists - the battery's charge is
+    symmetric across the phases, like ``battery_restored`` in the placement."""
+    count = site.export_current.active_count
+    if not site.forecast_excess or not count or site.voltage <= 0:
+        return 0.0
+    _, absorbed, charge_off = excess_margin(site, 0.0, with_figures=True)
+    return _forecast_topup_w(site, absorbed, charge_off) / count / site.voltage
 
 
 def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
@@ -1553,14 +1603,34 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
     export was 489 W over its threshold, the whole difference being the 500 W
     hysteresis, and two loads sized themselves on it.
     """
-    if not _excess_verdict(site) or site.voltage <= 0:
+    margin_on = _margin_verdict(site)
+    if not (margin_on or site.forecast_excess) or site.voltage <= 0:
         return PhaseConstraints.zeros(netting=True)
 
     # The SIZE is the whole load-off surplus, the draws ranked above Excess
     # included: the distribution deducts those loads first, in rank order, so
     # leaving them in the margin too would take them off twice.
-    margin = excess_margin(site, 0.0) + _outranking_draw_power(site)
+    #
+    # The forecast verdict (calculations/forecast_excess.py) tops it up with the
+    # solar the battery is absorbing - up to the paced rate - because the pool
+    # is otherwise empty exactly while the battery soaks up the sun. Without a
+    # surplus verdict of its own (the battery still charging inside its
+    # allowance) the margin is negative and holds nothing: the pool IS the
+    # top-up. The top-up is spread per phase like the battery's own charge
+    # (``topup_phase``), which the symmetric arm below needs: there each phase
+    # is bounded by its own flow, and a battery absorbing the sun leaves none.
+    margin0, absorbed, charge_off = excess_margin(site, 0.0, with_figures=True)
+    outranking = _outranking_draw_power(site)
+    topup = _forecast_topup_w(site, absorbed, charge_off)
+    margin = (margin0 + outranking if margin_on else 0.0) + topup
+    if topup:
+        margin = min(margin, absorbed + outranking)
     total = margin / site.voltage
+    topup_phase = (
+        topup / site.export_current.active_count / site.voltage
+        if topup and site.export_current.active_count
+        else 0.0
+    )
 
     if site.inverter_supports_asymmetric or site.is_off_grid:
         # The inverter can put its output on any leg, so the site total is the
@@ -1619,7 +1689,7 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
         # ``_excess_permits`` is what keeps a running load alive on the verdict.
         phases = [
             0.0 if f is None else min(total, max(0.0, f))
-            for f in _reconstruct_signed_per_phase(site, 0.0)
+            for f in _reconstruct_signed_per_phase(site, -topup_phase)
         ]
         constraints = PhaseConstraints.from_pool(*phases, total)
     constraints.netting = True
@@ -1771,9 +1841,12 @@ def _excess_phase_is_importing(load: LoadContext, site: SiteContext) -> bool:
     out: this asks what the phase is doing WITHOUT the load in question.
     """
     mask = load.active_phases_mask or ""
+    # The forecast verdict's top-up is the battery's charge handed to the loads:
+    # it is part of what each phase would export without that charge.
+    flows = _reconstruct_signed_per_phase(site, -_forecast_topup_per_phase(site))
     return any(
         letter in mask and flow is not None and flow < 0
-        for letter, flow in zip("ABC", _reconstruct_signed_per_phase(site, 0.0))
+        for letter, flow in zip("ABC", flows)
     )
 
 
