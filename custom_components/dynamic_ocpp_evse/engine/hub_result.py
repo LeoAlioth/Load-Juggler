@@ -40,13 +40,11 @@ from ..calculations import (
     yields_to_excess,
 )
 from ..const import (
-    CONF_BASE_CONSUMPTION,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
     CONF_PHASES,
     CONF_TOTAL_ALLOCATED_CURRENT,
-    DEFAULT_BASE_CONSUMPTION,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
     DEFAULT_GRID_EXPORT_LIMIT,
@@ -58,6 +56,7 @@ from ..calculations.target_calculator import _sort_loads
 from ..calculations.utils import managed_phase_draws
 from ..helpers import get_entry_value
 from . import fleet
+from .readers import _read_base_consumption
 from .forecast_reader import (
     read_forecast_series,
     forecast_windows,
@@ -234,9 +233,7 @@ def _compute_forecast_advice(
             hub_runtime.pop(key, None)
         return None, {}
 
-    base_consumption = (
-        get_entry_value(hub_entry, CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION) or 0
-    )
+    base_consumption = _read_base_consumption(hass, hub_entry, hub_runtime)
     soc_floor = get_entry_value(
         hub_entry, CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
     )

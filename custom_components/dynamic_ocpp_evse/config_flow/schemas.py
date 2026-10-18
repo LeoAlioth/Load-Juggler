@@ -123,6 +123,7 @@ from ..const import (
     CONF_EARLY_ROOM_ENTITY_ID,
     CONF_EARLY_RATE_ENTITY_ID,
     CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
     CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -397,6 +398,10 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
             0, 50, 1, "%", mode="slider",
         ),
         _num(CONF_BASE_CONSUMPTION, defaults, DEFAULT_BASE_CONSUMPTION, 0, 10000, 50, "W"),
+        (
+            _optional_entity_field(CONF_BASE_CONSUMPTION_ENTITY_ID, defaults),
+            _entity_sel(hass, {None, "power"}, _POWER_UNITS, ["sensor", "input_number"]),
+        ),
         _num(
             CONF_FORECAST_SOC_FLOOR, defaults, DEFAULT_FORECAST_SOC_FLOOR,
             0, 90, 1, "%", mode="slider",
@@ -790,6 +795,7 @@ HUB_POLICY_KEYS = (
     CONF_BATTERY_SOC_HYSTERESIS,
     CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BASE_CONSUMPTION,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
     CONF_FORECAST_SOC_FLOOR,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
