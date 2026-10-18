@@ -422,6 +422,10 @@ MANUAL_ECHO_S = 120
 # this on is held to the planned energy spread over the time left - see
 # calculations/pacing.py. Off by default, so nothing changes until it is ticked.
 CONF_PACE_OVER_HORIZON = "pace_over_horizon"
+# Early start (calculations/forecast_excess.py): a kWh sensor saying how much more
+# this load can take today - Load Insights' "Room to absorb today". Optional;
+# without it the load counts as able to take what is planned.
+CONF_EARLY_ROOM_ENTITY_ID = "early_room_entity_id"
 DEFAULT_PACE_OVER_HORIZON = False
 
 # Per-load catch-up (owner 2026-10-17): a Solar Only / Solar Priority load may

@@ -168,6 +168,11 @@ class LoadContext:
     # power spend the planned energy. Default true: with the forecast verdict off
     # nothing reads it.
     early_start_ok: bool = True
+    # What the load can still absorb, for the group rule (forecast_excess.early_group):
+    # the tank's gap to its boost temperature (K) and the energy it can still take
+    # today (kWh, from its optional room sensor). None = not known, counts as able.
+    thermal_headroom_k: float | None = None
+    early_room_kwh: float | None = None
 
     # Device hardware current rating (A) - the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which

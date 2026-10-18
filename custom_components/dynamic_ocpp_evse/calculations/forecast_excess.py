@@ -15,6 +15,7 @@ off the SiteContext.
 
 from __future__ import annotations
 
+from ..const.common import DEVICE_TYPE_EVSE
 from ..const.hub import (
     FORECAST_EXCESS_SOURCE_FIXED,
     FORECAST_EXCESS_SOURCE_MIN,
@@ -54,6 +55,52 @@ def starts_early(planned_kwh, hours_left, load_min_w, was_on=False) -> bool:
         return True
     ratio = EARLY_START_RELEASE_RATIO if was_on else 1.0
     return planned_kwh * 1000.0 >= ratio * load_min_w * hours_left
+
+
+# A thermostat load this close to its boost temperature (K) cannot pull its
+# element for any length of time, and one with less than this much room left today
+# (kWh) has nothing to add: neither counts in the early-start group.
+EARLY_MIN_HEADROOM_K = 2.0
+EARLY_MIN_ROOM_KWH = 0.1
+
+
+# An EVSE is a taker only with a car that can charge: plugged in and not holding
+# the charge itself (SuspendedEV = the car said it wants nothing).
+EARLY_EVSE_READY = ("Preparing", "Charging", "SuspendedEVSE")
+
+
+def early_blocker(load):
+    """Why this load sits out the early-start group, or None when it may join.
+    Direct checks, no forecast: a car that is not plugged in or not asking, a
+    thermostat load already within ``EARLY_MIN_HEADROOM_K`` of its boost
+    temperature, a load with under ``EARLY_MIN_ROOM_KWH`` left to absorb today.
+    A reading that is not known (None) never blocks."""
+    if load.device_type == DEVICE_TYPE_EVSE and load.connector_status not in EARLY_EVSE_READY:
+        return "no car ready to charge"
+    if load.thermal_headroom_k is not None and load.thermal_headroom_k < EARLY_MIN_HEADROOM_K:
+        return "already near its boost temperature"
+    if load.early_room_kwh is not None and load.early_room_kwh < EARLY_MIN_ROOM_KWH:
+        return "no room left to absorb today"
+    return None
+
+
+def early_group(takers_w, rooms_kwh, planned_kwh, hours_left, cap_w=None, was_on=False):
+    """``(due, group_w, usable_kwh)`` for the loads that can take the early
+    verdict (owner, 2026-10-18: they share the planned energy, so they start
+    together at full power). ``takers_w``: each one's minimum power; ``rooms_kwh``:
+    what each can still absorb today (None = unlimited). The group's power is their
+    sum, capped by ``cap_w`` (the battery's charge rating) when given; the energy
+    it can use is the planned energy or the rooms' sum, whichever is less; it is
+    due when ``starts_early`` says that energy fits the hours left at that power.
+    """
+    if not takers_w:
+        return False, 0.0, 0.0
+    group_w = float(sum(takers_w))
+    if cap_w and cap_w > 0:
+        group_w = min(group_w, float(cap_w))
+    room = float("inf") if any(r is None for r in rooms_kwh) else float(sum(rooms_kwh))
+    usable = min(planned_kwh, room) if planned_kwh is not None else None
+    return starts_early(usable, hours_left, group_w, was_on), group_w, usable
 
 
 def forecast_excess_gate(source, soc_min, soc_target, fixed):
