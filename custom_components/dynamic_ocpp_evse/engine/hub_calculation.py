@@ -690,6 +690,15 @@ def _forecast_gate(hub_entry, site):
     )
 
 
+def _takes_early_verdict(load):
+    """Can this load take the forecast Excess verdict early at all? The Excess
+    behaviours, and every hot water tank - its boost setpoint reads the verdict
+    whatever its behaviour is at the moment."""
+    return load.device_type == DEVICE_TYPE_HOT_WATER_TANK or load.mode_behavior in (
+        BEHAVIOR_EXCESS, BEHAVIOR_BINARY_EXCESS
+    )
+
+
 def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     """Latch the forecast-driven Excess verdict and hand it to the calculator.
 
@@ -731,7 +740,8 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     for gone in set(latch) - {load.load_id for load in site.loads}:
         del latch[gone]
     hub_runtime["_excess_by_forecast_on"] = on
-    on = on and (not site.loads or any(load.early_start_ok for load in site.loads))
+    takers = [load for load in site.loads if _takes_early_verdict(load)]
+    on = on and (not takers or any(load.early_start_ok for load in takers))
     site.forecast_excess = on
     site.forecast_excess_pace_w = pace_watts(planned, hours_left) if on else 0.0
     if on:
@@ -742,7 +752,7 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     return on
 
 
-def _publish_early_start(hass, hub_runtime, site, planned, hours_left):
+def _publish_early_start(hass, hub_runtime, site, planned, hours_left, excess_on):
     """Tell each Excess-type load that is still waiting its turn for the forecast
     verdict when it will start and at what power (``early_start_note`` in its
     runtime, read by the status sensors): the latest start - ``hours_left`` less
@@ -760,12 +770,16 @@ def _publish_early_start(hass, hub_runtime, site, planned, hours_left):
             and hours_left is not None
             and not load.early_start_ok
             and watts > 0
-            and load.mode_behavior in (BEHAVIOR_EXCESS, BEHAVIOR_BINARY_EXCESS)
+            and _takes_early_verdict(load)
         ):
             wait_h = hours_left - planned * 1000.0 / watts
             at = dt_util.as_local(dt_util.utcnow() + timedelta(hours=max(wait_h, 0.0)))
             note = f"Early start {at:%H:%M} at {watts / 1000:.1f} kW"
         load_rt["early_start_note"] = note
+        # what a tank's setpoint reads (control/hot_water_tank.py): the surplus
+        # verdict is everyone's, the forecast one only once this load is due
+        load_rt["early_start_ok"] = load.early_start_ok
+        load_rt["excess_surplus_on"] = excess_on
 
 
 def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
@@ -1764,7 +1778,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
     full_hours = _read_full_hours(hass, hub_entry, hub_runtime, pacing)
     forecast_on = _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours)
-    _publish_early_start(hass, hub_runtime, site, pacing[0] if pacing else None, full_hours)
+    _publish_early_start(hass, hub_runtime, site, pacing[0] if pacing else None, full_hours, excess_on)
     _apply_catch_up(hub_runtime, hub_entry, site, pacing)
 
     _apply_household_figures(

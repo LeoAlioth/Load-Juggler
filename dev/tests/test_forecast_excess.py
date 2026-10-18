@@ -520,12 +520,14 @@ def test_a_waiting_load_says_when_it_will_start_and_at_what_power():
     site = _site()
     site.loads = [waiting, due, solar]
     hass = SimpleNamespace(data={DOMAIN: {"loads": {"tank": {}, "due": {}, "solar": {}}}})
-    _publish_early_start(hass, {"_excess_by_forecast_on": True}, site, 2.4, 8.0)
+    _publish_early_start(hass, {"_excess_by_forecast_on": True}, site, 2.4, 8.0, False)
     note = hass.data[DOMAIN]["loads"]["tank"]["early_start_note"]
     assert note.startswith("Early start ") and note.endswith(" at 1.9 kW")
     assert hass.data[DOMAIN]["loads"]["due"]["early_start_note"] is None      # already its turn
     assert hass.data[DOMAIN]["loads"]["solar"]["early_start_note"] is None    # not an Excess load
-    _publish_early_start(hass, {"_excess_by_forecast_on": False}, site, 2.4, 8.0)
+    assert hass.data[DOMAIN]["loads"]["tank"]["early_start_ok"] is False
+    assert hass.data[DOMAIN]["loads"]["due"]["early_start_ok"] is True
+    _publish_early_start(hass, {"_excess_by_forecast_on": False}, site, 2.4, 8.0, False)
     assert hass.data[DOMAIN]["loads"]["tank"]["early_start_note"] is None     # verdict off
     assert with_early_start("Off", {"early_start_note": note}) == f"Off - {note}"
     assert with_early_start("Off", {}) == "Off"
@@ -538,3 +540,19 @@ def test_a_load_not_due_does_not_start_on_the_top_up():
     topup_a = 2000 / 230
     assert _excess_permits(_tank(early_start_ok=True), site, topup_a) is True
     assert _excess_permits(_tank(early_start_ok=False), site, topup_a) is False
+
+
+def test_a_tank_at_its_normal_setpoint_still_gets_the_note_and_counts_as_a_taker():
+    # a Normal-mode tank is not an Excess BEHAVIOUR until it boosts, but its boost
+    # setpoint reads the verdict, so it waits its turn like one
+    from custom_components.dynamic_ocpp_evse.const import (
+        BEHAVIOR_FULL_POWER, DEVICE_TYPE_HOT_WATER_TANK, DOMAIN,
+    )
+
+    tank = _tank(early_start_ok=False)
+    tank.device_type, tank.mode_behavior = DEVICE_TYPE_HOT_WATER_TANK, BEHAVIOR_FULL_POWER
+    site = _site()
+    site.loads = [tank]
+    hass = SimpleNamespace(data={DOMAIN: {"loads": {"tank": {}}}})
+    _publish_early_start(hass, {"_excess_by_forecast_on": True}, site, 2.4, 8.0, False)
+    assert hass.data[DOMAIN]["loads"]["tank"]["early_start_note"].endswith(" at 1.9 kW")

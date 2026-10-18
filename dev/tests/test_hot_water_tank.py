@@ -496,6 +496,26 @@ def test_a_sustained_change_still_goes_through_after_the_hold():
     ]
 
 
+def _boost_written(early_start_ok, surplus_on=False):
+    hass, sensor = _kozolec_tank()
+    rt = hass.data[DOMAIN]["loads"]["tank"]
+    rt["early_start_ok"], rt["excess_surplus_on"] = early_start_ok, surplus_on
+    hub = _hub(soc=16, soc_min=10, soc_target=88, excess=True)
+    hub["forecast_excess"] = True        # the forecast verdict is why Excess is on
+    asyncio.run(send_hot_water_tank_command(sensor, 8.3, hub, 0.0))
+    return [d["temperature"] for _, s, d in hass.services.calls if s == "set_temperature"]
+
+
+def test_a_tank_boosts_on_the_forecast_verdict_only_when_it_is_its_turn():
+    """Kozolec, 18 Oct: one small load being due turned the hub's verdict on, and
+    the boiler, which heats the moment its setpoint says boost, followed at once.
+    Its setpoint now reads the per-load early start; the surplus verdict is still
+    everyone's."""
+    assert _boost_written(early_start_ok=True) == [75.0]
+    assert _boost_written(early_start_ok=False) == [42.0]
+    assert _boost_written(early_start_ok=False, surplus_on=True) == [75.0]
+
+
 def test_the_minimum_soc_floor_is_never_held():
     """The away setpoint below the battery's minimum SOC protects the house's
     reserve, not surplus: it acts on the cycle it happens, mid-hold or not."""
