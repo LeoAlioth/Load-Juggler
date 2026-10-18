@@ -93,3 +93,17 @@ def test_a_charger_reporting_every_few_seconds_is_judged_in_a_minute():
 def test_a_charger_reporting_every_quarter_hour_is_not_judged_on_a_stale_figure():
     assert _run(120.0, readout_gap_s=900.0) == [], "two minutes of disagreement is within one 15-minute readout"
     assert _run(1000.0, readout_gap_s=900.0), "outlasting a full readout gap, the disagreement is real"
+
+
+def test_a_charger_capped_far_below_its_command_is_flagged_at_any_update_frequency():
+    """The third site's go-e offered 10 A against a 16 A command: inside the old
+    RAMP_DOWN_RATE x update_frequency tolerance (6 A at 30 s), so never flagged."""
+    class Slow(FakeEntry):
+        options = {**FakeEntry.options, "update_frequency": 30}
+
+    hass = FakeHass({"sensor.charger_status_connector": FakeState("Charging"),
+                     "sensor.charger_current_offered": FakeState("10.0")})
+    sensor = FakeSensor(hass, 120.0)
+    sensor.config_entry = Slow()
+    asyncio.run(check_profile_compliance(sensor, 16.0, True))
+    assert hass.services.calls, "6 A off the command is a mismatch whatever the update frequency"
