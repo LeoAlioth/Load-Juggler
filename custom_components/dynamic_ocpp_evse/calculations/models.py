@@ -362,6 +362,11 @@ class SiteContext:
     pool_snapshot: dict = field(default_factory=dict)
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
+    # Per phase (A, B, C): an inverter feeds it but no grid CT reads it, on a site
+    # whose other phases do have CTs (a 3-phase inverter on a 1-phase grid
+    # connection). Its grid reading is a synthetic 0 A, so it has no grid
+    # headroom and the managed draws are not taken off it - off-grid, per phase.
+    gridless_phases: tuple = (False, False, False)
 
     # Loads at this site
     loads: list[LoadContext] = field(default_factory=list)

@@ -288,3 +288,32 @@ scenarios:
         # (4000 - 1000) / 230 = 13.04 A: the battery could give 4 kW, the
         # inverter only 3 kW beside the house.
         allocated: 13.0
+
+  - name: "inverter-capacity-sensor-alarm-floor"
+    description: "JUG-20: a capacity sensor dropped to 0 W reaches the engine as 1 W - the car that got 8.7 A under the 5 kW rating gets nothing, and the falsy 0 does not read as unconfigured"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 3000
+      solar_production_direct: true
+      phase_a_consumption: 13.04
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_max_power: 1
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 0

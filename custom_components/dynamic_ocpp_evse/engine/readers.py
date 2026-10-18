@@ -31,6 +31,7 @@ from ..const import (
     CONF_BATTERY_SOC_FULL,
     CONF_CHARGE_RATE_UNIT,
     CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_ENTITY_ID,
     CONF_INVERTER_INPUT_IS_GRID,
     CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
@@ -381,6 +382,7 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
             (f"Inverter {inv_name} input (L1)", CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID),
             (f"Inverter {inv_name} input (L2)", CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID),
             (f"Inverter {inv_name} input (L3)", CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID),
+            (f"Inverter {inv_name} capacity", CONF_INVERTER_MAX_POWER_ENTITY_ID),
             (f"Battery SOC ({inv_name})", CONF_BATTERY_SOC_ENTITY_ID),
             (f"Battery power ({inv_name})", CONF_BATTERY_POWER_ENTITY_ID),
         ))
@@ -579,6 +581,33 @@ def _read_enforced_charge_limit(hass, entry):
     return float(value) if is_number(value) else None
 
 
+# What a capacity sensor reading 0 stands for. The engine reads a falsy capacity as "no
+# capacity configured" (unconstrained), so a failsafe that drops the sensor to 0 W must
+# land on a figure that still constrains: 1 W allocates nothing.
+_CAPACITY_SENSOR_FLOOR_W = 1.0
+
+
+def _inverter_capacity(hass, entry, hub_runtime):
+    """The inverter's total capacity (W): the optional capacity sensor's live value, else
+    the fixed setting.
+
+    HELD while the sensor is unreadable - a brief unavailability must not release a
+    capacity an automation has just lowered on an over-temperature alarm - and the fixed
+    setting only until the sensor has first read in this hub's lifetime.
+    """
+    fixed = get_entry_value(entry, CONF_INVERTER_MAX_POWER, None)
+    entity = get_entry_value(entry, CONF_INVERTER_MAX_POWER_ENTITY_ID, None)
+    if not entity:
+        return fixed
+    held = hub_runtime.setdefault("_inverter_capacity_hold", {})
+    live = units.read_number(hass, entity, units.DOMAIN_WATTS)
+    if live is None:
+        live = held.get(entry.entry_id)
+    else:
+        held[entry.entry_id] = live
+    return fixed if live is None else max(live, _CAPACITY_SENSOR_FLOOR_W)
+
+
 def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):
     """Read one inverter entry into a FleetMember."""
     # Per-phase output entities (optional). Each configured phase is read
@@ -746,7 +775,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):
     return fleet.FleetMember(
         entry_id=entry.entry_id,
         name=get_entry_value(entry, CONF_NAME, entry.title),
-        max_power=get_entry_value(entry, CONF_INVERTER_MAX_POWER, None),
+        max_power=_inverter_capacity(hass, entry, hub_runtime),
         max_power_per_phase=get_entry_value(
             entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None
         ),
