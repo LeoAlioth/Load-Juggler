@@ -361,6 +361,9 @@ HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minut
 # nothing - and no reset changes that. Judged anyway, it was a profile reset
 # every three minutes and a hard reset every fourteen, for nine nights
 # (2026-09-29).
+# A charger offering more than this off the commanded limit is not following it
+# (A). Above the whole-amp rounding some chargers apply.
+COMPLIANCE_TOLERANCE = 1.0
 COMPLIANCE_IDLE_CONNECTOR_STATUSES = ("SuspendedEV", "SuspendedEVSE")
 # A charger fetching or installing firmware is not reset: FirmwareStatus as
 # the OCPP integration's "status firmware" sensor carries it...

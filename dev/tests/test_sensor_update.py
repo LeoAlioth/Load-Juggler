@@ -7260,27 +7260,3 @@ async def test_the_settle_dial_reaches_the_evse_builder(
 
     assert _build_evse_load(hass, mock_charger_entry, 230, "wallbox_1", 1, settle_seconds=5.0).draw_settled
     assert not _build_evse_load(hass, mock_charger_entry, 230, "wallbox_1", 1, settle_seconds=60.0).draw_settled
-
-
-async def test_the_ramp_down_dial_widens_the_compliance_tolerance(
-    hass,
-    mock_hub_entry,
-    charger_sensor,
-    mock_call,
-):
-    """compliance.py's tolerance is RAMP_DOWN_RATE x update_frequency. With the
-    hub's ramp-down dial at 5 A/s the tolerance at the 15 s default is 75 A,
-    so a charger offering 0 A against a 16 A command is NOT a mismatch - where
-    test_auto_reset_mismatch_counter_increments pins that it is by default."""
-    from custom_components.dynamic_ocpp_evse.const import CONF_FILTER_RAMP_DOWN_RATE
-
-    await _hub_with_options(hass, mock_hub_entry, **{CONF_FILTER_RAMP_DOWN_RATE: 5.0})
-
-    charger_sensor._last_commanded_limit = 16.0
-    hass.states.async_set(
-        "sensor.wallbox_1_current_offered", "0.0",
-        {"device_class": "current", "unit_of_measurement": "A"},
-    )
-    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
-
-    assert charger_sensor._mismatch_count == 0, charger_sensor._mismatch_count
