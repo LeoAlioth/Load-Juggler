@@ -1537,8 +1537,8 @@ def _margin_verdict(site: SiteContext) -> bool:
     return excess_margin(site, site.excess_hysteresis) >= 0
 
 
-def _excess_verdict(site: SiteContext) -> bool:
-    """Is Excess engaged this cycle? The plain verdict, no pool arithmetic.
+def _excess_verdict(site: SiteContext, load: LoadContext) -> bool:
+    """Is Excess engaged for this load this cycle? The plain verdict, no pool arithmetic.
 
     Same test ``_calculate_excess_available()`` gates the pool on, and the same
     one the engine's latch has already settled: by the time the calculator runs,
@@ -1549,9 +1549,12 @@ def _excess_verdict(site: SiteContext) -> bool:
 
     The forecast verdict (``site.forecast_excess``, the engine's latch - see
     calculations/forecast_excess.py) is OR-ed in: the day's sun will overfill the
-    battery, so every reader of this verdict behaves as if it were full.
+    battery, so every reader of this verdict behaves as if it were full - once it
+    is time for THIS load (``load.early_start_ok``: its minimum power can spend the
+    planned energy before the battery is next full). A tank that boosts on the
+    setpoint heats at once whatever the pool, so it must not be sent early.
     """
-    return site.forecast_excess or _margin_verdict(site)
+    return (site.forecast_excess and load.early_start_ok) or _margin_verdict(site)
 
 
 def _forecast_topup_w(site: SiteContext, absorbed: float, charge_off: float) -> float:
@@ -1881,7 +1884,7 @@ An Excess load is refused on a phase that is BUYING - starting or already
     """
     if _excess_phase_is_importing(load, site):
         return False
-    return pool > 0 or _excess_verdict(site)
+    return pool > 0 or _excess_verdict(site, load)
 
 
 def _source_limit(

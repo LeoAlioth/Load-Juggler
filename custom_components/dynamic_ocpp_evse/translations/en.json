@@ -82,6 +82,7 @@
                     "forecast_soc_floor": "Forecast SOC floor",
                     "pacing_energy_entity_id": "Excess energy (optional)",
                     "pacing_horizon_entity_id": "Sunset (optional)",
+                    "forecast_excess_full_entity_id": "Next full charge (optional)",
                     "forecast_excess_enabled": "Early start on forecast excess",
                     "forecast_excess_soc_source": "Minimum SOC for early start",
                     "forecast_excess_soc": "Fixed SOC for early start"
@@ -104,6 +105,7 @@
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus.",
                     "pacing_energy_entity_id": "kWh the paced loads may still use before sunset - for example a Load Insights planning sensor. Wh or kWh; a negative value counts as 0. Only loads with Pace until sunset ticked use it, and only together with the sunset sensor below.",
                     "pacing_horizon_entity_id": "Timestamp sensor for when that excess energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour.",
+                    "forecast_excess_full_entity_id": "Timestamp sensor for when the battery is next full by the forecast - for example Load Insights' Next full charge. With it, each load starts early only once the time left lets its minimum power use the excess energy before then (the excess energy divided by the load's minimum power is how many hours it needs). Not set: the sunset sensor above is used.",
                     "forecast_excess_enabled": "Starts Excess before the battery is full while the excess energy (above) is over 0 and the battery SOC is at or above the minimum SOC for early start (below) - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the excess energy divided by the hours left until sunset. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
                     "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
                     "forecast_excess_soc": "Used when the SOC source above is the fixed value."
@@ -222,7 +224,6 @@
                     "solar_grace_period": "Solar/Excess grace period",
                     "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time",
-                    "pace_over_horizon": "Pace until sunset",
                     "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
@@ -241,7 +242,6 @@
                     "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's excess energy over the time left until sunset instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
                     "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's excess energy, spread over the hours left until sunset, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC chosen for early start on the hub's Battery and forecast policy page (the minimum SOC if early start is off). Needs both sensors on that page; without them, or with this off, nothing changes."
                 }
             },
@@ -546,6 +546,7 @@
                     "forecast_soc_floor": "Forecast SOC floor",
                     "pacing_energy_entity_id": "Excess energy (optional)",
                     "pacing_horizon_entity_id": "Sunset (optional)",
+                    "forecast_excess_full_entity_id": "Next full charge (optional)",
                     "forecast_excess_enabled": "Early start on forecast excess",
                     "forecast_excess_soc_source": "Minimum SOC for early start",
                     "forecast_excess_soc": "Fixed SOC for early start"
@@ -557,6 +558,7 @@
                     "forecast_soc_floor": "The recommended max battery SOC never drops below this, however large the forecast surplus.",
                     "pacing_energy_entity_id": "kWh the paced loads may still use before sunset - for example a Load Insights planning sensor. Wh or kWh; a negative value counts as 0. Only loads with Pace until sunset ticked use it, and only together with the sunset sensor below.",
                     "pacing_horizon_entity_id": "Timestamp sensor for when that excess energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour.",
+                    "forecast_excess_full_entity_id": "Timestamp sensor for when the battery is next full by the forecast - for example Load Insights' Next full charge. With it, each load starts early only once the time left lets its minimum power use the excess energy before then (the excess energy divided by the load's minimum power is how many hours it needs). Not set: the sunset sensor above is used.",
                     "forecast_excess_enabled": "Starts Excess before the battery is full while the excess energy (above) is over 0 and the battery SOC is at or above the minimum SOC for early start (below) - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the excess energy divided by the hours left until sunset. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
                     "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
                     "forecast_excess_soc": "Used when the SOC source above is the fixed value."
@@ -706,7 +708,6 @@
                     "solar_grace_period": "Solar/Excess grace period",
                     "manual_override_timeout": "Manual override timeout",
                     "binary_min_off_time": "Minimum off time",
-                    "pace_over_horizon": "Pace until sunset",
                     "catch_up_enabled": "Catch up when the sun would overfill the battery"
                 },
                 "data_description": {
@@ -724,7 +725,6 @@
                     "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "plug_switch_entity_id": "The switch this integration turns on and off. Anything plugged in behind it is managed as one on/off load.",
-                    "pace_over_horizon": "Excess mode only. Spreads the hub's excess energy over the time left until sunset instead of using it as fast as possible: this load runs at no more than that energy divided by the hours left. A load cannot run below its minimum, so it stays off while that rate is under the minimum and starts again once it is 20 % above it. Needs both sensors on the hub's Battery and forecast policy page; without them, or with this off, nothing changes.",
                     "catch_up_enabled": "Solar Only and Solar Priority only. Lets this load start below the target battery SOC when it could not otherwise keep up: the hub's excess energy, spread over the hours left until sunset, is at least this load's maximum power, so waiting would let the battery overfill. It takes only the sun the battery is absorbing, never the battery's stored energy, and never below the SOC chosen for early start on the hub's Battery and forecast policy page (the minimum SOC if early start is off). Needs both sensors on that page; without them, or with this off, nothing changes."
                 }
             },

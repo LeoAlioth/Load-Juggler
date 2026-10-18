@@ -32,7 +32,7 @@ from ..const import (
     EVSE_RT_READOUT_WATCH,
     LOAD_RT_SUN_PROBE,
 )
-from ..control.status import hands_off_status
+from ..control.status import hands_off_status, with_early_start
 from ..helpers import get_entry_value
 from .. import units
 from .mixins import LoadEntityMixin, SiteCycleConsumerMixin
@@ -204,12 +204,16 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
     def _read_site_data(self):
         """Read charging status from hass.data (populated by the load processor)."""
         status = self._domain_bucket("load_status")
-        self._attr_native_value = status_with_sun_probe_note(
+        value = status_with_sun_probe_note(
             status_with_readout_note(
                 status.get(self.config_entry.entry_id, "Unknown"),
                 self._readout_watch(),
             ),
             self._runtime().get(LOAD_RT_SUN_PROBE),
+        )
+        # a charger that is not charging says when the forecast verdict starts it
+        self._attr_native_value = (
+            value if value.startswith("Charging") else with_early_start(value, self._runtime())
         )
 
 
@@ -265,9 +269,9 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
             elif switch_state.state == "on":
                 self._attr_native_value = "On"
             else:
-                self._attr_native_value = "Off"
+                self._attr_native_value = with_early_start("Off", self._runtime())
         self._attr_icon = self._PLUG_ICONS.get(
-            self._attr_native_value.split(" until ")[0], "mdi:power-plug-off-outline"
+            self._attr_native_value.split(" until ")[0].split(" - ")[0], "mdi:power-plug-off-outline"
         )
         # A restart, or the give-up, says so until the load draws again or
         # its permit goes away; hands off (Dynamic Control off), it is stale.
@@ -275,7 +279,7 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
         note = load_rt.get("plug_finish_status") or load_rt.get("plug_restart_status")
         if (
             note
-            and self._attr_native_value in ("On", "Off")
+            and self._attr_native_value.split(" - ")[0] in ("On", "Off")
             and load_rt.get("dynamic_control", True)
         ):
             self._attr_native_value = note
@@ -350,10 +354,10 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
         elif load_rt.get("station_charging"):
             self._attr_native_value = "Charging"
         else:
-            self._attr_native_value = "Idle"
+            self._attr_native_value = with_early_start("Idle", load_rt)
 
         self._attr_icon = self._STATION_ICONS.get(
-            self._attr_native_value.split(" until ")[0], "mdi:battery-unknown"
+            self._attr_native_value.split(" until ")[0].split(" - ")[0], "mdi:battery-unknown"
         )
         self._attrs = {
             "operating_mode": load_rt.get("operating_mode"),
@@ -450,13 +454,14 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
             # not managing the tank; the thermostat runs on its own.
             self._attr_native_value = hands_off_status(load_rt)
         elif not load_rt.get("tank_heating_permitted", True):
-            self._attr_native_value = "Waiting for Power"
+            self._attr_native_value = with_early_start("Waiting for Power", load_rt)
         else:
-            self._attr_native_value = {
+            state = {
                 "heating": "Heating",
                 "idle": "Idle",
                 "off": "Off",
             }.get(hvac_action, "Idle")
+            self._attr_native_value = state if state == "Heating" else with_early_start(state, load_rt)
 
         self._attrs = {
             "operating_mode": load_rt.get("operating_mode"),

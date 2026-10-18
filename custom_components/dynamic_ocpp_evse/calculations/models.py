@@ -162,6 +162,13 @@ class LoadContext:
     catch_up_enabled: bool = False
     catch_up_active: bool = False
 
+    # Early start (calculations/forecast_excess.py ``starts_early``): the engine's
+    # latched answer to "is it time for THIS load to take the forecast Excess
+    # verdict?" - true once the time left to the next full charge lets its minimum
+    # power spend the planned energy. Default true: with the forecast verdict off
+    # nothing reads it.
+    early_start_ok: bool = True
+
     # Device hardware current rating (A) - the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which
     # is separate from the set-power slider (the slider tracks the connected
