@@ -77,6 +77,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     INVERTER_RT_LAST_WRITE,
     CONF_SOC_LIMIT_ENTITY_IDS,
     CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
+    CONF_GRID_EXPORT_LIMIT_PER_PHASE,
+    CONF_PHASE_B_CURRENT_ENTITY_ID,
+    CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     INVERTER_RT_SOC_CONTROL_ENABLED,
     INPUT_STALE_TIMEOUT,
@@ -3483,7 +3486,7 @@ async def test_the_export_setpoint_never_goes_below_zero(hass):
 # reserve. A site that configures no ceiling source anchors at 100 as before.
 
 
-def _destination_hub(slug, base=300):
+def _destination_hub(slug, base=300, extra_options=None):
     """A forecast hub: the grid CT, the export limit and base consumption -
     clipping threshold 5300 W. The battery, its ceiling source and the
     forecast source belong to the inverter entry (``_destination_inverter``).
@@ -3505,6 +3508,7 @@ def _destination_hub(slug, base=300):
             CONF_GRID_EXPORT_LIMIT: 5000,
             CONF_BASE_CONSUMPTION: base,
             CONF_FORECAST_SOC_FLOOR: 30,
+            **(extra_options or {}),
         },
     )
 
@@ -3618,6 +3622,57 @@ async def test_forecast_max_soc_is_carved_below_the_configured_destination(hass)
     assert (
         dest_result["inverters"][inv_with.entry_id]["forecast_battery_max_soc"] == 85
     )
+
+
+async def test_an_asymmetric_inverter_that_passes_the_total_but_breaches_one_phase_is_clamped(hass):
+    """JUG-14: 4.6 kW out on phase A, B and C importing - total export 4.6 kW is under the
+    5 kW total limit (less the 100 W tolerance), yet phase A is over its 4 kW cap.
+    The curtailment test sees the wall only when the per-phase cap is configured."""
+    from unittest.mock import patch
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.calculations.calibration import (
+        export_is_clamped as real,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    extra = {
+        CONF_PHASE_B_CURRENT_ENTITY_ID: "sensor.dst_phase_b",
+        CONF_PHASE_C_CURRENT_ENTITY_ID: "sensor.dst_phase_c",
+    }
+    capped = _destination_hub(
+        "capped", extra_options={**extra, CONF_GRID_EXPORT_LIMIT_PER_PHASE: 4000}
+    )
+    plain = _destination_hub("uncapped", extra_options=extra)
+    inverters = [
+        _destination_inverter(hass, capped, "capped"),
+        _destination_inverter(hass, plain, "uncapped"),
+    ]
+    for entry in inverters:
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {capped.entry_id: {"loads": []}, plain.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70)
+    amps = {"device_class": "current", "unit_of_measurement": "A"}
+    hass.states.async_set("sensor.dst_phase_a", "-20.0", amps)  # 4600 W out
+    hass.states.async_set("sensor.dst_phase_b", "1.0", amps)
+    hass.states.async_set("sensor.dst_phase_c", "1.0", amps)
+
+    verdicts = {}
+    for hub, name in ((capped, "capped"), (plain, "uncapped")):
+        with freeze_time("2026-08-14 08:00:00+00:00"), patch(
+            "custom_components.dynamic_ocpp_evse.engine.hub_result.export_is_clamped",
+            wraps=real,
+        ) as spy:
+            run_hub_calculation(hass, hub)
+        kwargs = spy.call_args.kwargs
+        verdicts[name] = real(spy.call_args.args[0], spy.call_args.args[1], **kwargs)
+    assert verdicts == {"capped": True, "uncapped": False}
 
 
 async def test_the_charge_target_entity_is_the_destination_while_the_slot_is_dropped(hass):

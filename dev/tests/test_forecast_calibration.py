@@ -400,3 +400,29 @@ def test_battery_is_saturated_is_the_off_grid_curtailment_test():
     assert battery_is_saturated(1500.0, None, 70.0, 97.0) is True
     # A discharging pack is not saturated.
     assert battery_is_saturated(-800.0, 4000.0, 70.0, 97.0) is False
+
+
+def test_export_is_clamped_when_any_phase_sits_on_its_own_cap():
+    # Asymmetric inverter: 4.6 kW on one leg, the total (4.6 kW) well under
+    # a 13.5 kW limit - the total test passes, the per-phase one does not.
+    assert export_is_clamped(4600.0, 13500.0) is False
+    assert export_is_clamped(
+        4600.0, 13500.0, phase_export_w=(4600.0, 0.0, 0.0), phase_limit_w=4500.0
+    ) is True
+    # Every phase under its cap and the total under its limit: not clamped.
+    assert export_is_clamped(
+        4000.0, 13500.0, phase_export_w=(1500.0, 1300.0, 1200.0), phase_limit_w=4500.0
+    ) is False
+    # The total at its limit still counts with a per-phase cap set.
+    assert export_is_clamped(
+        13500.0, 13500.0, phase_export_w=(4500.0, 4500.0, 4500.0), phase_limit_w=9000.0
+    ) is True
+    # A per-phase cap alone (no total limit) is a wall of its own, 0 = unset.
+    assert export_is_clamped(
+        4600.0, 0, phase_export_w=(4600.0, 0.0, 0.0), phase_limit_w=4500.0
+    ) is True
+    assert export_is_clamped(
+        4600.0, 13500.0, phase_export_w=(4600.0, 0.0, 0.0), phase_limit_w=0
+    ) is False
+    # Unreadable export with only a per-phase cap configured: safe side.
+    assert export_is_clamped(None, 0, phase_limit_w=4500.0) is True

@@ -80,6 +80,7 @@
                     "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
                     "phase_voltage": "Phase voltage",
                     "grid_export_limit": "Grid export limit",
+                    "grid_export_limit_per_phase": "Grid export limit per phase (optional)",
                     "excess_trigger_margin": "Excess trigger margin",
                     "excess_hysteresis": "Excess hysteresis",
                     "site_update_frequency": "Site sensor refresh rate",
@@ -104,6 +105,7 @@
                     "max_import_power_entity_id": "Advanced - use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
+                    "grid_export_limit_per_phase": "Optional. A cap on what one phase may export, beside the total above - for an asymmetric inverter that can pass the total while one phase is over its own cap. Watts per phase; 0 = none. It only tells the forecast's learning that the inverter is curtailing (the total at its limit, or any phase at this one); it does not enable the forecast or move the Excess trigger.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages - off-grid, how far below the battery's maximum charge power. Inverters and battery BMSes hold just under their limit, so a trigger exactly at it would never fire.",
                     "excess_hysteresis": "How far the surplus may fall below the trigger before an engaged load releases. The trigger margin sets where Excess engages; this sets the band it holds through, so a load stays on instead of chattering while the surplus hovers at the trigger.",
                     "site_update_frequency": "How often grid sensor values are read. Does not affect how often charging commands are sent to loads.",
@@ -602,11 +604,13 @@
                 "description": "Export limit and tolerances.",
                 "data": {
                     "grid_export_limit": "Grid export limit",
+                    "grid_export_limit_per_phase": "Grid export limit per phase (optional)",
                     "excess_trigger_margin": "Excess trigger margin",
                     "excess_hysteresis": "Excess hysteresis"
                 },
                 "data_description": {
                     "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
+                    "grid_export_limit_per_phase": "Optional. A cap on what one phase may export, beside the total above - for an asymmetric inverter that can pass the total while one phase is over its own cap. Watts per phase; 0 = none. It only tells the forecast's learning that the inverter is curtailing (the total at its limit, or any phase at this one); it does not enable the forecast or move the Excess trigger.",
                     "excess_trigger_margin": "How far below the export limit Excess mode engages - off-grid, how far below the battery's maximum charge power. Inverters and battery BMSes hold just under their limit, so a trigger exactly at it would never fire.",
                     "excess_hysteresis": "How far the surplus may fall below the trigger before an engaged load releases. The trigger margin sets where Excess engages; this sets the band it holds through, so a load stays on instead of chattering while the surplus hovers at the trigger."
                 }
