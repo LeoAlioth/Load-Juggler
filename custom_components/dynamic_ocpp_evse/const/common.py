@@ -438,6 +438,7 @@ CONF_PACE_OVER_HORIZON = "pace_over_horizon"
 # this load can take today - Load Insights' "Room to absorb today". Optional;
 # without it the load counts as able to take what is planned.
 CONF_EARLY_ROOM_ENTITY_ID = "early_room_entity_id"
+CONF_EARLY_RATE_ENTITY_ID = "early_rate_entity_id"   # kW (or W) sensor: what the load really pulls (Load Insights' "Absorption rate")
 DEFAULT_PACE_OVER_HORIZON = False
 
 # Per-load catch-up (owner 2026-10-17): a Solar Only / Solar Priority load may

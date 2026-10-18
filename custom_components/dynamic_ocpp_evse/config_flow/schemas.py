@@ -116,6 +116,7 @@ from ..const import (
     CONF_PACE_OVER_HORIZON,
     CONF_CATCH_UP_ENABLED,
     CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
     CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
@@ -1094,7 +1095,22 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                             "entity": {
                                 "domain": ["sensor", "input_number"],
                                 "filter": [
-                                    {"domain": "sensor", "device_class": "energy"},
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "power"},
                                     {"domain": "input_number"},
                                 ],
                             }
@@ -1215,7 +1231,22 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                             "entity": {
                                 "domain": ["sensor", "input_number"],
                                 "filter": [
-                                    {"domain": "sensor", "device_class": "energy"},
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "power"},
                                     {"domain": "input_number"},
                                 ],
                             }
@@ -1302,7 +1333,22 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                             "entity": {
                                 "domain": ["sensor", "input_number"],
                                 "filter": [
-                                    {"domain": "sensor", "device_class": "energy"},
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "power"},
                                     {"domain": "input_number"},
                                 ],
                             }
