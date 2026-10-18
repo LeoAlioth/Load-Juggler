@@ -20,7 +20,7 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 
 **Versioning** - `manifest.json` carries the version being worked on, not the last one released: the first change after a release opens its `RELEASE_NOTES.md` section and bumps the manifest to match in the same commit, so every pre-release built from `dev` is named after the release it leads to (`2.1.4-dev.<timestamp>`, never `2.1.3-dev` after 2.1.3 shipped). A merge to `main` then releases that version (2026-09-25).
 
-**Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
+**Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 9); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 
@@ -86,7 +86,7 @@ custom_components/dynamic_ocpp_evse/
 │                                  #   latched per load); the engine sets LoadContext.catch_up_active
 │   ├── forecast.py                # Forecast-based charging advice
 │   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
-│   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
+│   └── utils.py                   # Utility functions (is_number, household_per_phase)
 ├── control/                       # Actuation layer (imports only const/helpers/units - never entities or engine)
 │   ├── ocpp.py                    # OCPP charging-profile service calls
 │   ├── compliance.py              # Charger compliance checks, escalating resets
@@ -197,7 +197,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Solar: solar_production_total (derived via `engine/fleet.py` `solar_total()`, or from dedicated entity), solar_is_derived, household_consumption_total
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
-- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
+- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, inverter_net_per_phase
 - Charging: distribution_mode, loads[], circuit_groups[]
 
 **LoadContext** (`calculations/models.py`) - Represents a single managed load (EVSE or smart plug):
