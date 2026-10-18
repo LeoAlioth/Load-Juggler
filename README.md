@@ -124,11 +124,11 @@ Configure inverter output entities on the inverter entry. The hub status sensor 
 
 ## Multiple Inverters
 
-A site can have several inverters - typically an older AC-coupled string inverter plus a newer hybrid with a battery. Each is added as its own **Inverter** entry linked to the hub (*Add Inverter / Home Battery* in the setup menu), carrying everything physically attached to it: capacity, per-phase limit, wiring topology, output sensors, its PV array (production sensor and solar forecast device) and optionally its battery (SOC/power sensors, charge/discharge limits, full-SOC, capacity).
+A site can have several inverters - typically an older AC-coupled string inverter plus a newer hybrid with a battery. Each is added as its own **Inverter** entry linked to the hub (*Add Inverter / Home Battery* in the setup menu), carrying everything physically attached to it: capacity, per-phase limit, output sensors, optional input sensors (or a tick that the grid flows through it), its PV array (production sensor and solar forecast device) and optionally its battery (SOC/power sensors, charge/discharge limits, full-SOC, capacity).
 
 The hub keeps only what is site-wide - the grid connection, export limit, base consumption, SOC hysteresis and forecast SOC floor - on a single **Hub Settings** page.
 
-The hub aggregates the whole fleet: capacities and outputs sum, solar production is each inverter's own sensor when it has one and derived from its output otherwise (a series inverter's output minus its own battery flow), and the hub's battery sensors are fleet aggregates - SOC is capacity-weighted across all batteries. Forecast devices from every inverter merge into one site forecast, because clipping is decided by the site-wide export limit that all arrays share. Excess mode counts each battery's charge capacity only while *that* battery is below *its* full SOC, and discharge capacity only for batteries above the site minimum. The SOC Target / SOC Min sliders and Allow Grid Charging switch remain hub-level site policy applied to the fleet.
+The hub aggregates the whole fleet: capacities and outputs sum, solar production is each inverter's own sensor when it has one and derived from its output otherwise (output less input less its own battery flow), and the hub's battery sensors are fleet aggregates - SOC is capacity-weighted across all batteries. Forecast devices from every inverter merge into one site forecast, because clipping is decided by the site-wide export limit that all arrays share. Excess mode counts each battery's charge capacity only while *that* battery is below *its* full SOC, and discharge capacity only for batteries above the site minimum. The SOC Target / SOC Min sliders and Allow Grid Charging switch remain hub-level site policy applied to the fleet.
 
 Each inverter device gets its own sensors: Solar Production, Battery SOC/Power, and - with the PV clipping forecast enabled - the **Recommended Battery Max SOC** and **Recommended Battery Charge Limit** for *its* battery (the fleet reservation split by capacity and charge rate).
 
@@ -250,7 +250,8 @@ One entry per inverter - everything physically attached to it, including its PV 
 | Inverter max power per phase | Per-phase inverter limit (W) | - |
 | Inverter supports asymmetric | Can inverter balance power across phases | Off |
 | Inverter output phase A/B/C entity | Per-phase inverter output sensors (optional) | - |
-| Wiring topology | Parallel (AC-coupled) or Series (hybrid with DC battery) | Parallel |
+| Inverter input phase A/B/C entity | What the inverter draws from the grid side, per phase (optional; a PV inverter has none) | none |
+| Input is the grid meter | The grid flows through this inverter, so its input is the grid meter reading (one inverter per hub) | off |
 | Solar production entity | This inverter's PV power sensor (optional - derived from its output otherwise) | - |
 | Solar forecast | Open-Meteo Solar Forecast device(s) for this inverter's array(s) | - |
 | Battery SOC entity | Battery state of charge sensor | - |
