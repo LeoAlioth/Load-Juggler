@@ -26,6 +26,7 @@ from ..const import (
     CHARGE_RATE_UNIT_WATTS,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
@@ -389,6 +390,7 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
             (f"Inverter {inv_name} capacity", CONF_INVERTER_MAX_POWER_ENTITY_ID),
             (f"Battery SOC ({inv_name})", CONF_BATTERY_SOC_ENTITY_ID),
             (f"Battery power ({inv_name})", CONF_BATTERY_POWER_ENTITY_ID),
+            (f"Battery charge target ({inv_name})", CONF_BATTERY_CHARGE_TARGET_ENTITY_ID),
         ))
 
     # Forecast sources fail open in the clipping maths - the status sensor is
@@ -762,7 +764,13 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):
     # (``recommended_charge_limit``). A floor whose value is NOT the target
     # (a cheap-tariff 20 %) simply leaves this source unset and anchors at
     # 100 % - that knob already existed, so the flag must not duplicate it.
-    soc_target_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
+    #
+    # A dedicated charge-target entity (JUG-21) takes precedence as the destination, so
+    # the ceiling source above keeps only its write-side job and the slots can be dropped
+    # (a cheap-tariff 20 %) without taking the destination with them.
+    soc_target_entity = get_entry_value(
+        entry, CONF_BATTERY_CHARGE_TARGET_ENTITY_ID, None
+    ) or get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
     soc_target = None
     if soc_target_entity:
         held = hub_runtime.setdefault("_soc_target_hold", {})

@@ -26,6 +26,7 @@ from ..const import (
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_NOMINAL_VOLTAGE,
@@ -586,6 +587,12 @@ def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[t
             _entity_sel(
                 hass, {None, "energy_storage"}, _ENERGY_UNITS, ["sensor", "input_number"]
             ),
+        ),
+        (
+            # Where this battery is meant to end the day: the clipping reserve is carved
+            # below it. Unlike the ceiling source on the control page it is never written.
+            _optional_entity_field(CONF_BATTERY_CHARGE_TARGET_ENTITY_ID, defaults),
+            selector({"entity": {"domain": ["input_number", "number", "sensor"]}}),
         ),
     ]
 
