@@ -20,9 +20,10 @@ from ..calculations import (
 )
 from ..calculations.catch_up import catch_up_verdict, max_power_w
 from ..calculations.forecast_excess import (
+    early_blocker,
+    early_group,
     forecast_excess_gate,
     forecast_excess_verdict,
-    starts_early,
 )
 from ..calculations.pacing import pace_watts
 from ..calculations.models import INACTIVE_STATUSES
@@ -728,19 +729,23 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
         planned,
         hub_runtime.get("_excess_by_forecast_on", False),
     )
-    latch = hub_runtime.setdefault("_early_start_on", {})
-    for load in site.loads:
-        load.early_start_ok = starts_early(
-            planned,
-            hours_left,
-            load.min_current * site.voltage * max(len(load.active_phases_mask or "A"), 1),
-            latch.get(load.load_id, False),
-        )
-        latch[load.load_id] = load.early_start_ok
-    for gone in set(latch) - {load.load_id for load in site.loads}:
-        del latch[gone]
-    hub_runtime["_excess_by_forecast_on"] = on
+    # The group rule (owner, 2026-10-18): every load that can take the verdict
+    # shares the planned energy and they start together at full power. Loads that
+    # fail a direct check (early_blocker) do not count and do not start.
     takers = [load for load in site.loads if _takes_early_verdict(load)]
+    group = [load for load in takers if early_blocker(load) is None]
+    due, _, _ = early_group(
+        [_load_watts(load, site) for load in group],
+        [load.early_room_kwh for load in group],
+        planned,
+        hours_left,
+        site.battery_max_charge_power,
+        hub_runtime.get("_early_group_on", False),
+    )
+    hub_runtime["_early_group_on"] = due
+    for load in site.loads:
+        load.early_start_ok = due and load in group if load in takers else True
+    hub_runtime["_excess_by_forecast_on"] = on
     on = on and (not takers or any(load.early_start_ok for load in takers))
     site.forecast_excess = on
     site.forecast_excess_pace_w = pace_watts(planned, hours_left) if on else 0.0
@@ -752,29 +757,40 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     return on
 
 
+def _load_watts(load, site):
+    return load.min_current * site.voltage * max(len(load.active_phases_mask or "A"), 1)
+
+
 def _publish_early_start(hass, hub_runtime, site, planned, hours_left, excess_on):
-    """Tell each Excess-type load that is still waiting its turn for the forecast
-    verdict when it will start and at what power (``early_start_note`` in its
-    runtime, read by the status sensors): the latest start - ``hours_left`` less
-    the hours its minimum power needs for ``planned`` kWh - and that minimum
-    power. None while the verdict is off or the load is due."""
+    """Tell each load that takes the forecast verdict what to expect
+    (``early_start_note`` in its runtime, read by the status sensors): while the
+    group waits, when it will start and at what power (the sum of the loads in it);
+    for a load that sits out, why. None while the verdict is off or the load is
+    already running early."""
     on = hub_runtime.get("_excess_by_forecast_on", False)
+    takers = [load for load in site.loads if _takes_early_verdict(load)]
+    group = [load for load in takers if early_blocker(load) is None]
+    group_w = sum(_load_watts(load, site) for load in group)
+    if site.battery_max_charge_power and group_w:
+        group_w = min(group_w, site.battery_max_charge_power)
+    room = None if any(load.early_room_kwh is None for load in group) else sum(
+        load.early_room_kwh for load in group
+    )
+    usable = planned if planned is None or room is None else min(planned, room)
     for load in site.loads:
         load_rt = hass.data[DOMAIN]["loads"].get(load.load_id)
         if load_rt is None:
             continue
         note = None
-        watts = load.min_current * site.voltage * max(len(load.active_phases_mask or "A"), 1)
-        if (
-            on
-            and hours_left is not None
-            and not load.early_start_ok
-            and watts > 0
-            and _takes_early_verdict(load)
-        ):
-            wait_h = hours_left - planned * 1000.0 / watts
-            at = dt_util.as_local(dt_util.utcnow() + timedelta(hours=max(wait_h, 0.0)))
-            note = f"Early start {at:%H:%M} at {watts / 1000:.1f} kW"
+        if on and hours_left is not None and load in takers:
+            blocker = early_blocker(load)
+            if blocker:
+                note = f"No early start: {blocker}"
+            elif not load.early_start_ok and group_w > 0 and usable is not None:
+                wait_h = hours_left - usable * 1000.0 / group_w
+                at = dt_util.as_local(dt_util.utcnow() + timedelta(hours=max(wait_h, 0.0)))
+                together = " (all loads)" if len(group) > 1 else ""
+                note = f"Early start {at:%H:%M} at {group_w / 1000:.1f} kW{together}"
         load_rt["early_start_note"] = note
         # what a tank's setpoint reads (control/hot_water_tank.py): the surplus
         # verdict is everyone's, the forecast one only once this load is due

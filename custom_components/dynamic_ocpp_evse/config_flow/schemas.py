@@ -115,6 +115,7 @@ from ..const import (
     CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_PACE_OVER_HORIZON,
     CONF_CATCH_UP_ENABLED,
+    CONF_EARLY_ROOM_ENTITY_ID,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
     CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
@@ -1086,6 +1087,21 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                     selector({"entity": {"domain": ["sensor", "input_number"]}}),
                 ),
                 (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "energy"},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
                     vol.Required(
                         CONF_PLUG_RESTART_ON_NO_DRAW,
                         default=defaults.get(
@@ -1192,6 +1208,21 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                     ),
                 ),
                 (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "energy"},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
                     # A water heater's own word for "off" (Vaillant: stand_by) -
                     # every integration has its own, so it is typed, not picked.
                     vol.Optional(
@@ -1262,6 +1293,21 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                 (
                     _optional_entity_field(CONF_STATION_AC_OUTPUT_ENTITY_ID, defaults),
                     selector({"entity": {"domain": ["sensor", "input_number"]}}),
+                ),
+                (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "energy"},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
                 ),
                 _num(
                     CONF_STATION_MIN_CHARGE_POWER, defaults, DEFAULT_STATION_MIN_CHARGE_POWER,

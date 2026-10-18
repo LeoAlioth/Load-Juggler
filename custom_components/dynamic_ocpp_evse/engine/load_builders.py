@@ -56,6 +56,7 @@ from ..const import (
     CONF_STATION_CHARGE_SPEED_ENTITY_ID,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
+    CONF_EARLY_ROOM_ENTITY_ID,
     CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_POWER_ENTITY_ID,
     CONF_TANK_OFF_OPERATION_MODE,
@@ -1334,6 +1335,10 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
             else 0.0
         ),
         draw_assumed=power_unreadable,
+        # the gap to the boost temperature: a tank near it cannot pull its element
+        thermal_headroom_k=(
+            boost_temp - current_temp if current_temp is not None and boost_temp else None
+        ),
         **_phase_draw(actual_draw_w, connected_to_phase, voltage),
     )
     _LOGGER.debug(
@@ -1425,6 +1430,13 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
                 get_entry_value(entry, CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED)
             )
         )
+
+        # What it can still absorb today (Load Insights' "Room to absorb today"),
+        # for the early-start group. Unset, unreadable or not a number: not known.
+        room_entity = get_entry_value(entry, CONF_EARLY_ROOM_ENTITY_ID, None)
+        if room_entity:
+            room = _read_entity(hass, room_entity, None, unit=units.DOMAIN_KWH)
+            load.early_room_kwh = None if room is _UNAVAILABLE else float(room)
 
         site.loads.append(load)
 

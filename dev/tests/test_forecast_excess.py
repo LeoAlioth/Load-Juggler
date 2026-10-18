@@ -14,6 +14,8 @@ import pytest
 
 from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
     FORECAST_EXCESS_MIN_KWH,
+    early_blocker,
+    early_group,
     forecast_excess_gate,
     forecast_excess_verdict,
     starts_early,
@@ -480,7 +482,45 @@ def test_a_load_not_yet_due_does_not_take_the_forecast_verdict():
     assert _excess_permits(_tank(early_start_ok=False), site, 0.0) is False
 
 
-def test_the_engine_sends_each_load_when_its_own_minimum_can_use_the_energy():
+def test_early_group_shares_the_energy_and_starts_together_at_full_power():
+    # boiler 1.9 kW + 300 W load: 2.2 kW together; 16.1 kWh fits 7.3 h of that
+    assert early_group([1900, 300], [None, None], 16.1, 8.0) == (False, 2200.0, 16.1)
+    due, group_w, usable = early_group([1900, 300], [None, None], 16.1, 7.0)
+    assert (due, group_w, usable) == (True, 2200.0, 16.1)
+    # the group never plans more than the rooms can take, nor more power than the charge rating
+    assert early_group([1900, 300], [1.0, 0.5], 16.1, 7.0)[2] == 1.5
+    assert early_group([1900, 300], [None, 0.5], 16.1, 7.0)[2] == 16.1
+    assert early_group([1900, 1900], [None, None], 16.1, 7.0, cap_w=3000)[1] == 3000.0
+    assert early_group([], [], 16.1, 7.0) == (False, 0.0, 0.0)
+    # inside its band a running group holds
+    assert early_group([2200], [None], 16.1, 7.5, was_on=True)[0] is True
+
+
+def test_early_blocker_names_why_a_load_sits_out():
+    from custom_components.dynamic_ocpp_evse.const import DEVICE_TYPE_EVSE, DEVICE_TYPE_HOT_WATER_TANK
+
+    ev = LoadContext(load_id="ev", entity_id="ev", min_current=6, max_current=16, phases=1,
+                     device_type=DEVICE_TYPE_EVSE, connector_status="Available")
+    assert early_blocker(ev) is not None                      # nothing plugged in
+    for status in ("SuspendedEV", "Unavailable", "Faulted", "Finishing"):
+        ev.connector_status = status
+        assert early_blocker(ev) is not None
+    for status in ("Preparing", "Charging", "SuspendedEVSE"):
+        ev.connector_status = status
+        assert early_blocker(ev) is None
+    tank = _tank(device_type=DEVICE_TYPE_HOT_WATER_TANK)
+    assert early_blocker(tank) is None                        # nothing known: counts as able
+    tank.thermal_headroom_k = 1.5
+    assert early_blocker(tank) is not None
+    tank.thermal_headroom_k = 12.0
+    assert early_blocker(tank) is None
+    tank.early_room_kwh = 0.05
+    assert early_blocker(tank) is not None
+    tank.early_room_kwh = 3.0
+    assert early_blocker(tank) is None
+
+
+def test_the_engine_starts_every_taker_together_when_the_group_is_due():
     entry = _entry(**{CONF_FORECAST_EXCESS_ENABLED: True})
     boiler = _tank()
     small = LoadContext(
@@ -488,26 +528,52 @@ def test_the_engine_sends_each_load_when_its_own_minimum_can_use_the_energy():
         mode_behavior=BEHAVIOR_BINARY_EXCESS, active_phases_mask="A",
     )
 
-    def run(planned, hours, loads):
+    def run(planned, hours, loads, runtime=None):
         site = _site()
         site.battery_soc = 85.0
         site.loads = loads
-        on = _apply_forecast_excess({}, entry, site, (planned, 8.0), hours)
+        runtime = {} if runtime is None else runtime
+        on = _apply_forecast_excess(runtime, entry, site, (planned, 8.0), hours)
         return on, site
 
-    # midnight: 16.1 kWh, 15 h to full - only a 300 W load fits yet
+    # midnight: 16.1 kWh, 15 h to full - 2.3 kW together, nowhere near
     on, site = run(16.1, 15.0, [boiler, small])
-    assert (boiler.early_start_ok, small.early_start_ok) == (False, True)
+    assert (boiler.early_start_ok, small.early_start_ok) == (False, False)
+    assert on is False
+    # 7 h before full both go at once
+    on, site = run(16.1, 7.0, [boiler, small])
+    assert (boiler.early_start_ok, small.early_start_ok) == (True, True)
     assert on is True and site.forecast_excess is True
-    # 8.4 h before full the boiler joins
-    run(16.1, 8.4, [boiler, small])
-    assert boiler.early_start_ok is True
-    # today: 2.4 kWh, 8 h to full - the boiler waits
+    # today: 2.4 kWh, 8 h to full - the group waits
     run(2.4, 8.0, [boiler, small])
-    assert (boiler.early_start_ok, small.early_start_ok) == (False, True)
+    assert (boiler.early_start_ok, small.early_start_ok) == (False, False)
+    # a load with no room left drops out of the group: the others carry on alone
+    small.early_room_kwh = 0.0
+    run(16.1, 8.4, [boiler, small])
+    assert (boiler.early_start_ok, small.early_start_ok) == (True, False)
     # the boiler alone, not due: no site verdict at all, so no pool top-up either
+    boiler.early_room_kwh = None
     on, site = run(2.4, 8.0, [boiler])
     assert on is False and site.forecast_excess is False and site.forecast_excess_pace_w == 0.0
+
+
+def test_a_blocked_load_says_why_and_the_group_says_when_and_how_much():
+    from custom_components.dynamic_ocpp_evse.const import DOMAIN
+
+    entry = _entry(**{CONF_FORECAST_EXCESS_ENABLED: True})
+    boiler, other, full = _tank(), _tank(), _tank(thermal_headroom_k=0.5)
+    other.load_id, full.load_id = "other", "full"
+    runtime = {}
+    site = _site()
+    site.battery_soc = 85.0
+    site.loads = [boiler, other, full]
+    _apply_forecast_excess(runtime, entry, site, (16.1, 8.0), 15.0)
+    hass = SimpleNamespace(data={DOMAIN: {"loads": {"tank": {}, "other": {}, "full": {}}}})
+    _publish_early_start(hass, runtime, site, 16.1, 15.0, False)
+    note = hass.data[DOMAIN]["loads"]["tank"]["early_start_note"]
+    assert note.startswith("Early start ") and note.endswith(" at 3.8 kW (all loads)")
+    assert hass.data[DOMAIN]["loads"]["other"]["early_start_note"] == note
+    assert "boost temperature" in hass.data[DOMAIN]["loads"]["full"]["early_start_note"]
 
 
 def test_a_waiting_load_says_when_it_will_start_and_at_what_power():
@@ -522,7 +588,7 @@ def test_a_waiting_load_says_when_it_will_start_and_at_what_power():
     hass = SimpleNamespace(data={DOMAIN: {"loads": {"tank": {}, "due": {}, "solar": {}}}})
     _publish_early_start(hass, {"_excess_by_forecast_on": True}, site, 2.4, 8.0, False)
     note = hass.data[DOMAIN]["loads"]["tank"]["early_start_note"]
-    assert note.startswith("Early start ") and note.endswith(" at 1.9 kW")
+    assert note.startswith("Early start ") and " at 3.8 kW" in note
     assert hass.data[DOMAIN]["loads"]["due"]["early_start_note"] is None      # already its turn
     assert hass.data[DOMAIN]["loads"]["solar"]["early_start_note"] is None    # not an Excess load
     assert hass.data[DOMAIN]["loads"]["tank"]["early_start_ok"] is False
