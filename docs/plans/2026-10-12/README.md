@@ -34,7 +34,7 @@ The TODO entries carry the numbers (`JUG-n` in Load Juggler's `dev/TODO.md`, `IN
 | 2 | li-2 slicing invariance | not started | INS-13 |
 | 3 | li-1 daily repair | repair shipped (c689283); re-bench, tests, docs open | INS-14 |
 | 4 | li-3 temperature evidence | not started (`MIN_HOURS = 336` is still the rule) | INS-15 |
-| 5 | li-4 house from parts | Part A built 2026-10-17 (2e5ca5f); Part B (Kozolec helper) open, may be superseded by the planning sensors | INS-16, INS-4 |
+| 5 | li-4 house from parts | Part A built 2026-10-17 (2e5ca5f); Part B (Kozolec helper) superseded: the helpers were replaced by the planning sensors 2026-10-17 | - |
 | 6 | li-5 running markdown | not started | INS-17 |
 | 7 | lj-1 immediate cuts | prototyped on a scratch copy, not in the repo | JUG-2 |
 | 8 | lj-7 tank flapping | code DONE 2026-10-18 (db2d02d, with the owner's review); third-site check open | JUG-4 |
