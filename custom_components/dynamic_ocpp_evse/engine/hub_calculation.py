@@ -798,7 +798,7 @@ def _publish_early_start(hass, hub_runtime, site, planned, hours_left, excess_on
         load_rt["excess_surplus_on"] = excess_on
 
 
-def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
+def _apply_catch_up(hub_runtime, hub_entry, site, pacing, hours_left):
     """Latch each catch-up load's verdict (calculations/catch_up.py) onto
     ``load.catch_up_active``.
 
@@ -806,11 +806,15 @@ def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
     same latched minimum / target values, or the fixed one) while the hub option
     ``forecast_excess_enabled`` is on; with it off, the latched minimum SOC - a
     Solar load never takes the battery below its reserve. ``pacing`` is
-    ``readers._read_pacing``'s pair, None when unreadable (feature off). One bit
-    per load id lives in ``hub_runtime``, like the Excess latches'.
+    ``readers._read_pacing``'s pair, None when unreadable (feature off); only its
+    energy is used - ``hours_left`` is the time to the battery's next full charge
+    (``readers._read_full_hours``, the pacing horizon's while that entity is not
+    configured; None switches the feature off), the same horizon the early start
+    counts back from. One bit per load id lives in ``hub_runtime``, like the
+    Excess latches'.
     """
     latch = hub_runtime.setdefault("_catch_up_on", {})
-    planned, hours_left = pacing if pacing is not None else (None, None)
+    planned = pacing[0] if pacing is not None else None
     if get_entry_value(
         hub_entry, CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
     ):
@@ -1795,7 +1799,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     full_hours = _read_full_hours(hass, hub_entry, hub_runtime, pacing)
     forecast_on = _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours)
     _publish_early_start(hass, hub_runtime, site, pacing[0] if pacing else None, full_hours, excess_on)
-    _apply_catch_up(hub_runtime, hub_entry, site, pacing)
+    _apply_catch_up(hub_runtime, hub_entry, site, pacing, full_hours)
 
     _apply_household_figures(
         site,
