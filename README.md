@@ -238,6 +238,7 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Solar/Excess grace period | How long Solar/Excess loads keep running at minimum when conditions lapse (min) | 5 |
 | Battery SOC hysteresis | SOC change before triggering mode switches (%) | 3% |
 | Base house consumption | Typical daytime minimum draw (PV clipping forecast) (W) | 300W |
+| Base consumption sensor | Optional sensor (W/kW) read each cycle instead of *Base house consumption*; Load Insights publishes the daytime minimum of its whole-house forecast | none |
 | Forecast SOC floor | Lowest max-SOC the forecast may recommend (%) | 30% |
 
 #### Inverter Settings

@@ -21,6 +21,8 @@ from homeassistant.util import dt as dt_util
 
 from ..calculations import PhaseValues
 from ..const import (
+    CONF_BASE_CONSUMPTION,
+    DEFAULT_BASE_CONSUMPTION,
     CHARGE_RATE_UNIT_WATTS,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
@@ -45,6 +47,7 @@ from ..const import (
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_NAME,
     CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
     CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
@@ -365,6 +368,7 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
         ("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID),
         # Pacing falls back to unpaced when either is unreadable - the very
         # moment a paced load starts racing, so the status says why.
+        ("Base consumption sensor", CONF_BASE_CONSUMPTION_ENTITY_ID),
         ("Pacing energy sensor", CONF_PACING_ENERGY_ENTITY_ID),
         ("Pacing horizon sensor", CONF_PACING_HORIZON_ENTITY_ID),
         ("Next full charge sensor", CONF_FORECAST_EXCESS_FULL_ENTITY_ID),
@@ -606,6 +610,27 @@ def _inverter_capacity(hass, entry, hub_runtime):
     else:
         held[entry.entry_id] = live
     return fixed if live is None else max(live, _CAPACITY_SENSOR_FLOOR_W)
+
+
+def _read_base_consumption(hass, hub_entry, hub_runtime):
+    """The house's base draw (W) the clipping forecast uses: the optional sensor's live
+    value, else the typed setting.
+
+    HELD while the sensor is unreadable, and the typed figure only until it has first read
+    in this hub's lifetime (the same shape as ``_inverter_capacity``).
+    """
+    typed = (
+        get_entry_value(hub_entry, CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION) or 0
+    )
+    entity = get_entry_value(hub_entry, CONF_BASE_CONSUMPTION_ENTITY_ID, None)
+    if not entity:
+        return typed
+    live = units.read_number(hass, entity, units.DOMAIN_WATTS)
+    if live is None:
+        live = hub_runtime.get("_base_consumption_hold")
+    else:
+        hub_runtime["_base_consumption_hold"] = live
+    return typed if live is None else max(live, 0.0)
 
 
 def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):

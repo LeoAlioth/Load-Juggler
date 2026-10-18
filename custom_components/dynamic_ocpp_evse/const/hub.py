@@ -106,6 +106,9 @@ CONF_SOLAR_FORECAST_ENTITY_IDS = "solar_forecast_entity_ids"  # LEGACY - direct
 # sensor list from the first dev iteration; read nowhere, only stripped from a
 # hub by the one-time import.
 CONF_BASE_CONSUMPTION = "base_consumption"  # W - typical daytime minimum house draw
+# Optional sensor (W/kW or input_number) read each cycle in place of the typed figure above - Load
+# Insights publishes the daytime minimum of its whole-house forecast.
+CONF_BASE_CONSUMPTION_ENTITY_ID = "base_consumption_entity_id"
 CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"  # kWh the SOC percentage spans; 0 = off
 CONF_BATTERY_CAPACITY_ENTITY_ID = "battery_capacity_entity_id"  # Wh/kWh sensor; overrides the number while it reads
 CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % - never recommend a ceiling below this
