@@ -12,6 +12,7 @@ numeric measured quantity.
 """
 
 import logging
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -217,7 +218,7 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
         )
 
 
-class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
+class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor, RestoreEntity):
     """Status sensor for a smart plug - on/off plus error states.
 
     A plug has no connector to plug a car into, so the EVSE charging-status
@@ -255,6 +256,32 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
         (control/plug.py): restarts in a row without the load drawing."""
         count = self._runtime().get("plug_restart_count")
         return {} if count is None else {"restart_count": count}
+
+    @property
+    def extra_restore_state_data(self):
+        """The restart count and the give-up, kept over a restart of Home Assistant: they
+        live in the runtime, and a plug with no car behind it was otherwise power-cycled
+        three more times after every restart (JUG-27)."""
+        rt = self._runtime()
+        count = rt.get("plug_restart_count")
+        if not count:
+            return None
+        return RestoredExtraData({"count": count, "gave_up": bool(rt.get("_plug_restart_gave_up"))})
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_extra_data()
+        self._restore(last.as_dict() if last is not None else {})
+
+    def _restore(self, saved: dict) -> None:
+        count = saved.get("count")
+        if not count:
+            return
+        rt = self._runtime()
+        rt["plug_restart_count"] = int(count)
+        if saved.get("gave_up"):
+            rt["_plug_restart_gave_up"] = True
+            rt["plug_restart_status"] = f"No draw (gave up after {int(count)} restarts)"
 
     def _read_site_data(self):
         """Reflect the smart plug's switch state, surfacing error states."""

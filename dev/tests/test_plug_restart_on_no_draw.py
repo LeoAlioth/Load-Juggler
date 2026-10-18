@@ -197,3 +197,25 @@ def test_a_permit_that_goes_away_and_returns_starts_over_after_a_give_up():
     assert restarts[:3] == [600, 2400, 4200]
     assert restarts[3] > 7800
     assert rt["plug_restart_count"] >= 1
+
+
+def test_the_count_and_the_give_up_survive_a_restart_of_home_assistant():
+    # Gave up after 3 restarts, then HA restarts: a fresh runtime must not start counting again.
+    _, rt = _run(6 * 3600, power=lambda t: 0.0)
+    assert rt["plug_restart_count"] == 3
+    sensor = LoadJugglerPlugStatusSensor.__new__(LoadJugglerPlugStatusSensor)
+    sensor._runtime = lambda: rt
+    saved = sensor.extra_restore_state_data.as_dict()
+    assert saved == {"count": 3, "gave_up": True}
+
+    fresh = {}
+    sensor._runtime = lambda: fresh
+    sensor._restore(saved)
+    assert fresh == {
+        "plug_restart_count": 3,
+        "_plug_restart_gave_up": True,
+        "plug_restart_status": "No draw (gave up after 3 restarts)",
+    }
+    # Nothing to keep while the plug is fine.
+    sensor._runtime = lambda: {}
+    assert sensor.extra_restore_state_data is None
