@@ -529,3 +529,12 @@ def test_a_waiting_load_says_when_it_will_start_and_at_what_power():
     assert hass.data[DOMAIN]["loads"]["tank"]["early_start_note"] is None     # verdict off
     assert with_early_start("Off", {"early_start_note": note}) == f"Off - {note}"
     assert with_early_start("Off", {}) == "Off"
+
+
+def test_a_load_not_due_does_not_start_on_the_top_up():
+    # 3 kW into the battery, 2 kW of it topped up into the pool: the boiler that is
+    # not due must not read that as its surplus, one that is due does
+    site = _site(3000, pace_w=2000)
+    topup_a = 2000 / 230
+    assert _excess_permits(_tank(early_start_ok=True), site, topup_a) is True
+    assert _excess_permits(_tank(early_start_ok=False), site, topup_a) is False

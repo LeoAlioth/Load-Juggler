@@ -1884,6 +1884,11 @@ An Excess load is refused on a phase that is BUYING - starting or already
     """
     if _excess_phase_is_importing(load, site):
         return False
+    if site.forecast_excess and not load.early_start_ok:
+        # not this load's turn yet: the battery's charge handed to the loads
+        # (the forecast top-up) is not its pool either
+        _, absorbed, charge_off = excess_figures(site, 0.0)
+        pool = max(0.0, pool - _forecast_topup_w(site, absorbed, charge_off) / site.voltage)
     return pool > 0 or _excess_verdict(site, load)
 
 
