@@ -248,6 +248,15 @@ async def send_hot_water_tank_command(
         DEFAULT_HEATING_ELEMENT_POWER,
     )
 
+    # The forecast verdict is the hub's, but a tank boosts on its own setpoint and
+    # heats at once, so it takes it only when it is this tank's turn (the engine's
+    # per-load early start); the surplus verdict is everyone's.
+    if (
+        hub_data.get("forecast_excess")
+        and not load_rt.get("excess_surplus_on")
+        and not load_rt.get("early_start_ok", True)
+    ):
+        hub_data = {**hub_data, "excess_available": False}
     _, wanted = resolve_tank_setpoint(
         mode, away, normal, boost, element_power, hub_data
     )
