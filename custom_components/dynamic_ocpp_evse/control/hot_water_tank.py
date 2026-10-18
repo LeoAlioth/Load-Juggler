@@ -305,6 +305,11 @@ async def send_hot_water_tank_command(
     # while its temperature, a MELCloud poll late, still reads at the floor;
     # denied, it goes off. Set higher (a boost being withdrawn), its heating
     # is for that target, and lowering it to the floor ends it.
+    #
+    # A denied tank whose device is idle at the floor target stays there
+    # (the third site's MELCloud heat pump, 11 Nov: idle at 39-41 C under
+    # 42 C, permit flickering 0/1.3 A every few seconds with two cars
+    # charging - 72 setpoint writes a day, 42 <-> 40 every ~5 min).
     target, at_floor = label, False
     if not heating_permitted:
         floor = (
@@ -313,13 +318,21 @@ async def send_hot_water_tank_command(
             else "normal"
         )
         try:
-            at_floor = (
+            floor_t = settings[floor]
+            device_t = climate_state.attributes.get("temperature")
+            hvac = load_rt.get("tank_hvac_action")
+            idle_there = (
+                hvac == "idle"
+                and device_t is not None
+                and abs(float(device_t) - floor_t) < 0.05
+            )
+            at_floor = idle_there or (
                 float(climate_state.attributes["current_temperature"])
-                >= settings[floor]
+                >= floor_t
                 and not (
-                    load_rt.get("tank_hvac_action") == "heating"
-                    and float(climate_state.attributes["temperature"])
-                    <= settings[floor] + 0.05
+                    hvac == "heating"
+                    and device_t is not None
+                    and float(device_t) <= floor_t + 0.05
                 )
             )
         except (AttributeError, KeyError, TypeError, ValueError):
