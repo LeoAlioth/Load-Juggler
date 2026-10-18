@@ -38,7 +38,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_max_power: 5000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -70,7 +69,7 @@ scenarios:
       battery_max_discharge_power: 5000
       inverter_max_power: 5000
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: grid}]
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -104,7 +103,7 @@ scenarios:
       battery_max_discharge_power: 5000
       inverter_max_power: 5000
       inverter_output_sensors: true
-      wiring_topology: parallel
+      inverters: [{kind: pv}, {kind: battery}]
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -133,7 +132,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_max_power: 5000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -183,7 +181,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_max_power: 5000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"

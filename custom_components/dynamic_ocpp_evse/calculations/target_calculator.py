@@ -39,7 +39,6 @@ from ..const import (
     EXCESS_URGENCY_TIER,
     LEG_DRAWING_CURRENT,
     OPTIMIZED_START_MARGIN,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -676,19 +675,19 @@ def _house_on_inverters(site: SiteContext, flow: float) -> float:
     (``_calculate_inverter_limit``). ``flow`` is the battery's signed flow in A
     (+ discharging), 0 when unread.
 
-    - Off-grid, and behind a SERIES hybrid read through its output sensors:
-      the house the output sensors see (``compute_household_per_phase``:
-      output less our draws), less what the grid carries of it on each phase.
-      Not "solar + flow − export": a series output sensor reads the load port,
-      so solar derived from it carries the grid passing through the hybrid
-      (and misses what leaves by the grid port) - 5.4 kW of house on a 3 kW
-      one at a 2 kW allowance, which cut the car to 0 and back
+    - Off-grid, or any site with a per-phase household (read through the
+      inverters' output and input sensors, ``household_per_phase``): the
+      household, less what the grid carries of it on each phase. Not "solar +
+      flow − export": an output sensor can read a load port, so solar derived
+      from it carries the grid passing through a hybrid (and misses what
+      leaves by the grid port) - 5.4 kW of house on a 3 kW one at a 2 kW
+      allowance, which cut the car to 0 and back
       (dev/tests/scenarios/features/test_inverter_rating_cap.yaml).
     - Everywhere else, the inverter side's own balance: solar + battery flow
       is what the inverters supply, and what does not leave as export (our
-      draws handed back included) is the house's. Exact with a solar sensor or
-      a parallel inverter's output sensor; with neither, the sun the house
-      uses itself never reaches a meter and only the battery's share is seen.
+      draws handed back included) is the house's. Exact with a solar sensor;
+      with none, the sun the house uses itself never reaches a meter and only
+      the battery's share is seen.
       The solar there is ``sun_power``, not the engine's figure: that one
       carries the discharge feeding our own loads, so the house came out as
       the whole discharge - at night a car the battery carried at 17.4 A was
@@ -697,10 +696,7 @@ def _house_on_inverters(site: SiteContext, flow: float) -> float:
       (dev/tests/test_gridtied_inverter_pool.py).
     """
     consumption = (site.consumption.a, site.consumption.b, site.consumption.c)
-    if site.is_off_grid or (
-        site.household_consumption is not None
-        and site.wiring_topology == WIRING_TOPOLOGY_SERIES
-    ):
+    if site.is_off_grid or site.household_consumption is not None:
         return sum(
             max(0.0, house - grid)
             for house, grid in zip(_get_household_per_phase(site), consumption)
@@ -1018,7 +1014,7 @@ def _calculate_solar_surplus(
         actual_discharge = max(0, site.battery_power or 0) / site.voltage
         if (
             site.household_consumption_total is not None
-            or site.inverter_output_per_phase is not None
+            or site.inverter_net_per_phase is not None
         ):
             # Accurate: solar_production_total comes from a dedicated solar
             # entity or was derived from the inverter output sensors, so the

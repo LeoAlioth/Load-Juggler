@@ -387,7 +387,7 @@ scenarios:
       inverter_max_power_per_phase: 12000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: parallel
+      inverters: [{kind: hybrid, input: none}]
       forecast_excess: {energy_kwh: 3.45, hours_left: 2}
     loads:
       - entity_id: "load_1"
