@@ -22,6 +22,14 @@ CONF_INVERTER_SUPPORTS_ASYMMETRIC = "inverter_supports_asymmetric"  # Can balanc
 CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID = "inverter_output_phase_a_entity_id"  # Per-phase inverter output sensor
 CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID = "inverter_output_phase_b_entity_id"
 CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID = "inverter_output_phase_c_entity_id"
+# What the inverter takes in at its AC input (grid side), per phase, positive
+# while it draws from the grid - optional, a PV string inverter has none. The
+# tick says the grid meter's own reading IS this input (a hybrid the grid flows
+# through, nothing in between); at most one inverter per hub has it.
+CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID = "inverter_input_phase_a_entity_id"
+CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID = "inverter_input_phase_b_entity_id"
+CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID = "inverter_input_phase_c_entity_id"
+CONF_INVERTER_INPUT_IS_GRID = "inverter_input_is_grid"
 CONF_WIRING_TOPOLOGY = "wiring_topology"  # "parallel" or "series"
 WIRING_TOPOLOGY_PARALLEL = "parallel"  # Inverter feeds in parallel (AC-coupled, no battery typical)
 WIRING_TOPOLOGY_SERIES = "series"  # Everything flows through inverter (hybrid, battery typical)

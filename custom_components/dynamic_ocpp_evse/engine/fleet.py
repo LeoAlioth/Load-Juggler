@@ -24,12 +24,10 @@ express:
   member has a known capacity. Hub-level policy (SOC target/min sliders,
   their hysteresis latches) applies to this one number.
 - **Solar** sums per member: its own production sensor when configured,
-  otherwise derived from its inverter output - a parallel member's output is
-  production; a series member's output carries its battery flow, so its
-  production is ``output − its battery power`` (off-grid on either wiring -
-  see ``member_solar``). Applied to the summed outputs
-  with the summed battery power, the series formula is algebraically exact
-  for ANY mix, because parallel members contribute no battery term.
+  otherwise derived from its inverter as ``out − in − battery`` - what the
+  inverter delivers net of what it takes in at its AC input, less the flow of
+  the battery behind it (see ``member_solar``). No wiring word is needed: a
+  PV string inverter has no input and no battery, a hybrid has both.
 - **Inverter capacity**: total = Σ; the single per-phase scalar collapses
   conservatively to the minimum over phases of the per-phase sums of the
   members feeding that phase.
@@ -43,7 +41,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 from ..calculations import PhaseValues
-from ..const import WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -59,13 +56,21 @@ class FleetMember:
     max_power: Optional[float] = None
     max_power_per_phase: Optional[float] = None
     supports_asymmetric: bool = False
-    topology: str = WIRING_TOPOLOGY_PARALLEL
     output: Optional[PhaseValues] = None  # smoothed amps per phase
     # The same outputs UNSMOOTHED, as this cycle read them (None for a phase
     # that is unconfigured or unreadable). Only the stuck-readout watch reads
     # these: off-grid they are the site's consumption, and it looks for steps
     # in it, which a filter would smear (engine/load_builders).
     output_raw: Optional[PhaseValues] = None
+    # What this inverter takes in at its AC input (grid side), signed amps per
+    # phase, positive while it draws from the grid; None for a phase with no
+    # input sensor (a PV string inverter has none). Smoothed, and the same
+    # unsmoothed (see ``output`` / ``output_raw``).
+    input: Optional[PhaseValues] = None
+    input_raw: Optional[PhaseValues] = None
+    # "The grid flows through this inverter, straight from the grid meter": its
+    # input IS the grid meter's reading, so the grid term cancels (member_input).
+    grid_input: bool = False
     has_solar_entity: bool = False  # a solar production sensor is configured
     solar_measured: Optional[float] = None  # W, smoothed, when measured
     # True when ``solar_measured`` is the 0 W SUBSTITUTE rather than a reading:
@@ -106,11 +111,6 @@ class FleetMember:
     # never yet been readable - and anchors that member at 100 %.
     soc_target: Optional[float] = None
     capacity_kwh: Optional[float] = None
-    # The site has no grid CTs. Set by the engine after reading (not a reading
-    # itself): off-grid the output is what the site draws from this inverter
-    # whatever its wiring, so it carries this member's battery flow even on
-    # parallel wiring (see member_solar).
-    off_grid: bool = False
 
     def spans_phase(self, phase: str) -> bool:
         """Which site phases this inverter feeds - the phases its output
@@ -371,81 +371,61 @@ def split_charge_limit(members, charge_limit, ceiling) -> dict:
     return shares
 
 
-def sum_outputs(members, topology: Optional[str] = None,
-                raw: bool = False) -> Optional[PhaseValues]:
-    """Per-phase sum of member outputs (amps), optionally filtered by
-    topology. A phase is non-None if any summed member covers it. ``raw`` sums
-    the unsmoothed readings instead (``FleetMember.output_raw``)."""
+def member_input(member, grid, raw: bool = False) -> Optional[PhaseValues]:
+    """What one member takes in at its AC input, per phase: the grid meter's own
+    reading for a member with "the grid flows through this inverter", else its
+    input sensors (``FleetMember.input``, or ``input_raw`` with ``raw``).
+
+    ``grid`` is the signed per-phase grid reading ``(a, b, c)``, positive while
+    importing. None when the member has no input at all."""
+    if member.grid_input:
+        return PhaseValues(*grid)
+    return member.input_raw if raw else member.input
+
+
+def net_output(members, grid, raw: bool = False) -> Optional[PhaseValues]:
+    """Per-phase Σ (output − input) over the members that have output sensors
+    (amps), or None when none has. A phase is non-None if any member covers it;
+    a member's missing input counts as 0 (a PV string inverter has none), and
+    a grid-input member's input is ``grid`` itself, so its grid term cancels
+    exactly per phase. ``raw`` uses the unsmoothed readings instead."""
     selected = [
-        m.output_raw if raw else m.output
+        (m, m.output_raw if raw else m.output)
         for m in members
         if (m.output_raw if raw else m.output) is not None
-        and (topology is None or m.topology == topology)
     ]
     if not selected:
         return None
     values = []
     for phase in _PHASES:
-        readings = [
-            getattr(o, phase) for o in selected if getattr(o, phase) is not None
-        ]
-        values.append(sum(readings) if readings else None)
+        terms = []
+        for m, out in selected:
+            reading = getattr(out, phase)
+            if reading is None:
+                continue
+            inp = member_input(m, grid, raw)
+            terms.append(
+                reading - ((getattr(inp, phase) if inp is not None else None) or 0.0)
+            )
+        values.append(sum(terms) if terms else None)
     return PhaseValues(*values)
 
 
-def fleet_topology(members) -> str:
-    """The topology scalar for SiteContext: 'series' if any member is series.
-
-    The series solar formula on the summed outputs with the summed battery
-    power is exact for any mix - parallel members contribute no battery term -
-    so 'series' is the correct site-wide setting whenever one exists.
-    """
-    if any(m.topology == WIRING_TOPOLOGY_SERIES for m in members):
-        return WIRING_TOPOLOGY_SERIES
-    return WIRING_TOPOLOGY_PARALLEL
-
-
-def mixed_topologies(members) -> bool:
-    """True when output-bearing members disagree on topology - the one case
-    the per-phase household maths needs the two-formula composite."""
-    topologies = {m.topology for m in members if m.output is not None}
-    return len(topologies) > 1
-
-
-def _battery_output_term(topology: str, battery_power: Optional[float]) -> float:
-    """How much of a battery's flow shows up in its inverter's AC output.
-
-    - **series** (DC-coupled hybrid): the battery hangs off the DC bus, in front
-      of the inverter. Discharge adds to the AC output, and charging takes DC
-      power that then never reaches the AC side - so the signed battery power
-      applies as-is, and charging genuinely REDUCES the AC output.
-    - **parallel** (AC-coupled battery/hybrid): the battery charges FROM the AC
-      bus, so charging is a load on the bus, not a subtraction from the PV
-      inverter's output - the inverter keeps putting out its full production.
-      Only discharge adds to the output, hence max(0, ·).
-    """
-    bp = battery_power or 0.0
-    if topology == WIRING_TOPOLOGY_SERIES:
-        return bp
-    return max(0.0, bp)
-
-
-def output_power_measured(members, voltage: float) -> Optional[float]:
-    """The fleet's measured AC output in watts - Σ per-phase member outputs ×
-    voltage. None when no member has output entities.
+def output_power_measured(members, voltage: float, grid) -> Optional[float]:
+    """The fleet's measured AC output in watts - Σ per-phase member
+    (output − input) × voltage. None when no member has output entities.
 
     Signed on purpose (see readers._read_signed_amps): a cascaded
     child inverter on a hybrid's load port makes the parent's reading negative,
     and the signed sum nets that back-feed against the child's own positive
     reading - which is precisely the AC power the pair delivers to the site.
-    Needs no topology assumption at all: a series member's reading already
-    contains its battery flow and a parallel member's already excludes its
-    charging, whatever the mix.
+    A hybrid the grid flows through counts only what it adds to the grid, not
+    the import it passes on.
     """
-    summed = sum_outputs([m for m in members if m.output is not None])
-    if summed is None:
+    net = net_output(members, grid)
+    if net is None:
         return None
-    return summed.total * voltage
+    return net.total * voltage
 
 
 def output_power_estimate(
@@ -453,22 +433,16 @@ def output_power_estimate(
 ) -> float:
     """Estimated fleet AC output in watts, for sites with NO output sensors.
 
-    Solar production always reaches the AC bus, so it enters in full whatever
-    the wiring; only the battery term is topology-dependent, and it is summed
-    per member using that member's OWN topology (see _battery_output_term), so
-    a mixed fleet is handled by construction. Members without a battery power
-    sensor contribute no battery term.
-
-    When no member has a battery power sensor at all, the fleet-level reading
-    (usually None) is applied with the fleet topology instead - the same single
-    formula the classic single-inverter site used.
+    Solar production always reaches the AC bus, and a battery belongs to the
+    inverter it sits behind (an AC-coupled one is an inverter entry of its
+    own), so its signed flow adds in full: charging takes AC power away.
+    Members without a battery power sensor contribute no battery term; when no
+    member has one at all, the fleet-level reading (usually None) is used.
     """
     base = solar_w or 0.0
     if any(m.has_battery_power_entity for m in members):
-        return base + sum(
-            _battery_output_term(m.topology, m.battery_power) for m in members
-        )
-    return base + _battery_output_term(fleet_topology(members), battery_power_w)
+        return base + sum(m.battery_power or 0.0 for m in members)
+    return base + (battery_power_w or 0.0)
 
 
 def output_power_total(
@@ -476,30 +450,32 @@ def output_power_total(
     voltage: float,
     solar_w: Optional[float] = None,
     battery_power_w: Optional[float] = None,
+    grid=(None, None, None),
 ) -> float:
     """The fleet's current AC output in watts - measurement preferred, estimate
     as fallback. Used for display headroom (``rating − output``).
 
     1. **Measured**: whenever any member has inverter-output entities, its
-       signed measured output is used. Members without output entities add
-       their own topology-aware estimate from their own production sensor and
-       battery flow - nothing else is attributable to them, since the site's
-       export-derived solar cannot be split per member.
+       signed measured output less its input is used (``grid`` is the signed
+       per-phase grid reading, for a member whose input is the grid meter).
+       Members without output entities add their own production sensor and
+       signed battery flow - nothing else is attributable to them, since the
+       site's export-derived solar cannot be split per member.
     2. **Estimated**: no output entities anywhere → output_power_estimate() on
-       the site scalars, topology-aware per member.
+       the site scalars.
 
     Never None: with no members at all this degenerates to the site scalars,
     which is what the pre-fleet code did. The result may be negative - a real
     state (net power flowing INTO the inverters); the caller decides what a
     negative output means for its own headroom maths.
     """
-    measured = output_power_measured(members, voltage)
+    measured = output_power_measured(members, voltage, grid)
     if measured is None:
         return output_power_estimate(members, solar_w, battery_power_w)
     unmetered = [m for m in members if m.output is None]
     return measured + sum(
         (m.solar_measured or 0.0 if m.has_solar_entity else 0.0)
-        + _battery_output_term(m.topology, m.battery_power)
+        + (m.battery_power or 0.0)
         for m in unmetered
     )
 
@@ -537,21 +513,16 @@ def inverter_limits(members):
     return max_power, max_power_per_phase, supports_asymmetric
 
 
-def member_solar(member, voltage: float) -> Optional[float]:
+def member_solar(member, voltage: float, grid) -> Optional[float]:
     """One member's solar production in watts, or None without output
-    entities: a parallel output IS production; a series output carries the
-    battery flow, so production = output − its own battery power.
+    entities: ``(output − input) − its own battery power``, clamped at 0.
 
-    Off-grid a parallel output carries it too: with no grid, the output is
-    what the site draws, solar plus the battery's flow (compute_household_per_
-    phase reads it the same way), so production = output − battery power on
-    either wiring. Taken as production, a parallel member published its
-    battery's discharge as solar - 5992 W at night on a 6 kW inverter - and
-    the solar pool counted that discharge twice against the inverter's
-    headroom, so a Solar Only car settled at 12.4 A where series gave 21.7 A
-    (dev/tests/test_offgrid_parallel_household.py). Without a battery power
-    reading nothing separates the two and the whole output stands, as on
-    series - for the calculation; it is not published (solar_is_unsplit).
+    The output less the input is what the inverter delivers to the site net of
+    what it takes in at its AC input (a hybrid's pass-through of the grid, an
+    AC-coupled battery's charging), so what remains after the battery behind
+    it is production. A PV string inverter has no input and no battery: its
+    whole output is production. Without a battery power reading nothing
+    separates the two and the whole net output stands (solar_is_unsplit).
 
     The max(0, ·) is a physical clamp, and it matters now that outputs are
     signed (see readers._read_signed_amps): a negative result means
@@ -560,23 +531,21 @@ def member_solar(member, voltage: float) -> Optional[float]:
     production of its own. The child's production is counted on the child's own
     member, so clamping here cannot lose it.
     """
-    if member.output is None:
+    net = net_output([member], grid)
+    if net is None:
         return None
-    out_watts = (member.output.total or 0) * voltage
-    if member.topology == WIRING_TOPOLOGY_SERIES or member.off_grid:
-        out_watts -= member.battery_power or 0
-    return max(0.0, out_watts)
+    return max(0.0, (net.total or 0) * voltage - (member.battery_power or 0))
 
 
-def member_solar_production(member, voltage: float) -> Optional[float]:
+def member_solar_production(member, voltage: float, grid) -> Optional[float]:
     """One member's solar production: its own production sensor when it has
     one, else derived from its inverter output (None without either)."""
     if member.has_solar_entity:
         return member.solar_measured
-    return member_solar(member, voltage)
+    return member_solar(member, voltage, grid)
 
 
-def solar_total(members, voltage: float) -> Optional[float]:
+def solar_total(members, voltage: float, grid) -> Optional[float]:
     """Fleet solar production in watts - each member measured or derived,
     summed. None when no member knows its production at all, which is the
     caller's cue to fall back to grid export + the fleet's charging draw.
@@ -587,7 +556,7 @@ def solar_total(members, voltage: float) -> Optional[float]:
     """
     readings = [
         s
-        for s in (member_solar_production(m, voltage) for m in members)
+        for s in (member_solar_production(m, voltage, grid) for m in members)
         if s is not None
     ]
     if not readings:
@@ -601,11 +570,11 @@ def solar_total(members, voltage: float) -> Optional[float]:
 
 
 def solar_is_unsplit(member) -> bool:
-    """Off-grid, this member's "production" is its whole output: derived from
-    the output sensors (no production sensor), with a battery configured whose
-    power is not read (no power sensor, or one unreadable with nothing to
-    hold). The output carries that battery's flow (see member_solar) and
-    nothing takes it back out, so at night every watt of it is the battery's.
+    """This member's "production" is its whole output: derived from the output
+    sensors (no production sensor), with a battery configured whose power is
+    not read (no power sensor, or one unreadable with nothing to hold). The
+    output carries that battery's flow (see member_solar) and nothing takes it
+    back out, so at night every watt of it is the battery's.
 
     The figure stays in the calculation - the off-grid pool is built from it,
     and taking it away would hand the chargers nothing - but it is not a
@@ -614,8 +583,7 @@ def solar_is_unsplit(member) -> bool:
     (engine/readers), and its output is all panels.
     """
     return (
-        member.off_grid
-        and not member.has_solar_entity
+        not member.has_solar_entity
         and member.output is not None
         and member.has_battery
         and member.battery_power is None
@@ -636,7 +604,7 @@ def solar_is_metered(members) -> bool:
     return not any(m.has_solar_entity or m.output is not None for m in members)
 
 
-def member_solar_published(member, voltage: float) -> Optional[float]:
+def member_solar_published(member, voltage: float, grid) -> Optional[float]:
     """One member's production for PUBLICATION - None while its own figure is
     the invented 0 W (``solar_assumed``) or an output nothing splits from its
     battery (``solar_is_unsplit``), its real production otherwise.
@@ -648,7 +616,7 @@ def member_solar_published(member, voltage: float) -> Optional[float]:
     """
     if member.solar_assumed or solar_is_unsplit(member):
         return None
-    return member_solar_production(member, voltage)
+    return member_solar_production(member, voltage, grid)
 
 
 def solar_is_assumed(members) -> bool:

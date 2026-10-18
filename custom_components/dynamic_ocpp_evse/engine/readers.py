@@ -31,6 +31,10 @@ from ..const import (
     CONF_BATTERY_SOC_FULL,
     CONF_CHARGE_RATE_UNIT,
     CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
@@ -48,12 +52,10 @@ from ..const import (
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
-    CONF_WIRING_TOPOLOGY,
     DEFAULT_BATTERY_CAPACITY_KWH,
     DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_PHASE_VOLTAGE,
-    DEFAULT_WIRING_TOPOLOGY,
     DOMAIN,
     CTRL_FAST_TAU_S,
     DEFAULT_SITE_UPDATE_FREQUENCY,
@@ -376,6 +378,9 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
             (f"Inverter {inv_name} output (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
             (f"Inverter {inv_name} output (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
             (f"Inverter {inv_name} output (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
+            (f"Inverter {inv_name} input (L1)", CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID),
+            (f"Inverter {inv_name} input (L2)", CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID),
+            (f"Inverter {inv_name} input (L3)", CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID),
             (f"Battery SOC ({inv_name})", CONF_BATTERY_SOC_ENTITY_ID),
             (f"Battery power ({inv_name})", CONF_BATTERY_POWER_ENTITY_ID),
         ))
@@ -602,6 +607,30 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):
     )
     output_pv = _smooth_member_output(output_pv, hub_runtime, ema_inputs, output_prefix)
 
+    # Input entities (optional, the grid side): read exactly like the outputs,
+    # under their own EMA keys.
+    input_entities = [
+        get_entry_value(entry, conf, None)
+        for conf in (
+            CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+        )
+    ]
+    input_pv = (
+        PhaseValues(*(_read_signed_amps(hass, e, voltage) for e in input_entities))
+        if any(input_entities)
+        else None
+    )
+    input_raw = (
+        None
+        if input_pv is None
+        else PhaseValues(*(_coerce(v, None) for v in (input_pv.a, input_pv.b, input_pv.c)))
+    )
+    input_pv = _smooth_member_output(
+        input_pv, hub_runtime, ema_inputs, f"inv_in_{entry.entry_id}_"
+    )
+
     # Solar production sensor: this inverter's own PV output.
     solar_entity = get_entry_value(entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
     solar_key = f"solar_{entry.entry_id}"
@@ -724,9 +753,11 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):
         supports_asymmetric=get_entry_value(
             entry, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False
         ),
-        topology=get_entry_value(entry, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY),
         output=output_pv,
         output_raw=output_raw,
+        input=input_pv,
+        input_raw=input_raw,
+        grid_input=bool(get_entry_value(entry, CONF_INVERTER_INPUT_IS_GRID, False)),
         has_solar_entity=bool(solar_entity),
         solar_measured=solar_measured,
         solar_assumed=solar_assumed,

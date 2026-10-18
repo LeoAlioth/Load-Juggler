@@ -39,7 +39,7 @@ scenarios:
       inverter_max_power_per_phase: 2100
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "pond_pump"
         device_type: "plug"
@@ -92,7 +92,7 @@ scenarios:
       inverter_max_power_per_phase: 2100
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "pond_pump"
         device_type: "plug"
@@ -145,7 +145,7 @@ scenarios:
       inverter_max_power_per_phase: 2100
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "pond_pump"
         device_type: "plug"
@@ -198,7 +198,7 @@ scenarios:
       inverter_max_power_per_phase: 5000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "pond_pump"
         device_type: "plug"

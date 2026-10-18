@@ -6,8 +6,8 @@ Many inverter entries reduce to the single-inverter/single-battery scalars
 SiteContext expects. The per-member gating the scalar form cannot express
 happens here: charge capacity excludes members whose OWN battery is at its
 OWN full-SOC; discharge capacity excludes members below the hub minimum;
-fleet SOC is capacity-weighted; solar sums parallel outputs plus series
-outputs minus their own battery power. With a single member every aggregate
+fleet SOC is capacity-weighted; solar sums each member's output less its
+input less its own battery power. With a single member every aggregate
 must reduce to exactly the classic singleton value.
 """
 
@@ -19,24 +19,29 @@ from custom_components.dynamic_ocpp_evse.engine.fleet import (
     charge_power_total,
     charging_power_total,
     discharge_power_total,
-    fleet_topology,
     inverter_limits,
     forecast_device_ids,
+    member_input,
     member_solar,
     member_solar_production,
     member_solar_published,
-    mixed_topologies,
+    net_output,
+    output_power_estimate,
+    output_power_measured,
+    output_power_total,
     soc_full_scalar,
     soc_target_weighted,
     split_charge_limit,
     solar_is_assumed,
     solar_is_measured,
+    solar_is_unsplit,
     solar_total,
-    sum_outputs,
     weighted_soc,
 )
 
 V = 230.0
+# The signed grid reading per phase; only a grid-input member reads it.
+G = (None, None, None)
 
 
 def _member(entry_id="inv1", **kwargs):
@@ -253,67 +258,126 @@ def test_soc_target_without_batteries_is_the_default():
 
 # --- Outputs and solar ----------------------------------------------------------
 
-def test_sum_outputs_per_phase():
+def test_member_input_is_the_sensors_or_the_grid_meter():
+    sensors = PhaseValues(a=2.0, b=None, c=None)
+    m = _member(input=sensors, input_raw=PhaseValues(a=3.0, b=None, c=None))
+    assert member_input(m, (5.0, 6.0, 7.0)) is sensors
+    assert member_input(m, (5.0, 6.0, 7.0), raw=True).a == 3.0
+    tick = _member(grid_input=True)
+    assert member_input(tick, (5.0, 6.0, 7.0)) == PhaseValues(5.0, 6.0, 7.0)
+    assert member_input(_member(), (5.0, 6.0, 7.0)) is None
+
+
+def test_net_output_per_phase():
     members = [
         _member("a", output=PhaseValues(a=10.0, b=None, c=None)),
         _member("b", output=PhaseValues(a=5.0, b=4.0, c=None)),
     ]
-    summed = sum_outputs(members)
-    assert summed.a == 15.0
-    assert summed.b == 4.0
-    assert summed.c is None
+    net = net_output(members, G)
+    assert net.a == 15.0
+    assert net.b == 4.0
+    assert net.c is None
+    assert net_output([_member()], G) is None
 
 
-def test_solar_parallel_output_is_production():
-    m = _member(output=PhaseValues(a=10.0, b=None, c=None), topology="parallel")
-    assert member_solar(m, V) == 10.0 * V
+def test_net_output_subtracts_the_input_sensors():
+    hybrid = _member(
+        output=PhaseValues(a=10.0, b=10.0, c=None),
+        input=PhaseValues(a=4.0, b=None, c=None),  # B has no input sensor: 0
+    )
+    net = net_output([hybrid], G)
+    assert (net.a, net.b, net.c) == (6.0, 10.0, None)
 
 
-def test_solar_series_output_subtracts_own_battery():
-    # 10 A output at 230 V = 2300 W, battery discharging 500 W → 1800 W solar
+def test_net_output_cancels_the_grid_for_a_grid_input_member():
+    # The grid it passes through is the input, so whatever the grid reads the
+    # net is the output less that - and the household built on it cancels it.
+    hybrid = _member(output=PhaseValues(a=10.0, b=8.0, c=None), grid_input=True)
+    net = net_output([hybrid], (3.0, -2.0, None))
+    assert (net.a, net.b, net.c) == (7.0, 10.0, None)
+
+
+def test_net_output_smoothed_and_raw_are_separate_readings():
+    m = _member(
+        output=PhaseValues(a=10.0, b=None, c=None),
+        output_raw=PhaseValues(a=12.0, b=None, c=None),
+        input=PhaseValues(a=2.0, b=None, c=None),
+        input_raw=PhaseValues(a=3.0, b=None, c=None),
+    )
+    assert net_output([m], G).a == 8.0
+    assert net_output([m], G, raw=True).a == 9.0
+
+
+def test_solar_pv_inverter_output_is_production():
+    m = _member(output=PhaseValues(a=10.0, b=None, c=None))
+    assert member_solar(m, V, G) == 10.0 * V
+
+
+def test_solar_hybrid_with_sensors_is_net_of_input_and_battery():
+    # 10 A out, 4 A taken in at its AC input, battery discharging 500 W:
+    # 6 A * 230 V = 1380 W net, less the 500 W the battery gave = 880 W solar.
     m = _battery(
         soc=80, power=500,
-        output=PhaseValues(a=10.0, b=None, c=None), topology="series",
+        output=PhaseValues(a=10.0, b=None, c=None),
+        input=PhaseValues(a=4.0, b=None, c=None),
     )
-    assert member_solar(m, V) == 10.0 * V - 500
+    assert member_solar(m, V, G) == 6.0 * V - 500
 
 
-def test_solar_off_grid_parallel_output_subtracts_own_battery():
+def test_solar_hybrid_with_the_tick_leaves_out_the_grid_passing_through():
+    # out - grid - battery: 10 A out of which 3 A is the grid passing through.
+    m = _battery(
+        soc=80, power=500,
+        output=PhaseValues(a=10.0, b=None, c=None), grid_input=True,
+    )
+    assert member_solar(m, V, (3.0, None, None)) == 7.0 * V - 500
+
+
+def test_solar_off_grid_subtracts_own_battery():
     # Off-grid the output is the site's supply: 2300 W out, 2300 W of it from
     # the battery at night is 0 W of solar, not 2300 W; by day, charging
-    # 1000 W beside a 2300 W output, the panels make 3300 W.
+    # 1000 W beside a 2300 W output, the panels make 3300 W. The grid is 0, so
+    # a tick or no input at all reads the same.
     out = PhaseValues(a=10.0, b=None, c=None)
-    night = _battery(soc=80, power=10.0 * V, output=out, topology="parallel")
-    day = _battery(soc=80, power=-1000, output=out, topology="parallel")
-    night.off_grid = day.off_grid = True
-    assert member_solar(night, V) == 0.0
-    assert member_solar(day, V) == 10.0 * V + 1000
+    night = _battery(soc=80, power=10.0 * V, output=out)
+    day = _battery(soc=80, power=-1000, output=out, grid_input=True)
+    assert member_solar(night, V, G) == 0.0
+    assert member_solar(day, V, (0.0, None, None)) == 10.0 * V + 1000
 
 
 def test_solar_mixed_fleet_sums_per_member():
-    par = _member("p", output=PhaseValues(a=10.0, b=None, c=None), topology="parallel")
-    ser = _battery(
+    pv = _member("p", output=PhaseValues(a=10.0, b=None, c=None))
+    hybrid = _battery(
         "s", soc=80, power=-1000,
-        output=PhaseValues(a=5.0, b=None, c=None), topology="series",
+        output=PhaseValues(a=5.0, b=None, c=None),
     )
-    # parallel 2300 + series (1150 − (−1000)) = 2300 + 2150
-    assert solar_total([par, ser], V) == 2300 + 5.0 * V + 1000
+    # PV 2300 + hybrid (1150 − (−1000)) = 2300 + 2150
+    assert solar_total([pv, hybrid], V, G) == 2300 + 5.0 * V + 1000
+
+
+def test_solar_a_battery_belongs_to_its_inverter_whatever_it_is_called():
+    # No wiring word: a member with a battery behind it nets the battery's flow
+    # off its output, the signed power in both directions.
+    out = PhaseValues(a=10.0, b=None, c=None)
+    discharging = _battery(soc=80, power=500, output=out)
+    charging = _battery(soc=80, power=-500, output=out)
+    assert member_solar(discharging, V, G) == 10.0 * V - 500
+    assert member_solar(charging, V, G) == 10.0 * V + 500
 
 
 def test_solar_none_without_outputs():
-    assert solar_total([_battery(soc=50)], V) is None
+    assert solar_total([_battery(soc=50)], V, G) is None
 
 
 def test_solar_production_sensor_wins_over_output():
     """A member with its own production sensor reports it, output ignored."""
     m = _member(
         output=PhaseValues(a=10.0, b=None, c=None),
-        topology="parallel",
         has_solar_entity=True,
         solar_measured=1800.0,
     )
-    assert member_solar_production(m, V) == 1800.0
-    assert solar_total([m], V) == 1800.0
+    assert member_solar_production(m, V, G) == 1800.0
+    assert solar_total([m], V, G) == 1800.0
 
 
 def test_solar_mixed_measured_and_derived_are_summed():
@@ -321,7 +385,7 @@ def test_solar_mixed_measured_and_derived_are_summed():
     fleet total is the sum, which is why derivation is per member."""
     measured = _member("m", has_solar_entity=True, solar_measured=3000.0)
     derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
-    assert solar_total([measured, derived], V) == 3000.0 + 10.0 * V
+    assert solar_total([measured, derived], V, G) == 3000.0 + 10.0 * V
 
 
 def test_solar_is_measured_only_when_every_member_measures():
@@ -344,20 +408,20 @@ def test_an_invented_zero_is_not_published_as_production():
     instead of a confident 0 W in full sun.
     """
     dead = _member("d", has_solar_entity=True, solar_measured=0.0, solar_assumed=True)
-    assert member_solar_production(dead, V) == 0.0  # what the engine allocates on
-    assert member_solar_published(dead, V) is None  # what the sensor shows
+    assert member_solar_production(dead, V, G) == 0.0  # what the engine allocates on
+    assert member_solar_published(dead, V, G) is None  # what the sensor shows
     assert solar_is_assumed([dead]) is True
 
 
 def test_a_readable_production_sensor_publishes_normally():
     live = _member("m", has_solar_entity=True, solar_measured=1800.0)
-    assert member_solar_published(live, V) == 1800.0
+    assert member_solar_published(live, V, G) == 1800.0
     assert solar_is_assumed([live]) is False
     # A real 0 W (night, or a sensor genuinely reading zero) still publishes:
     # "measured 0" and "invented 0" are different things and only the second
     # one is the bug.
     night = _member("n", has_solar_entity=True, solar_measured=0.0)
-    assert member_solar_published(night, V) == 0.0
+    assert member_solar_published(night, V, G) == 0.0
     assert solar_is_assumed([night]) is False
 
 
@@ -369,7 +433,7 @@ def test_a_derived_member_is_never_assumed():
     no solar sensor at all publishes exactly what it always did.
     """
     derived = _member("d", output=PhaseValues(a=10.0, b=None, c=None))
-    assert member_solar_published(derived, V) == 10.0 * V
+    assert member_solar_published(derived, V, G) == 10.0 * V
     assert solar_is_assumed([derived]) is False
     assert solar_is_assumed([]) is False
 
@@ -384,31 +448,29 @@ def test_one_dead_member_keeps_its_sibling_honest_and_silences_the_total():
     """
     live = _member("m", has_solar_entity=True, solar_measured=3000.0)
     dead = _member("d", has_solar_entity=True, solar_measured=0.0, solar_assumed=True)
-    assert member_solar_published(live, V) == 3000.0
-    assert member_solar_published(dead, V) is None
+    assert member_solar_published(live, V, G) == 3000.0
+    assert member_solar_published(dead, V, G) is None
     # The engine still allocates on the partial sum...
-    assert solar_total([live, dead], V) == 3000.0
+    assert solar_total([live, dead], V, G) == 3000.0
     # ...and the publisher is told the sum cannot be shown as a measurement.
     assert solar_is_assumed([live, dead]) is True
 
 
 def test_an_off_grid_output_nothing_splits_is_not_published():
-    """Off-grid with the battery's power unread, the output is the site's whole
-    supply and nothing takes the battery back out: the engine keeps the output
-    as its solar, the publisher gets None. A read battery (held or live), a
-    grid-tied site and a battery-less inverter all publish."""
+    """With the battery's power unread, the output is the whole supply and
+    nothing takes the battery back out: the engine keeps the output as its
+    solar, the publisher gets None. A read battery (held or live) and a
+    battery-less inverter publish."""
     out = PhaseValues(a=10.0, b=None, c=None)
-    unread = _battery(soc=80, power=None, output=out, off_grid=True)
-    read = _battery(soc=80, power=1000.0, output=out, off_grid=True)
-    grid_tied = _battery(soc=80, power=None, output=out)
-    pv_only = _member(output=out, off_grid=True)
-    assert solar_total([unread], V) == 10.0 * V
-    assert member_solar_published(unread, V) is None
+    unread = _battery(soc=80, power=None, output=out)
+    read = _battery(soc=80, power=1000.0, output=out)
+    pv_only = _member(output=out)
+    assert solar_total([unread], V, G) == 10.0 * V
+    assert member_solar_published(unread, V, G) is None
     assert solar_is_assumed([unread]) is True
-    assert member_solar_published(read, V) == 10.0 * V - 1000.0
-    assert member_solar_published(grid_tied, V) == 10.0 * V
-    assert member_solar_published(pv_only, V) == 10.0 * V
-    assert solar_is_assumed([read, grid_tied, pv_only]) is False
+    assert member_solar_published(read, V, G) == 10.0 * V - 1000.0
+    assert member_solar_published(pv_only, V, G) == 10.0 * V
+    assert solar_is_assumed([read, pv_only]) is False
 
 
 def test_forecast_device_ids_merge_and_dedupe():
@@ -425,24 +487,55 @@ def test_charging_power_total_for_fallback():
     assert charging_power_total(members) == 2000
 
 
-# --- Topology --------------------------------------------------------------------
+# --- The fleet's AC output --------------------------------------------------------
 
-def test_topology_series_if_any_series():
-    members = [
-        _member("p", topology="parallel", output=PhaseValues(a=1.0, b=None, c=None)),
-        _member("s", topology="series", output=PhaseValues(a=1.0, b=None, c=None)),
-    ]
-    assert fleet_topology(members) == "series"
-    assert mixed_topologies(members)
+def test_output_power_measured_is_net_of_input():
+    hybrid = _member(
+        output=PhaseValues(a=10.0, b=10.0, c=None),
+        input=PhaseValues(a=4.0, b=None, c=None),
+    )
+    assert output_power_measured([hybrid], V, G) == (6.0 + 10.0) * V
+    assert output_power_measured([_member()], V, G) is None
 
 
-def test_topology_uniform_not_mixed():
-    members = [
-        _member("a", topology="parallel", output=PhaseValues(a=1.0, b=None, c=None)),
-        _member("b", topology="parallel", output=PhaseValues(a=1.0, b=None, c=None)),
-    ]
-    assert fleet_topology(members) == "parallel"
-    assert not mixed_topologies(members)
+def test_output_power_measured_leaves_out_the_grid_a_tick_member_passes_on():
+    hybrid = _member(output=PhaseValues(a=10.0, b=None, c=None), grid_input=True)
+    assert output_power_measured([hybrid], V, (3.0, None, None)) == 7.0 * V
+
+
+def test_the_estimate_uses_the_signed_battery_power():
+    # Charging takes AC power away, whatever the inverter is called: the sun
+    # 3000 W with a battery taking 2000 W puts 1000 W on the bus.
+    hybrid = _battery(soc=50, power=-2000)
+    assert output_power_estimate([hybrid], 3000.0) == 1000.0
+    assert output_power_total([hybrid], V, solar_w=3000.0) == 1000.0
+    discharging = _battery(soc=50, power=1500)
+    assert output_power_estimate([discharging], 3000.0) == 4500.0
+
+
+def test_the_estimate_falls_back_to_the_fleet_battery_reading():
+    assert output_power_estimate([_member()], 3000.0, -500.0) == 2500.0
+    assert output_power_estimate([], None, None) == 0.0
+
+
+def test_the_unmetered_member_adds_its_signed_battery_beside_a_metered_one():
+    metered = _member("m", output=PhaseValues(a=10.0, b=None, c=None))
+    unmetered = _battery(
+        "u", soc=50, power=-800, has_solar_entity=True, solar_measured=1500.0
+    )
+    total = output_power_total([metered, unmetered], V, grid=G)
+    assert total == 10.0 * V + 1500.0 - 800.0
+
+
+# --- Unsplit solar -------------------------------------------------------------------
+
+def test_solar_is_unsplit_holds_grid_tied_too():
+    # A battery whose power is unread leaves the output unsplit from it, on any
+    # site: the member's output carries its flow wherever the site is wired.
+    out = PhaseValues(a=10.0, b=None, c=None)
+    assert solar_is_unsplit(_battery(soc=80, power=None, output=out))
+    assert not solar_is_unsplit(_battery(soc=80, power=1000.0, output=out))
+    assert not solar_is_unsplit(_member(output=out))
 
 
 # --- Inverter capacity ------------------------------------------------------------

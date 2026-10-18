@@ -272,9 +272,9 @@ class SiteContext:
     household_consumption_total: float | None = None  # Computed when solar entity available (W)
     household_consumption: PhaseValues | None = None  # Per-phase household (A), from inverter entities
 
-    # Wiring topology + per-phase inverter output
-    wiring_topology: str = "parallel"  # "parallel" or "series"
-    inverter_output_per_phase: PhaseValues | None = None  # Raw inverter output readings (A)
+    # Per-phase net inverter output: Σ (output - input) over the fleet (A), the
+    # term the per-phase household adds to the grid (engine/fleet.net_output)
+    inverter_net_per_phase: PhaseValues | None = None
 
     # Battery
     battery_soc: float | None = None
@@ -309,7 +309,7 @@ class SiteContext:
     #
     # Fleet AC output right now (W, SIGNED - negative means power is flowing
     # into the inverters). Measured where output entities exist, otherwise a
-    # topology-aware estimate - engine/fleet.py output_power_total(). None =
+    # estimate with the signed battery term - engine/fleet.py output_power_total(). None =
     # unknown, which the coverage gate treats as "do not gate".
     inverter_output_total: float | None = None
     # Net grid flow right now (W): positive = importing, negative = exporting.

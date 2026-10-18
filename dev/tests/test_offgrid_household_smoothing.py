@@ -4,8 +4,8 @@ Machine-authored tests - not yet human-reviewed.
 
 Off-grid there is no grid meter: everything the site draws, managed loads
 included, comes out of the inverters, so the engine reconstructs the household
-as ``inverter output − Σ managed draw`` (series formula,
-``calculations.utils.compute_household_per_phase``) and sizes every permit on
+as ``grid + inverter output − Σ managed draw`` (the grid is 0 there,
+``calculations.utils.household_per_phase``) and sizes every permit on
 the inverter rating that household leaves. The output is SMOOTHED on the input
 EMA (``engine/readers._smooth_member_output``); until 2026-09-24 the draw it
 was subtracted from was RAW. So when a charger started, its whole draw came

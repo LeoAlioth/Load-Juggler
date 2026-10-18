@@ -42,7 +42,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       battery_power_unread: true
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -76,7 +75,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       battery_power_unread: true
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -117,7 +115,6 @@ scenarios:
       battery_max_discharge_power: 20000
       battery_power_unread: true
       inverter_max_power: 6000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         min_current: 6

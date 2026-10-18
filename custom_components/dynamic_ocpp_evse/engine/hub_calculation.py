@@ -88,13 +88,11 @@ from ..const import (
     INPUT_STALE_TIMEOUT,
     LOAD_RT_SUN_PROBE,
     SUN_PROBE_MAX_PAUSE_S,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
 )
 from ..calculations.utils import (
-    compute_household_per_phase,
     grid_without_managed_draws,
     hold_per_phase_floor,
+    household_per_phase,
     managed_phase_draws,
 )
 from ..helpers import get_entry_value
@@ -226,7 +224,7 @@ def _supply_per_phase(raw_phases, grid_assumed, has_grid_cts, members,
       output sensors are per phase (unsmoothed, like the grid path). A site
       with no output sensors at all is modelled single-phase
       (_read_site_phases), and the fleet's total output - measured, else the
-      topology-aware estimate - stands on that one phase.
+      estimate - stands on that one phase.
 
     Read only by the stuck-readout watch (engine/load_builders.
     _watch_readouts_against_household); the allocation's own household is
@@ -235,7 +233,7 @@ def _supply_per_phase(raw_phases, grid_assumed, has_grid_cts, members,
     if has_grid_cts:
         return list(raw_phases), tuple(grid_assumed), "the grid"
     exists = [r is not None for r in raw_phases]
-    outputs = fleet.sum_outputs(members, raw=True)
+    outputs = fleet.net_output(members, raw_phases, raw=True)
     if outputs is not None:
         values = [
             getattr(outputs, p) if exists[i] else None
@@ -248,14 +246,15 @@ def _supply_per_phase(raw_phases, grid_assumed, has_grid_cts, members,
     return values, (False, False, False), "the inverter output"
 
 
-def _apply_feedback_loop(site, solar_is_derived, members, total_draws):
+def _apply_feedback_loop(site, solar_is_derived, members, total_draws, grid):
     """Subtract load draws from grid readings to prevent double-counting.
 
     Grid CTs measure total site current INCLUDING load draws. Without this
     adjustment, the engine double-counts load power as both 'consumption'
     and 'load demand'. Modifies site.consumption and site.export_current
     in-place. ``total_draws`` is this cycle's smoothed per-phase managed draw
-    from ``_managed_phase_draws``.
+    from ``_managed_phase_draws``; ``grid`` the signed per-phase grid reading
+    the derived solar nets its grid-input inverters against.
     """
     # Off-grid: the grid phase readings are synthetic zeros (no CTs exist) and
     # never contained the load draws - subtracting them here would fabricate
@@ -302,7 +301,7 @@ def _apply_feedback_loop(site, solar_is_derived, members, total_draws):
     solar_note = ""
     if solar_is_derived:
         export_after = site.export_current.total * site.voltage
-        total = fleet.solar_total(members, site.voltage)
+        total = fleet.solar_total(members, site.voltage, grid)
         if total is None:
             total = max(
                 0.0, export_after + fleet.charging_power_total(members)
@@ -320,51 +319,6 @@ def _apply_feedback_loop(site, solar_is_derived, members, total_draws):
         *[_fv(v) for v in adj_export],
         solar_note,
     )
-
-
-def _mixed_household_per_phase(site, members, draws):
-    """Per-phase household for a mixed-topology fleet: the parallel formula on
-    the parallel members' summed outputs plus the series formula on the series
-    members' - grid-bus loads show on the CT + parallel outputs, behind-series
-    loads show in the series outputs. Best-effort superposition; uniform
-    fleets never come here and keep the exact single-formula path. ``draws``
-    is what the series half subtracts (see _apply_household_figures), and only
-    the series half: off-grid the parallel formula takes the draws off too, so
-    the parallel half is handed none, or they would come off twice."""
-    original = site.inverter_output_per_phase
-    try:
-        site.inverter_output_per_phase = fleet.sum_outputs(
-            members, WIRING_TOPOLOGY_PARALLEL
-        )
-        parallel_hh = (
-            compute_household_per_phase(
-                site, WIRING_TOPOLOGY_PARALLEL, (0.0, 0.0, 0.0)
-            )
-            if site.inverter_output_per_phase is not None
-            else None
-        )
-        site.inverter_output_per_phase = fleet.sum_outputs(
-            members, WIRING_TOPOLOGY_SERIES
-        )
-        series_hh = (
-            compute_household_per_phase(site, WIRING_TOPOLOGY_SERIES, draws)
-            if site.inverter_output_per_phase is not None
-            else None
-        )
-    finally:
-        site.inverter_output_per_phase = original
-
-    if parallel_hh is None and series_hh is None:
-        return None
-    values = []
-    for phase in ("a", "b", "c"):
-        parts = [
-            getattr(hh, phase)
-            for hh in (parallel_hh, series_hh)
-            if hh is not None and getattr(hh, phase) is not None
-        ]
-        values.append(max(0.0, sum(parts)) if parts else None)
-    return PhaseValues(*values)
 
 
 def _household_hold_decay(hub_entry):
@@ -987,6 +941,7 @@ def _apply_household_figures(
     solar_production_total,
     battery_power,
     managed_draws,
+    grid,
 ):
     """Fill in what the household (everything unmanaged) is drawing.
 
@@ -999,18 +954,20 @@ def _apply_household_figures(
     sensors, the condition for knowing the site's supply at all.
 
     ``managed_draws`` is this cycle's smoothed draw from _managed_phase_draws -
-    the one list every other view subtracts too. The series household - and
-    off-grid the parallel one - is the SMOOTHED inverter output minus the
-    managed draw, so the draw has to be on the same EMA step: with the raw
-    draw, a charger's start came off at once while the output it is part of
-    was still catching up, the household read low by the filter's lag and the
-    permit went over the inverter's allowance by as much (off-grid, where the
-    inverter rating is the whole allowance: up to 773 W,
-    dev/tests/test_offgrid_household_smoothing.py).
+    the one list every other view subtracts too. The per-phase household is
+    the grid plus the SMOOTHED inverters' net output, minus the managed draw
+    (``household_per_phase``), so the draw has to be on the same EMA step:
+    with the raw draw, a charger's start came off at once while the output it
+    is part of was still catching up, the household read low by the filter's
+    lag and the permit went over the inverter's allowance by as much
+    (off-grid, where the inverter rating is the whole allowance: up to 773 W,
+    dev/tests/test_offgrid_household_smoothing.py). ``grid`` is the signed
+    smoothed grid reading per phase from BEFORE the feedback loop (after the
+    phase remaps), so the grid and the draws are on one basis.
     Off-grid the feedback loop never ran, so the off-grid household total
     takes the same draw off itself.
     """
-    if site.is_off_grid and site.inverter_output_per_phase is None:
+    if site.is_off_grid and site.inverter_net_per_phase is None:
         # Off-grid with no inverter output sensors, solar + battery is the
         # whole supply on the AC bus - the site's one measure of what it draws
         # - and it is known whenever every battery's power is read. A solar
@@ -1065,12 +1022,9 @@ def _apply_household_figures(
         )
 
     # Compute per-phase household from inverter output entities (after feedback)
-    if fleet.mixed_topologies(members):
-        household = _mixed_household_per_phase(site, members, managed_draws)
-    else:
-        household = compute_household_per_phase(
-            site, site.wiring_topology, managed_draws
-        )
+    net = fleet.net_output(members, grid)
+    site.inverter_net_per_phase = net
+    household = household_per_phase(grid, net, managed_draws)
     if household is not None:
         # Asymmetric hold on the household floor. The managed draw side of the
         # subtraction (OCPP, sub-second) can report before the polled inverter
@@ -1087,9 +1041,8 @@ def _apply_household_figures(
         hub_runtime["_household_held"] = household
         site.household_consumption = household
         _LOGGER.debug(
-            "Per-phase household from inverter output (%s): A=%.1fA B=%.1fA "
+            "Per-phase household from inverter output: A=%.1fA B=%.1fA "
             "C=%.1fA (raw A=%.1fA B=%.1fA C=%.1fA, hold decay %.3f)",
-            site.wiring_topology,
             household.a if household.a is not None else 0,
             household.b if household.b is not None else 0,
             household.c if household.c is not None else 0,
@@ -1158,7 +1111,7 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
         not site.is_off_grid
         or site.battery_power is not None
         or site.battery_soc is not None
-        or site.solar_is_derived == (site.inverter_output_per_phase is None)
+        or site.solar_is_derived == (site.inverter_net_per_phase is None)
     ):
         hub_runtime.pop("_sun_probe", None)
         for load in site.loads:
@@ -1368,7 +1321,7 @@ def _build_hub_status(
     hub_entry,
     members,
     has_grid_cts,
-    inverter_output_per_phase,
+    inverter_net_per_phase,
     grid_stale,
     grid_stale_duration,
 ):
@@ -1384,7 +1337,7 @@ def _build_hub_status(
     hub_status = "OK"
     hub_warnings = []
 
-    has_inverter_output = inverter_output_per_phase is not None
+    has_inverter_output = inverter_net_per_phase is not None
     # Any fleet member with its own production sensor counts as a
     # power-measurement input for the setup-completeness check.
     has_solar_entity = any(m.has_solar_entity for m in members)
@@ -1533,21 +1486,17 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # member (the classic setup) each aggregate reduces to exactly the old
     # singleton value - see engine/fleet.py for the per-member gating rules.
     members = _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage)
-    # Off-grid every output carries its own battery's flow, parallel included
-    # (fleet.member_solar) - the one place the solar derivation learns it.
-    for m in members:
-        m.off_grid = not has_grid_cts
 
     # --- Solar production (unified for grid and off-grid) ---
     # Per member: its own production sensor when configured, else derived from
-    # its inverter output (parallel output IS production, series output minus
-    # its own battery power). Falls back to grid export + the fleet's charging
+    # its inverter output (output less input less its own battery power).
+    # Falls back to grid export + the fleet's charging
     # draw when no member knows either. Off-grid, export is naturally 0.
     # Solar counts as derived unless EVERY member measures its own production;
     # a partly-measured fleet still needs the post-feedback re-derivation for
     # the members that only have inverter outputs (or none at all).
     solar_is_derived = not fleet.solar_is_measured(members)
-    solar_production_total = fleet.solar_total(members, voltage)
+    solar_production_total = fleet.solar_total(members, voltage, smoothed_phases)
     if solar_production_total is None:
         solar_production_total = max(
             0.0,
@@ -1575,18 +1524,14 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     max_grid_import_power = _read_max_import_power(hass, hub_entry, hub_runtime)
 
     # --- Inverter configuration (fleet) ---
-    # Member outputs are already stale-guarded + smoothed at read time (per-
-    # member EMA keys). The topology scalar is 'series' if ANY member is
-    # series: the series solar formula on the summed outputs with the summed
-    # battery power is exact for any mix, because parallel members contribute
-    # no battery term - so the post-feedback re-derivation stays correct.
+    # Member outputs and inputs are already stale-guarded + smoothed at read
+    # time (per-member EMA keys).
     (
         inverter_max_power,
         inverter_max_power_per_phase,
         inverter_supports_asymmetric,
     ) = fleet.inverter_limits(members)
-    wiring_topology = fleet.fleet_topology(members)
-    inverter_output_per_phase = fleet.sum_outputs(members)
+    inverter_net_per_phase = fleet.net_output(members, smoothed_phases)
 
     # Read-time power figures for the calculator's inverter coverage gate
     # (target_calculator._inverter_covers_load): what the fleet is putting out
@@ -1601,6 +1546,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         voltage,
         solar_w=solar_production_total,
         battery_power_w=battery_power,
+        grid=smoothed_phases,
     )
     # Signed net grid flow (+ import / − export) from the smoothed phases. Off
     # grid every phase reads 0, so this is 0 - correct: nothing to import.
@@ -1696,7 +1642,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     if inverter_max_power or inverter_max_power_per_phase:
         _extra.append(
             f"Inv: {_fv(inverter_max_power)}W/{_fv(inverter_max_power_per_phase)}W/ph "
-            f"{'asym' if inverter_supports_asymmetric else 'sym'} {wiring_topology}"
+            f"{'asym' if inverter_supports_asymmetric else 'sym'}"
         )
     _LOGGER.debug(
         "  dist=%s grid_chg=%s buf=%sW max_import=%s%s",
@@ -1708,12 +1654,12 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         else "unlimited",
         (" | " + " | ".join(_extra)) if _extra else "",
     )
-    if inverter_output_per_phase:
+    if inverter_net_per_phase:
         _LOGGER.debug(
-            "  Inverter output: A=%sA B=%sA C=%sA",
-            _fv(inverter_output_per_phase.a),
-            _fv(inverter_output_per_phase.b),
-            _fv(inverter_output_per_phase.c),
+            "  Inverter net output: A=%sA B=%sA C=%sA",
+            _fv(inverter_net_per_phase.a),
+            _fv(inverter_net_per_phase.b),
+            _fv(inverter_net_per_phase.c),
         )
 
     # --- Build SiteContext ---
@@ -1738,8 +1684,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         inverter_max_power=_f(inverter_max_power),
         inverter_max_power_per_phase=_f(inverter_max_power_per_phase),
         inverter_supports_asymmetric=inverter_supports_asymmetric,
-        wiring_topology=wiring_topology,
-        inverter_output_per_phase=inverter_output_per_phase,
+        inverter_net_per_phase=inverter_net_per_phase,
         inverter_output_total=_f(inverter_output_total),
         net_grid_power=float(net_grid_power),
         excess_export_threshold=excess_threshold,
@@ -1787,7 +1732,18 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # input filter - and both views subtract this one result.
     managed_draws = _managed_phase_draws(site, ema_inputs)
     site.managed_phase_draws = tuple(managed_draws)
-    _apply_feedback_loop(site, solar_is_derived, members, managed_draws)
+    # The signed grid per phase as the household sees it: smoothed, after the
+    # phase remaps, and BEFORE the loop takes our draws off it. household_per_
+    # phase subtracts the very same smoothed draws explicitly, so the two are
+    # on one basis (cons_adj - exp_adj = grid - draws, up to the clamp).
+    grid = [
+        None if c is None else c - (e or 0)
+        for c, e in zip(
+            (site.consumption.a, site.consumption.b, site.consumption.c),
+            (site.export_current.a, site.export_current.b, site.export_current.c),
+        )
+    ]
+    _apply_feedback_loop(site, solar_is_derived, members, managed_draws, smoothed_phases)
     ctrl_site = _charge_control_view(
         site,
         ctrl_consumption_pv,
@@ -1813,12 +1769,12 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         solar_is_derived,
         solar_production_total,
         battery_power,
-        # This cycle's one smoothed draw, not a raw re-sum: the series
-        # household (off-grid, either wiring's) subtracts it from the SMOOTHED
-        # inverter output, and an
-        # off-grid site with no output sensors takes it off the solar-sensor
-        # total the same way.
+        # This cycle's one smoothed draw, not a raw re-sum: the household
+        # subtracts it from the grid plus the SMOOTHED inverter net output, and
+        # an off-grid site with no output sensors takes it off the
+        # solar-sensor total the same way.
         managed_draws,
+        grid,
     )
     _apply_sun_probe(hass, hub_entry, hub_runtime, site)
 
@@ -1849,7 +1805,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         hub_entry,
         members,
         has_grid_cts,
-        inverter_output_per_phase,
+        inverter_net_per_phase,
         grid_stale,
         grid_stale_duration,
     )
@@ -1861,7 +1817,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
             # None while this member's own production sensor is unreadable with
             # nothing to hold - its device sensor reads unknown rather than a
             # confident 0 W. A healthy sibling keeps publishing its own figure.
-            "solar_w": fleet.member_solar_published(m, voltage),
+            "solar_w": fleet.member_solar_published(m, voltage, smoothed_phases),
             "battery_soc": m.battery_soc,
             "battery_power": m.battery_power,
         }
@@ -1877,6 +1833,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         site,
         members,
         ctrl_site=ctrl_site,
+        grid=smoothed_phases,
     )
     for inv_id, advice in forecast_per_inverter.items():
         if inv_id in inverters_data:

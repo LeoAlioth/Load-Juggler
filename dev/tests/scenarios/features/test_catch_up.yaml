@@ -337,7 +337,7 @@ scenarios:
       inverter_max_power_per_phase: 12000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
       catch_up: {energy_kwh: 3.68, hours_left: 1}
     loads:
       - entity_id: "load_1"
@@ -370,7 +370,7 @@ scenarios:
       inverter_max_power_per_phase: 12000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
       catch_up: {energy_kwh: 3.68, hours_left: 1}
     loads:
       - entity_id: "load_1"

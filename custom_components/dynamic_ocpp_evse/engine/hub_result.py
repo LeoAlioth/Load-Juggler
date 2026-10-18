@@ -83,6 +83,7 @@ def _compute_forecast_advice(
     site,
     members,
     ctrl_site=None,
+    grid=(None, None, None),
 ):
     """Advisory battery headroom from the PV clipping forecast.
 
@@ -511,7 +512,7 @@ def _compute_forecast_advice(
     # a dead sensor's 0 W, an off-grid output nothing splits from its battery.
     production_w = (
         None if fleet.solar_is_assumed(members)
-        else fleet.solar_total(members, site.voltage)
+        else fleet.solar_total(members, site.voltage, grid)
     )
 
     for m in members:
@@ -528,7 +529,7 @@ def _compute_forecast_advice(
             m.entry_id,
             local_day,
             block_power_at(member_series, now_local),
-            fleet.member_solar_published(m, site.voltage),
+            fleet.member_solar_published(m, site.voltage, grid),
             dt_hours,
             constrained,
             now_local=now_local,
@@ -797,7 +798,7 @@ def _build_hub_result(
     # handles charging; export shows up as negative net grid).
     #  1. Measured solar: the identity is exact.
     #  2. Derived solar with inverter output entities: use the engine's
-    #     per-phase household (grid + inverter output − export per phase),
+    #     per-phase household (grid + Σ(output − input) − draws),
     #     since derived solar is itself built from these terms.
     #  3. Last resort: the identity with derived solar - best effort.
     hh_phases = getattr(site, "household_consumption", None)
