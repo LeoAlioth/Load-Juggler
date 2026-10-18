@@ -76,6 +76,7 @@ def grid_without_managed_draws(
     consumption: PhaseValues,
     export: PhaseValues,
     draws: tuple[float, float, float],
+    gridless: tuple[bool, bool, bool] = (False, False, False),
 ) -> tuple[PhaseValues, PhaseValues]:
     """Rebuild the grid readings the site would show with our loads switched off.
 
@@ -84,7 +85,10 @@ def grid_without_managed_draws(
     load's own draw comes off it and the result is re-split into the
     import/export pair the engine works with.
 
-    Phases that are None (not present on this site) stay None. Pure function -
+    Phases that are None (not present on this site) stay None. A ``gridless``
+    phase (an inverter feeds it, no grid CT reads it) keeps its synthetic zeros:
+    they never contained the load's draw, so taking it off would fabricate export.
+    Pure function -
     the caller owns the logging and writes the result back onto the site.
     """
     from .models import PhaseValues  # Local import to avoid circular
@@ -97,6 +101,10 @@ def grid_without_managed_draws(
         if cons is None:
             adj_consumption.append(None)
             adj_export.append(None)
+            continue
+        if gridless[i]:
+            adj_consumption.append(cons)
+            adj_export.append(exp)
             continue
         true_grid = cons - (exp or 0) - draws[i]
         adj_consumption.append(max(0.0, true_grid))

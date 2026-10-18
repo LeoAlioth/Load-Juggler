@@ -59,6 +59,7 @@ from ..const import (
     CONF_GRID_EXPORT_LIMIT,
     CONF_HEATING_ELEMENT_POWER,
     CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_ENTITY_ID,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_INPUT_IS_GRID,
     CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
@@ -508,6 +509,12 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
     return [
         _num(CONF_INVERTER_MAX_POWER, caps, 0, 0, 50000, 100, "W"),
         _num(CONF_INVERTER_MAX_POWER_PER_PHASE, caps, 0, 0, 20000, 100, "W"),
+        (
+            _optional_entity_field(CONF_INVERTER_MAX_POWER_ENTITY_ID, defaults),
+            _entity_sel(
+                hass, {None, "power"}, _POWER_UNITS, ["sensor", "input_number"]
+            ),
+        ),
         (
             vol.Required(
                 CONF_INVERTER_SUPPORTS_ASYMMETRIC,

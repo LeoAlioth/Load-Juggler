@@ -200,7 +200,9 @@ def _charge_control_view(site, consumption, export, battery_power, draws):
     subtract.
     """
     if not site.is_off_grid and any(d > 0 for d in draws):
-        consumption, export = grid_without_managed_draws(consumption, export, draws)
+        consumption, export = grid_without_managed_draws(
+            consumption, export, draws, site.gridless_phases
+        )
     return replace(
         site, consumption=consumption, export_current=export, battery_power=battery_power
     )
@@ -270,7 +272,7 @@ def _apply_feedback_loop(site, solar_is_derived, members, total_draws, grid):
     orig_consumption = (site.consumption.a, site.consumption.b, site.consumption.c)
     orig_export = (site.export_current.a, site.export_current.b, site.export_current.c)
     new_consumption, new_export = grid_without_managed_draws(
-        site.consumption, site.export_current, total_draws
+        site.consumption, site.export_current, total_draws, site.gridless_phases
     )
     adj_consumption = (new_consumption.a, new_consumption.b, new_consumption.c)
     adj_export = (new_export.a, new_export.b, new_export.c)
@@ -392,7 +394,10 @@ def _read_hub_config(hub_entry):
 def _read_site_phases(hass, hub_entry, voltage):
     """The site's per-phase grid readings and whether it has grid CTs at all.
 
-    Returns ``(raw_phases, has_grid_cts)``. Which phases EXIST is decided
+    Returns ``(raw_phases, has_grid_cts, gridless)``; ``gridless`` flags, per
+    phase, one an inverter feeds that no grid CT reads on a site that has CTs
+    elsewhere (all False off-grid, where ``is_off_grid`` says it for every
+    phase). Which phases EXIST is decided
     here, from the CTs and the inverter output sensors together, because
     everything downstream (the phase count, the per-phase split, off-grid
     handling) reads it off this one list.
@@ -422,15 +427,17 @@ def _read_site_phases(hass, hub_entry, voltage):
         CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     )
     inverters = get_inverters_for_hub(hass, hub_entry.entry_id)
+    gridless = [False, False, False]
     for i, conf in enumerate(inv_phase_confs):
         if raw_phases[i] is None and any(
             get_entry_value(inverter, conf, None) for inverter in inverters
         ):
             raw_phases[i] = 0.0
+            gridless[i] = has_grid_cts
     # Nothing configured at all - fall back to a single phase.
     if all(r is None for r in raw_phases):
         raw_phases = [0.0, None, None]
-    return raw_phases, has_grid_cts
+    return raw_phases, has_grid_cts, tuple(gridless)
 
 
 def _read_max_import_power(hass, hub_entry, hub_runtime):
@@ -1431,7 +1438,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         excess_trigger_margin,
     ) = _read_hub_config(hub_entry)
 
-    raw_phases, has_grid_cts = _read_site_phases(hass, hub_entry, voltage)
+    raw_phases, has_grid_cts, gridless_phases = _read_site_phases(hass, hub_entry, voltage)
 
     # --- Input EMA smoothing (grid CT, solar, battery power) ---
     hub_runtime = hass.data[DOMAIN]["hubs"].get(hub_entry.entry_id, {})
@@ -1693,6 +1700,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         power_buffer=power_buffer,
         distribution_mode=distribution_mode,
         is_off_grid=not has_grid_cts,
+        gridless_phases=gridless_phases,
     )
 
     # --- Add loads ---

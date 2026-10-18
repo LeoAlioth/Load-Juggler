@@ -134,6 +134,7 @@
                     "name": "Ime tega razsmernika",
                     "entity_id": "Predpona ID entitete",
                     "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_entity_id": "Senzor skupne zmogljivosti razsmernika (neobvezno)",
                     "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
                     "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
                     "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
@@ -148,6 +149,7 @@
                 },
                 "data_description": {
                     "inverter_max_power": "Nazivna moč s podatkovnega lista tega razsmernika. 0 = brez omejitve.",
+                    "inverter_max_power_entity_id": "Napredno - bere se v vsakem ciklu namesto zgornje stalne zmogljivosti, tako da jo lahko avtomatizacija zniža proti 0 ob alarmu za pregretje razsmernika. Vati ali kilovati. Ko senzor ni na voljo, se obdrži zadnji odčitek; če ga še ni bilo, velja stalna zmogljivost.",
                     "inverter_max_power_per_phase": "Običajno skupna moč, deljena s številom faz. 0 = brez omejitve na fazo.",
                     "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
                     "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Nizni (PV) razsmernik ga nima: pustite prazno in šteje se ves njegov izhod. Hibrid, skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
@@ -683,6 +685,7 @@
                 "description": "AC stran razsmernika: zmogljivost ter senzorji izhoda in vhoda po fazah.",
                 "data": {
                     "inverter_max_power": "Skupna moč razsmernika",
+                    "inverter_max_power_entity_id": "Senzor skupne zmogljivosti razsmernika (neobvezno)",
                     "inverter_max_power_per_phase": "Največja moč razsmernika na fazo",
                     "inverter_supports_asymmetric": "Razsmernik podpira asimetrični izhod po fazah",
                     "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
@@ -695,6 +698,7 @@
                 },
                 "data_description": {
                     "inverter_max_power": "Nazivna moč s podatkovnega lista tega razsmernika. 0 = brez omejitve.",
+                    "inverter_max_power_entity_id": "Napredno - bere se v vsakem ciklu namesto zgornje stalne zmogljivosti, tako da jo lahko avtomatizacija zniža proti 0 ob alarmu za pregretje razsmernika. Vati ali kilovati. Ko senzor ni na voljo, se obdrži zadnji odčitek; če ga še ni bilo, velja stalna zmogljivost.",
                     "inverter_max_power_per_phase": "Običajno skupna moč, deljena s številom faz. 0 = brez omejitve na fazo.",
                     "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
                     "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Nizni (PV) razsmernik ga nima: pustite prazno in šteje se ves njegov izhod. Hibrid, skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",

@@ -247,6 +247,7 @@ One entry per inverter - everything physically attached to it, including its PV 
 | Field | Description | Default |
 |---|---|---|
 | Inverter max power | Total inverter capacity (W) | - |
+| Inverter max power entity | Optional sensor (W/kW) read each cycle instead of *Inverter max power*; an automation can lower it on an over-temperature alarm | none |
 | Inverter max power per phase | Per-phase inverter limit (W) | - |
 | Inverter supports asymmetric | Can inverter balance power across phases | Off |
 | Inverter output phase A/B/C entity | Per-phase inverter output sensors (optional) | - |

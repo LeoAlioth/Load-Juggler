@@ -434,6 +434,9 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
         max(0, site.main_breaker_rating - cons - buffer_per_phase) if cons is not None else 0
         for cons in (site.consumption.a, site.consumption.b, site.consumption.c)
     ]
+    # A phase no grid CT reads has no grid feed to hand out (synthetic 0 A, not
+    # a free breaker): only the inverters supply it.
+    limits = [0 if gridless else lim for lim, gridless in zip(limits, site.gridless_phases)]
 
     # Grid charging not allowed (and has battery): no import at all. This used
     # to cap each phase at its export - but the export is inverter output, and

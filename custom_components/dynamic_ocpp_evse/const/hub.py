@@ -18,6 +18,9 @@ CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direc
 # Inverter configuration (hub-level)
 CONF_INVERTER_MAX_POWER = "inverter_max_power"  # Total inverter capacity (W)
 CONF_INVERTER_MAX_POWER_PER_PHASE = "inverter_max_power_per_phase"  # Per-phase inverter limit (W)
+# Optional sensor (W/kW) read each cycle in place of the fixed total capacity - an automation
+# lowers it toward 0 on an inverter over-temperature alarm.
+CONF_INVERTER_MAX_POWER_ENTITY_ID = "inverter_max_power_entity_id"
 CONF_INVERTER_SUPPORTS_ASYMMETRIC = "inverter_supports_asymmetric"  # Can balance power across phases
 CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID = "inverter_output_phase_a_entity_id"  # Per-phase inverter output sensor
 CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID = "inverter_output_phase_b_entity_id"

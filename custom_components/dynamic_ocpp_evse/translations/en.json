@@ -134,6 +134,7 @@
                     "name": "Name for this inverter",
                     "entity_id": "Entity ID prefix",
                     "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_entity_id": "Sensor for the inverter's total capacity (optional)",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
                     "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
                     "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
@@ -148,6 +149,7 @@
                 },
                 "data_description": {
                     "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
+                    "inverter_max_power_entity_id": "Advanced - read each cycle instead of the fixed capacity above, so an automation can lower it toward 0 on an inverter over-temperature alarm. Watts or kilowatts. While the sensor is unavailable its last reading is kept; if it has never read, the fixed capacity is used.",
                     "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
                     "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
@@ -683,6 +685,7 @@
                 "description": "The inverter's AC side: capacity, and its output and input sensors per phase.",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
+                    "inverter_max_power_entity_id": "Sensor for the inverter's total capacity (optional)",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
                     "inverter_supports_asymmetric": "Inverter supports asymmetric phase output",
                     "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
@@ -695,6 +698,7 @@
                 },
                 "data_description": {
                     "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
+                    "inverter_max_power_entity_id": "Advanced - read each cycle instead of the fixed capacity above, so an automation can lower it toward 0 on an inverter over-temperature alarm. Watts or kilowatts. While the sensor is unavailable its last reading is kept; if it has never read, the fixed capacity is used.",
                     "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
                     "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
