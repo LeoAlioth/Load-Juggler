@@ -18,6 +18,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 
 from ..const import (
+    DEVICE_TYPE_ROOM_THERMOSTAT,
     DOMAIN,
     CONF_NAME,
     CONF_HUB_ENTRY_ID,
@@ -466,6 +467,7 @@ class LoadEntityMixin(LoadJugglerEntity):
         return {
             DEVICE_TYPE_PLUG: "Smart Load",
             DEVICE_TYPE_HOT_WATER_TANK: "Hot Water Tank",
+            DEVICE_TYPE_ROOM_THERMOSTAT: "Room Thermostat",
             DEVICE_TYPE_POWER_STATION: "Power Station",
         }.get(self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE), "EV Charger")
 

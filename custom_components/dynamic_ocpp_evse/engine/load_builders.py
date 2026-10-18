@@ -22,6 +22,7 @@ from ..calculations.models import INACTIVE_STATUSES
 from ..calculations.pacing import pace_cap_current
 from ..calculations.utils import managed_phase_draws
 from ..const import (
+    thermostat_defaults, behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
@@ -1260,14 +1261,15 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
         current_temp = float(raw_temp) if raw_temp is not None else None
     except (TypeError, ValueError):
         current_temp = None
+    away_d, normal_d, boost_d = thermostat_defaults(entry.data.get(CONF_DEVICE_TYPE))
     normal_temp = load_rt.get("tank_normal_temperature") or get_entry_value(
-        entry, CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE
+        entry, CONF_TANK_NORMAL_TEMPERATURE, normal_d
     )
     boost_temp = load_rt.get("tank_boost_temperature") or get_entry_value(
-        entry, CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
+        entry, CONF_TANK_BOOST_TEMPERATURE, boost_d
     )
     away_temp = load_rt.get("tank_away_temperature") or get_entry_value(
-        entry, CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE
+        entry, CONF_TANK_AWAY_TEMPERATURE, away_d
     )
 
     # Surplus demotion: a tank aiming at boost is heating on energy the site
@@ -1374,6 +1376,7 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
     builders = {
         DEVICE_TYPE_PLUG: _build_plug_load,
         DEVICE_TYPE_HOT_WATER_TANK: _build_hot_water_tank_load,
+        DEVICE_TYPE_ROOM_THERMOSTAT: _build_hot_water_tank_load,   # the same load; the LoadContext says tank
         DEVICE_TYPE_POWER_STATION: _build_power_station_load,
     }
     # Any other type is an EVSE, the integration's original device.
@@ -1425,7 +1428,7 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
             )
 
         load.catch_up_enabled = (
-            device_type != DEVICE_TYPE_HOT_WATER_TANK
+            behaviour_type(device_type) != DEVICE_TYPE_HOT_WATER_TANK
             and bool(
                 get_entry_value(entry, CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED)
             )

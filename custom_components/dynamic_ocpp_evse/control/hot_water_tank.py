@@ -13,6 +13,8 @@ from ..registry import own_entity_id
 from homeassistant.helpers.translation import async_get_translations
 
 from ..const import (
+    CONF_DEVICE_TYPE,
+    thermostat_defaults,
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CLIMATE_ENTITY_ID,
     CONF_NAME,
@@ -232,13 +234,14 @@ async def send_hot_water_tank_command(
     mode = load_rt.get(
         "operating_mode", DEFAULT_OPERATING_MODE_HOT_WATER_TANK.key
     )
+    defaults = thermostat_defaults(sensor.config_entry.data.get(CONF_DEVICE_TYPE))
     settings = {
         label: load_rt.get(f"tank_{label}_temperature")
         or get_entry_value(sensor.config_entry, conf, default)
-        for label, conf, default in (
-            ("away", CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE),
-            ("normal", CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE),
-            ("boost", CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE),
+        for label, conf, default in zip(
+            ("away", "normal", "boost"),
+            (CONF_TANK_AWAY_TEMPERATURE, CONF_TANK_NORMAL_TEMPERATURE, CONF_TANK_BOOST_TEMPERATURE),
+            defaults,
         )
     }
     away, normal, boost = settings["away"], settings["normal"], settings["boost"]

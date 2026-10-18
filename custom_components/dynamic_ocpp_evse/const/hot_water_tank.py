@@ -28,6 +28,18 @@ DEFAULT_TANK_AWAY_TEMPERATURE = 30        # °C
 DEFAULT_TANK_NORMAL_TEMPERATURE = 45      # °C
 DEFAULT_TANK_BOOST_TEMPERATURE = 65       # °C
 DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL = True
+# A room thermostat (device type room_thermostat) is the same load with room setpoints.
+DEFAULT_ROOM_AWAY_TEMPERATURE = 7         # °C, frost protection
+DEFAULT_ROOM_NORMAL_TEMPERATURE = 21      # °C, comfort
+DEFAULT_ROOM_BOOST_TEMPERATURE = 24       # °C
+ROOM_TEMPERATURE_RANGE = (5, 35)          # slider bounds, °C
+
+
+def thermostat_defaults(device_type):
+    """(away, normal, boost) default setpoints of a thermostat load's type, °C."""
+    if device_type == "room_thermostat":
+        return DEFAULT_ROOM_AWAY_TEMPERATURE, DEFAULT_ROOM_NORMAL_TEMPERATURE, DEFAULT_ROOM_BOOST_TEMPERATURE
+    return DEFAULT_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
 
 # Hot water tank operating modes. Each picks a setpoint (away/normal/boost)
 # dynamically via resolve_tank_setpoint(); priority is the distribution

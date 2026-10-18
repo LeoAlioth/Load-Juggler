@@ -19,6 +19,7 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.selector import selector
 from ..const import (
+    DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
@@ -138,6 +139,7 @@ _DEVICE_TYPE_BY_SETUP_TYPE = {
     "evse": DEVICE_TYPE_EVSE,
     "plug": DEVICE_TYPE_PLUG,
     "tank": DEVICE_TYPE_HOT_WATER_TANK,
+    "room": DEVICE_TYPE_ROOM_THERMOSTAT,
     "station": DEVICE_TYPE_POWER_STATION,
     "group": DEVICE_TYPE_GROUP,
     "inverter": DEVICE_TYPE_INVERTER,
@@ -202,6 +204,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options.append({"value": "evse", "label": "Add OCPP Charger (EVSE)"})
             options.append({"value": "plug", "label": "Add Smart Outlet / Relay"})
             options.append({"value": "tank", "label": "Add Hot Water Tank"})
+            options.append({"value": "room", "label": "Add Room Thermostat (heater or heat pump)"})
             options.append(
                 {"value": "station", "label": "Add Portable Power Station"}
             )
@@ -382,6 +385,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         first_step = {
             DEVICE_TYPE_PLUG: self.async_step_plug_config,
             DEVICE_TYPE_HOT_WATER_TANK: self.async_step_hot_water_tank_config,
+            DEVICE_TYPE_ROOM_THERMOSTAT: self.async_step_room_thermostat_config,
             DEVICE_TYPE_POWER_STATION: self.async_step_power_station_config,
             DEVICE_TYPE_GROUP: self.async_step_group_config,
             DEVICE_TYPE_INVERTER: self.async_step_inverter_features,
@@ -521,6 +525,23 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             type_label="Hot Water Tank",
             default_name="Hot Water Tank",
             default_entity_id="lj_hot_water_tank",
+            defaults={CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1},
+            entity_keys=_TANK_ENTITY_KEYS,
+            static_keys=(CONF_CLIMATE_ENTITY_ID,),
+        )
+
+    async def async_step_room_thermostat_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Room thermostat configuration step: the tank's page for a room's heater."""
+        return await self._async_create_load_page(
+            user_input,
+            step_id="room_thermostat_config",
+            schema=_hot_water_tank_schema,
+            device_type=DEVICE_TYPE_ROOM_THERMOSTAT,
+            type_label="Room Thermostat",
+            default_name="Room Thermostat",
+            default_entity_id="lj_room_thermostat",
             defaults={CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1},
             entity_keys=_TANK_ENTITY_KEYS,
             static_keys=(CONF_CLIMATE_ENTITY_ID,),
