@@ -24,6 +24,23 @@ Then: one push per repo, installs on **Home and Kozolec**; the LJ build also on 
 download and restart HA by themselves (automation "Load Juggler family - download pushed build" +
 script.lj_family_restart_after_build, 2 min debounce). Snapshot + NOTES.md per site.
 
+## Status, 2026-10-18
+
+The TODO entries carry the numbers (`JUG-n` in Load Juggler's `dev/TODO.md`, `INS-n` in Load Insights'); the plan ids below stay as they are.
+
+| # | Plan | Status | TODO |
+|---|------|--------|------|
+| 1 | lj-3 verify shipped | DONE 2026-10-17 (88d577f): item 1 PASS (Optimized) / FAIL (second charger paused), item 2 Home PASS / third site not exercised, item 3 N/A, item 4 PASS | results annotated in JUG-1, JUG-4, JUG-9 |
+| 2 | li-2 slicing invariance | not started | INS-13 |
+| 3 | li-1 daily repair | repair shipped (c689283); re-bench, tests, docs open | INS-14 |
+| 4 | li-3 temperature evidence | not started (`MIN_HOURS = 336` is still the rule) | INS-15 |
+| 5 | li-4 house from parts | Part A built 2026-10-17 (2e5ca5f); Part B (Kozolec helper) open, may be superseded by the planning sensors | INS-16, INS-4 |
+| 6 | li-5 running markdown | not started | INS-17 |
+| 7 | lj-1 immediate cuts | prototyped on a scratch copy, not in the repo | JUG-2 |
+| 8 | lj-7 tank flapping | code DONE 2026-10-18 (db2d02d, with the owner's review); third-site check open | JUG-4 |
+| 9 | lj-6 energy prefill | not started | JUG-22 |
+| 10 | lj-5 household refactor | not started | JUG-10, JUG-11 |
+
 ## the owner's decisions (2026-10-12)
 
 - lj-1: 30 s peaks slightly over the breaker are tolerable (meters average ~90 s, slow-blow fuses) - minimise, not guarantee.

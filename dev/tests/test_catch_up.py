@@ -256,10 +256,12 @@ def _entry(**options):
     return SimpleNamespace(entry_id="hub", data={}, options=options)
 
 
-def _engine(entry, runtime, *, soc=60.0, pacing=(3.68, 1.0), loads=None):
+def _engine(entry, runtime, *, soc=60.0, pacing=(3.68, 1.0), loads=None, hours="pacing"):
+    """``hours``: the hours to the next full charge the engine passes in; by default
+    the pacing horizon's, as when no next-full-charge entity is configured."""
     site = _site(soc=soc)
     site.loads = loads or [_load(BEHAVIOR_SOLAR_ONLY, False)]
-    _apply_catch_up(runtime, entry, site, pacing)
+    _apply_catch_up(runtime, entry, site, pacing, (pacing[1] if pacing else None) if hours == "pacing" else hours)
     return site
 
 
@@ -321,6 +323,15 @@ def test_engine_holds_through_a_wobble():
     assert _engine(_entry(), runtime, pacing=(3.68, 1.0)).loads[0].catch_up_active
     assert _engine(_entry(), runtime, pacing=(3.2, 1.0)).loads[0].catch_up_active
     assert not _engine(_entry(), runtime, pacing=(2.9, 1.0)).loads[0].catch_up_active
+
+
+def test_engine_counts_the_hours_to_the_next_full_charge_not_the_sunset():
+    # 3.68 kWh over the 5 h to sunset is 0.74 kW: far under the load's 3.68 kW maximum, so it waits;
+    # the battery is full in 1 h, and the same energy then needs 3.68 kW - it catches up now
+    assert not _engine(_entry(), {}, pacing=(3.68, 5.0)).loads[0].catch_up_active
+    assert _engine(_entry(), {}, pacing=(3.68, 5.0), hours=1.0).loads[0].catch_up_active
+    # an unreadable next-full-charge time switches it off, like unreadable pacing
+    assert not _engine(_entry(), {}, pacing=(3.68, 1.0), hours=None).loads[0].catch_up_active
 
 
 # --- the builder: a load's own option decides -----------------------------------------
