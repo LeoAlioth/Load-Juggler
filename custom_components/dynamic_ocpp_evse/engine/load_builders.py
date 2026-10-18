@@ -58,6 +58,7 @@ from ..const import (
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
     CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_POWER_ENTITY_ID,
     CONF_TANK_OFF_OPERATION_MODE,
@@ -1440,6 +1441,11 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
         if room_entity:
             room = _read_entity(hass, room_entity, None, unit=units.DOMAIN_KWH)
             load.early_room_kwh = None if room is _UNAVAILABLE else float(room)
+        # What it really pulls (Load Insights' "Absorption rate"), for the group's power.
+        rate_entity = get_entry_value(entry, CONF_EARLY_RATE_ENTITY_ID, None)
+        if rate_entity:
+            rate = _read_entity(hass, rate_entity, None, unit=units.DOMAIN_WATTS)
+            load.early_rate_w = None if rate is _UNAVAILABLE or float(rate) <= 0 else float(rate)
 
         site.loads.append(load)
 

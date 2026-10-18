@@ -758,6 +758,10 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
 
 
 def _load_watts(load, site):
+    """The power a load puts into the early-start group: what it really pulls when
+    its absorption-rate sensor says (a measured figure), else its minimum power."""
+    if load.early_rate_w:
+        return load.early_rate_w
     return load.min_current * site.voltage * max(len(load.active_phases_mask or "A"), 1)
 
 

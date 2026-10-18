@@ -173,6 +173,8 @@ class LoadContext:
     # today (kWh, from its optional room sensor). None = not known, counts as able.
     thermal_headroom_k: float | None = None
     early_room_kwh: float | None = None
+    # What the load really pulls when it runs (W, from its optional absorption-rate sensor); None = use its minimum power.
+    early_rate_w: float | None = None
 
     # Device hardware current rating (A) - the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which

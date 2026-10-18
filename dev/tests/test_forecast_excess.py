@@ -51,6 +51,7 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
     _apply_forecast_excess,
+    _load_watts,
     _publish_early_start,
 )
 from custom_components.dynamic_ocpp_evse.control.status import with_early_start
@@ -166,6 +167,18 @@ def _tank(**kw):
         load_id="tank", entity_id="tank", min_current=8.3, max_current=8.3, phases=1,
         mode_behavior=BEHAVIOR_BINARY_EXCESS, active_phases_mask="A", **kw,
     )
+
+
+def test_the_group_counts_what_a_load_really_pulls_not_its_minimum():
+    """Load Insights' absorption rate, when the load has the sensor, replaces the rated minimum in the
+    group's power: a 1.9 kW element that really pulls 1.2 kW needs more hours, so it starts earlier."""
+    site = SimpleNamespace(voltage=230.0)
+    assert _load_watts(_tank(), site) == pytest.approx(8.3 * 230.0)
+    assert _load_watts(_tank(early_rate_w=1200.0), site) == 1200.0
+    assert _load_watts(_tank(early_rate_w=None), site) == pytest.approx(8.3 * 230.0)
+    # and the start condition follows: 6 kWh planned over 4 h is under 1.9 kW x 4 h ... but over 1.2 kW x 4 h
+    assert starts_early(6.0, 4.0, 1200.0) is True
+    assert starts_early(6.0, 4.0, 1909.0) is False
 
 
 def test_pool_is_the_paced_part_of_the_battery_charge():
