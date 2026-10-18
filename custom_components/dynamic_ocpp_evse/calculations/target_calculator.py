@@ -2588,7 +2588,10 @@ def _distribute_per_phase_strict(
         phys_avail = remaining.get_available(mask)
         allocation = round(min(load.max_current, src_max, phys_avail), 1)
 
-        if allocation < load.min_current:
+        # Judge on the allocation as it is given, rounded - the minimum is
+        # rounded to the same 0.1 A so a binary load whose rating rounds
+        # down (900 W / 3 ph = 1.304 -> 1.3 A) is not silently rejected.
+        if allocation < round(load.min_current, 1):
             load.allocated_current = 0
             continue
 
@@ -2677,8 +2680,11 @@ def _distribute_per_phase_optimized(
         # (18.3 - 12.3 A), or the load ahead rounded up by 0.04 A, and the
         # next load got 0 instead of its minimum - every few cycles, each one
         # a stop for a running car (the third site's second charger, 2026-10-04).
+        # The minimum is rounded too: a binary load whose rating rounds down
+        # (900 W / 3 ph = 1.304 -> 1.3 A) would otherwise never be allocated
+        # while it runs (lj-7).
         wanted = round(wanted, 1)
-        if wanted < load.min_current:
+        if wanted < round(load.min_current, 1):
             load.allocated_current = 0
             continue
 

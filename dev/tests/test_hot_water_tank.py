@@ -595,6 +595,81 @@ def _replay(entity_id, surplus, mode=TANK_MODE_NORMAL.key, temp=44.0,
     return shown, labels
 
 
+# lj-7 fix B. The third site, 11 Oct 2026 20:05-20:35 UTC: a MELCloud heat pump
+# (water_heater.tc, Normal, 40 / 42 / 45 C, min_temp 40) idle at 40 C under its 42 C
+# target, its permit flickering 0 / 1.3 A every 2-30 s with two cars charging. Each
+# shed was held 5 min (min off time), the target went 42 -> 40 -> 42 -> 40 ... - 72
+# cloud writes a day, for a heater that draws nothing either way.
+PERMITS_3RD_SITE = [
+    (1, 1.3), (147, 0), (149, 1.3), (175, 0), (201, 1.3), (213, 0), (231, 1.3), (237, 0),
+    (247, 1.3), (273, 0), (291, 1.3), (305, 0), (307, 1.3), (333, 0), (343, 1.3), (365, 0),
+    (369, 1.3), (393, 0), (401, 1.3), (523, 0), (529, 1.3), (551, 0), (561, 1.3), (579, 0),
+    (591, 1.3), (609, 0), (621, 1.3), (933, 0), (937, 1.3), (963, 0), (983, 1.3), (987, 0),
+    (993, 1.3), (995, 0), (999, 1.3), (1025, 0), (1027, 1.3), (1055, 0), (1057, 1.3),
+    (1085, 0), (1089, 1.3), (1115, 0), (1123, 1.3), (1145, 0), (1153, 1.3), (1175, 0),
+    (1183, 1.3), (1205, 0), (1223, 1.3), (1239, 0), (1245, 1.3), (1265, 0), (1283, 1.3),
+    (1295, 0), (1313, 1.3), (1329, 0), (1345, 1.3), (1355, 0), (1373, 1.3), (1385, 0),
+    (1403, 1.3), (1415, 0), (1433, 1.3), (1619, 0), (1621, 1.3),
+]
+
+
+class _Permits:
+    """The site ticks every 2 s running ``min_off_hold`` on the permit, as
+    entities/load.py does; the tank is built and commanded every 15 s. The
+    surplus verdict stays off, so the label stays normal."""
+
+    def __init__(self, status, temp):
+        self.hass, self.device, self.sensor = _tank(
+            "water_heater.tc", TANK_MODE_NORMAL.key, temp, 40.0, 42.0, 45.0, 40, status=status)
+        self.off_since, self.permit, self.shown = None, 0.0, [42.0]
+
+    def tick(self, t, granted, status=None, temp=None):
+        if status is not None:
+            self.device.attributes["status"] = status
+        if temp is not None:
+            self.device.attributes["current_temperature"] = temp
+        self.permit, self.off_since, _ = min_off_hold(granted, self.off_since, float(t), 300.0)
+        if t % 15:
+            return
+        _build_hot_water_tank_load(self.hass, self.sensor.config_entry, 230.0, "tank_1", 1)
+        self.hass.services.calls.clear()
+        asyncio.run(send_hot_water_tank_command(
+            self.sensor, self.permit, {"excess_available": False}, float(t)))
+        for _domain, service, data in self.hass.services.calls:
+            if service == "set_temperature":
+                self.device.attributes["temperature"] = data["temperature"]
+                if self.shown[-1] != data["temperature"]:
+                    self.shown.append(data["temperature"])
+
+
+def test_a_denied_heat_pump_idle_at_its_normal_target_is_left_there():
+    """Half an hour of the recorded permit flicker: the heat pump idles at 40 C
+    under its 42 C target, so it stays at 42 and nothing is written."""
+    run, i, granted = _Permits("idle", 40.0), 0, 0.0
+    for t in range(0, 1800, 2):
+        while i < len(PERMITS_3RD_SITE) and PERMITS_3RD_SITE[i][0] <= t:
+            granted = PERMITS_3RD_SITE[i][1]
+            i += 1
+        run.tick(t, granted)
+    assert run.shown == [42.0]
+
+
+def test_a_denied_heat_pump_that_starts_heating_is_still_set_to_its_lowest_target():
+    """It heats while denied (status heat_water at 37.5 C): lowered to 40 once. Back
+    to idle at 40.5 C it is not raised while still denied, and when the permit
+    returns it gets 42."""
+    run = _Permits("heat_water", 37.5)
+    for t in range(0, 30, 2):
+        run.tick(t, 0.0)
+    assert run.shown == [42.0, 40.0]
+    for t in range(30, 330, 2):                      # idle at 40.5 C, still denied
+        run.tick(t, 0.0, status="idle", temp=40.5)
+    assert run.shown == [42.0, 40.0]
+    for t in range(330, 930, 2):                     # the permit returns
+        run.tick(t, 1.3)
+    assert run.shown == [42.0, 40.0, 42.0]
+
+
 MIN = 60 / TICK_S  # cycles a minute
 
 
