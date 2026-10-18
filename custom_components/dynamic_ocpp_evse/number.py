@@ -11,6 +11,8 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from .const import (
+    thermostat_defaults,
+    behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT, ROOM_TEMPERATURE_RANGE, DEFAULT_ROOM_AWAY_TEMPERATURE, DEFAULT_ROOM_NORMAL_TEMPERATURE, DEFAULT_ROOM_BOOST_TEMPERATURE,
     CONF_CLIMATE_ENTITY_ID,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
@@ -132,7 +134,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             _LOGGER.info(f"No battery configured - skipping battery number entities")
 
     elif entry_type == ENTRY_TYPE_LOAD:
-        device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        raw_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        device_type = behaviour_type(raw_type)
         if device_type == DEVICE_TYPE_PLUG:
             power = conf(CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
             rows = [
@@ -140,10 +143,14 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             ]
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             power = conf(CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER)
+            room = raw_type == DEVICE_TYPE_ROOM_THERMOSTAT
+            low, high = ROOM_TEMPERATURE_RANGE if room else (10, 90)
+            away_d, normal_d, boost_d = thermostat_defaults(raw_type)
+            icon = "mdi:thermometer" if room else "mdi:thermometer-water"
             rows = [
-                (TankTemperatureSlider, "Away Temperature", "tank_away_temperature", "tank_away_temperature", 10, 90, 1, conf(CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE), "°C", "mdi:thermometer-water"),
-                (TankTemperatureSlider, "Normal Temperature", "tank_normal_temperature", "tank_normal_temperature", 10, 90, 1, conf(CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE), "°C", "mdi:thermometer-water"),
-                (TankTemperatureSlider, "Boost Temperature", "tank_boost_temperature", "tank_boost_temperature", 10, 90, 1, conf(CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE), "°C", "mdi:thermometer-water"),
+                (TankTemperatureSlider, "Away Temperature", "tank_away_temperature", "tank_away_temperature", low, high, 1, conf(CONF_TANK_AWAY_TEMPERATURE, away_d), "°C", icon),
+                (TankTemperatureSlider, "Normal Temperature", "tank_normal_temperature", "tank_normal_temperature", low, high, 1, conf(CONF_TANK_NORMAL_TEMPERATURE, normal_d), "°C", icon),
+                (TankTemperatureSlider, "Boost Temperature", "tank_boost_temperature", "tank_boost_temperature", low, high, 1, conf(CONF_TANK_BOOST_TEMPERATURE, boost_d), "°C", icon),
                 (LoadPowerSlider, "Element Power", "device_power", "device_power", 10, max(power, 30000), 10, power, "W", "mdi:flash"),
             ]
         elif device_type == DEVICE_TYPE_POWER_STATION:

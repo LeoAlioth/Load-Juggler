@@ -9,6 +9,7 @@ from homeassistant.components.sensor import (
 from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import (
+    behaviour_type,
     CONF_LOAD_PRIORITY,
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
@@ -454,8 +455,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             load_avail_data.get(self.config_entry.entry_id, 0), 1
         )
 
-        device_type = self.config_entry.data.get(
-            CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE
+        device_type = behaviour_type(
+            self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         )
         if device_type == DEVICE_TYPE_EVSE:
             self._available_current = apply_smoothing(

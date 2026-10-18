@@ -17,6 +17,7 @@ from ..entities.readout import status_with_readout_note
 from ..entities.sun_probe import status_with_sun_probe_note
 from ..control.status import hands_off_status
 from ..const import (
+    behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_ENTITY_ID,
@@ -110,6 +111,7 @@ _DEVICE_TYPE_LABELS = {
     DEVICE_TYPE_EVSE: "EVSE",
     DEVICE_TYPE_PLUG: "Smart plug",
     DEVICE_TYPE_HOT_WATER_TANK: "Hot water tank",
+    DEVICE_TYPE_ROOM_THERMOSTAT: "Room thermostat",
     DEVICE_TYPE_POWER_STATION: "Power station",
 }
 
@@ -323,7 +325,7 @@ def _load_mode(hass, load_entry) -> str:
 
 def _load_limits_text(hass, load_entry) -> str:
     """The load's configured envelope, in the units that device type uses."""
-    device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    device_type = behaviour_type(load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
     if device_type == DEVICE_TYPE_PLUG:
         rating = get_entry_value(
             load_entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
@@ -396,7 +398,7 @@ _STATUS_UNIQUE_ID_SUFFIX = {
 def _device_status(hass, load_entry) -> str | None:
     """A non-EVSE load's own status sensor state, or None (EVSE, or no sensor)."""
     suffix = _STATUS_UNIQUE_ID_SUFFIX.get(
-        load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        behaviour_type(load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
     )
     if not suffix:
         return None

@@ -33,6 +33,15 @@ CONF_DEVICE_TYPE = "device_type"
 DEVICE_TYPE_EVSE = "evse"
 DEVICE_TYPE_PLUG = "plug"
 DEVICE_TYPE_HOT_WATER_TANK = "hot_water_tank"
+DEVICE_TYPE_ROOM_THERMOSTAT = "room_thermostat"
+
+
+def behaviour_type(device_type):
+    """The type whose machinery a device runs on: a room thermostat is a thermostat-driven
+    binary heating load exactly like a hot water tank, so the engine, entities and flows
+    treat it as one. Only the labels, the setpoint defaults and what Load Insights learns
+    from it (kWh per degree of a room, not of water) differ."""
+    return DEVICE_TYPE_HOT_WATER_TANK if device_type == DEVICE_TYPE_ROOM_THERMOSTAT else device_type
 DEVICE_TYPE_POWER_STATION = "power_station"
 DEVICE_TYPE_GROUP = "group"
 DEVICE_TYPE_INVERTER = "inverter"

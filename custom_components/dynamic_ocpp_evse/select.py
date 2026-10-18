@@ -7,6 +7,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from . import consume_plug_mode_migration
 from .const import (
+    behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, CONF_NAME, CONF_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_HOT_WATER_TANK,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
@@ -65,7 +66,10 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
     def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
         self._init_entity(hass, config_entry, f"{name} Operating Mode", f"{entity_id}_operating_mode")
 
-        self._device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        self._raw_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        self._device_type = behaviour_type(self._raw_type)
+        if self._raw_type == DEVICE_TYPE_ROOM_THERMOSTAT:
+            self._attr_translation_key = "operating_mode_room"   # the room labels
         modes, default = modes_for(self._device_type)
         self._modes = modes
         self._attr_options = [m.key for m in modes]

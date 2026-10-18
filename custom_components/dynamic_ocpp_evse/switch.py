@@ -13,6 +13,7 @@ from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util import dt as dt_util
 from .entities.mixins import HubEntityMixin, LoadEntityMixin, InverterEntityMixin
 from .const import (
+    behaviour_type,
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, ENTRY_TYPE_INVERTER,
     CONF_NAME, CONF_ENTITY_ID,
     CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION,
@@ -39,7 +40,7 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")
         name = config_entry.data.get(CONF_NAME, "Load")
         entities = [DynamicControlSwitch(hass, config_entry, entity_id, name)]
-        device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        device_type = behaviour_type(config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
         if device_type == DEVICE_TYPE_POWER_STATION:
             entities.append(
                 StationStormReserveSwitch(hass, config_entry, entity_id, name)
@@ -190,7 +191,7 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
                 entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID),
                 entry.data.get(CONF_STATION_RESERVE_ENTITY_ID),
             ],
-        }.get(entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE), [])
+        }.get(behaviour_type(entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)), [])
         watched = [e for e in watched if e]
         if watched:
             self.async_on_remove(

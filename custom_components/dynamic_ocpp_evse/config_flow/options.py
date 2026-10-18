@@ -16,6 +16,7 @@ from typing import Any
 from homeassistant import config_entries
 from homeassistant.helpers.selector import selector
 from ..const import (
+    DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
@@ -269,9 +270,12 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 menu_options.append("priority")
             menu_options += ["overview", "summary"]
             return self.async_show_menu(step_id="init", menu_options=menu_options)
-        return self.async_show_menu(
-            step_id="init", menu_options=["settings", "overview"]
-        )
+        menu_options = ["settings", "overview"]
+        if self.config_entry.data.get(CONF_DEVICE_TYPE) in (
+            DEVICE_TYPE_HOT_WATER_TANK, DEVICE_TYPE_ROOM_THERMOSTAT
+        ):
+            menu_options.append("change_type")
+        return self.async_show_menu(step_id="init", menu_options=menu_options)
 
     async def async_step_overview(
         self, user_input: dict[str, Any] | None = None
@@ -324,6 +328,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_plug()
             if device_type == DEVICE_TYPE_HOT_WATER_TANK:
                 return await self.async_step_hot_water_tank()
+            if device_type == DEVICE_TYPE_ROOM_THERMOSTAT:
+                return await self.async_step_room_thermostat()
             if device_type == DEVICE_TYPE_POWER_STATION:
                 return await self.async_step_power_station()
             return await self.async_step_charger()
@@ -678,6 +684,45 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             schema=_hot_water_tank_schema,
             entity_keys=_TANK_ENTITY_KEYS,
         )
+
+    async def async_step_room_thermostat(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        return await self._async_edit_page(
+            user_input,
+            step_id="room_thermostat",
+            schema=_hot_water_tank_schema,
+            entity_keys=_TANK_ENTITY_KEYS,
+        )
+
+    async def async_step_change_type(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Switch a hot water tank to a room thermostat or back. Both run on the same entities,
+        so nothing is lost: the entity ids, their history and every setting stay, and only
+        the labels, the setpoint defaults and what Load Insights learns from it change."""
+        is_room = self.config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_ROOM_THERMOSTAT
+        return self.async_show_menu(
+            step_id="change_type",
+            menu_options=["change_type_confirm", "init"],
+            description_placeholders={
+                "now": "room thermostat" if is_room else "hot water tank",
+                "then": "hot water tank" if is_room else "room thermostat",
+            },
+        )
+
+    async def async_step_change_type_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        new_type = (
+            DEVICE_TYPE_HOT_WATER_TANK
+            if self.config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_ROOM_THERMOSTAT
+            else DEVICE_TYPE_ROOM_THERMOSTAT
+        )
+        self.hass.config_entries.async_update_entry(
+            self.config_entry, data={**self.config_entry.data, CONF_DEVICE_TYPE: new_type}
+        )
+        return self.async_create_entry(title="", data=dict(self.config_entry.options))
 
     async def async_step_power_station(
         self, user_input: dict[str, Any] | None = None

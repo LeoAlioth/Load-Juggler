@@ -33,6 +33,7 @@ from .const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
 )
+from .const.common import behaviour_type
 from .helpers import (
     fleet_has_battery_capacity,
     has_battery_capacity,
@@ -358,7 +359,7 @@ async def async_setup_entry(
         hass, config_entry, hub_entry, name, entity_id
     )
 
-    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    device_type = behaviour_type(config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
     if device_type == DEVICE_TYPE_HOT_WATER_TANK:
         status_sensor = LoadJugglerTankStatusSensor(
             hass, config_entry, hub_entry, name, entity_id

@@ -33,6 +33,15 @@
             "battery_soc_control": {
                 "name": "Battery SOC control"
             }
+        },
+        "select": {
+            "operating_mode_room": {
+                "state": {
+                    "Freeze Protection": "Frost protection",
+                    "Normal": "Comfort",
+                    "Solar Priority": "Solar Priority"
+                }
+            }
         }
     },
     "config": {
@@ -422,6 +431,41 @@
                 "data_description": {
                     "circuit_group_members": "The loads sharing one breaker or sub-feed. Their combined draw is held under the group's limit; when it would be exceeded, the lower-priority members are capped first."
                 }
+            },
+            "room_thermostat_config": {
+                "title": "Room Thermostat Configuration",
+                "description": "Configure a room heater or heat pump controlled through a climate entity (for example a Generic Thermostat). It runs like a hot water tank - Load Juggler gates its power and writes its setpoint - with room temperatures as defaults: away 7 °C, normal 21 °C, boost 24 °C.",
+                "data": {
+                    "name": "Name for this device",
+                    "entity_id": "Entity ID prefix",
+                    "climate_entity_id": "Thermostat (climate entity)",
+                    "heating_element_power": "Heating element power",
+                    "tank_prioritize_below_normal": "Prioritize over other solar-priority loads when below normal temperature",
+                    "connected_to_phase": "Connected to phase",
+                    "load_priority": "Priority (1 = highest)",
+                    "tank_power_entity_id": "Power sensor (optional)",
+                    "early_room_entity_id": "Room to absorb today (optional)",
+                    "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout",
+                    "binary_min_off_time": "Minimum off time"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for entities created by this integration.",
+                    "climate_entity_id": "The climate entity regulating the room. Load Juggler reads its temperature and controls its on/off state and target setpoint.",
+                    "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
+                    "connected_to_phase": "Which electrical phase(s) the heating element is wired to.",
+                    "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "tank_power_entity_id": "Optional sensor reporting the element's live power draw (for example the power sensor of the smart relay/outlet powering the tank) - used instead of the fixed rating when present.",
+                    "early_room_entity_id": "Optional kWh sensor saying how much more this load can take today - Load Insights' \"Room to absorb today\". Early start counts only the loads that still have room; without it the load is assumed able to take what is planned.",
+                    "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
+                    "update_frequency": "How often to re-evaluate the tank.",
+                    "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
+                    "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                    "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
+                    "tank_prioritize_below_normal": "When on, a Solar Priority tank that has dropped below its Normal temperature is promoted to the Normal urgency tier, so it wins contention against other Solar Priority loads. It does not change where the power comes from - the tank still never uses the grid and still stops at the battery's minimum SOC."
+                }
             }
         },
         "error": {
@@ -479,7 +523,8 @@
                     "hub_policy": "Battery and forecast policy",
                     "hub_timing": "Timing and detection",
                     "hub_filters": "Filters",
-                    "priority": "Device priority order"
+                    "priority": "Device priority order",
+                    "change_type": "Change device type"
                 }
             },
             "overview": {
@@ -880,6 +925,46 @@
                 "data_description": {
                     "circuit_group_current_limit": "The amperage rating of the circuit breaker shared by the loads in this group.",
                     "circuit_group_members": "The loads sharing one breaker or sub-feed. Their combined draw is held under the group's limit; when it would be exceeded, the lower-priority members are capped first."
+                }
+            },
+            "room_thermostat": {
+                "title": "Update Room Thermostat Settings",
+                "description": "Update room thermostat settings",
+                "data": {
+                    "climate_entity_id": "Thermostat (climate entity)",
+                    "heating_element_power": "Heating element power",
+                    "tank_prioritize_below_normal": "Prioritize over other solar-priority loads when below normal temperature",
+                    "connected_to_phase": "Connected to phase",
+                    "load_priority": "Priority (1 = highest)",
+                    "tank_power_entity_id": "Power sensor (optional)",
+                    "early_room_entity_id": "Room to absorb today (optional)",
+                    "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
+                    "update_frequency": "Update frequency",
+                    "solar_grace_period": "Solar/Excess grace period",
+                    "manual_override_timeout": "Manual override timeout",
+                    "binary_min_off_time": "Minimum off time"
+                },
+                "data_description": {
+                    "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater has no standard way of reporting whether it is heating: its power sensor measures it; without one Load Juggler reads the device's own status where it publishes one (a MELCloud heat pump does), and otherwise takes the tank as drawing the heating element power while it is colder than its target and not cooling - a falling temperature reads idle, inside the heater's own restart hysteresis.",
+                    "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
+                    "tank_prioritize_below_normal": "When on, a Solar Priority tank that has dropped below its Normal temperature is promoted to the Normal urgency tier, so it wins contention against other Solar Priority loads. It does not change where the power comes from - the tank still never uses the grid and still stops at the battery's minimum SOC.",
+                    "connected_to_phase": "Which electrical phase(s) the heating element is wired to.",
+                    "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "tank_power_entity_id": "Optional sensor reporting the element's live power draw (for example the power sensor of the smart relay/outlet powering the tank) - used instead of the fixed rating when present.",
+                    "early_room_entity_id": "Optional kWh sensor saying how much more this load can take today - Load Insights' \"Room to absorb today\". Early start counts only the loads that still have room; without it the load is assumed able to take what is planned.",
+                    "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
+                    "update_frequency": "How often to re-evaluate the tank.",
+                    "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
+                    "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                    "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
+                }
+            },
+            "change_type": {
+                "title": "Change device type",
+                "description": "This device is a {now}. Change it to a {then}?\n\nBoth run on the same entities, so nothing is lost: the entity ids, their history and every setting stay. Only the labels, the setpoint defaults and what Load Insights learns from it change (kWh per degree of water or of a room). Setpoints already set are kept.",
+                "menu_options": {
+                    "change_type_confirm": "Yes, change it",
+                    "init": "← Back to menu"
                 }
             }
         }

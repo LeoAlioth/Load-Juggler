@@ -2736,7 +2736,8 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
                     assert marker[lang] in help_text.lower(), (
                         f"{name} {section}/{step}/{field} does not mention the slider"
                     )
-        assert seen == 16, f"{name}: found {seen} slider-backed fields, expected 16"
+        # 18: the room thermostat repeats the tank's element power in its setup and options pages
+        assert seen == 18, f"{name}: found {seen} slider-backed fields, expected 18"
 
 
 def test_the_filters_page_is_translated_in_every_file():
