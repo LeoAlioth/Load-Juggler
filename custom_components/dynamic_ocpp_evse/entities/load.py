@@ -22,7 +22,9 @@ from ..const import (
     CONF_PHASE_VOLTAGE,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_STATION_MIN_CHARGE_POWER,
+    CONF_FILTER_DEAD_BAND,
     CONF_UPDATE_FREQUENCY,
+    DEAD_BAND,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_CHARGE_PAUSE_DURATION,
@@ -51,7 +53,7 @@ from .mixins import LoadEntityMixin, SiteFreshnessMixin
 from .readout import readout_attributes
 from .sun_probe import sun_probe_attributes
 from ..registry import get_hub_for_load
-from ..control.smoothing import apply_smoothing
+from ..control.smoothing import apply_smoothing, cut_now
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
 from ..control import stamp_command
@@ -724,7 +726,23 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
         )
         now_mono = time.monotonic()
-        if now_mono - self._last_command_time < command_interval:
+        dynamic_control_on = load_rt.get("dynamic_control", True)
+        # A cut that keeps the charger running goes out now, not at its slot:
+        # the engine has already handed the room to someone else (a second car
+        # starting). Raises, pauses and stops keep the slot.
+        cut = None
+        if not short and dynamic_control_on and self._pause_started_at is None:
+            cut = cut_now(
+                self, raw_permit, min_charge_current,
+                get_entry_value(hub_entry, CONF_FILTER_DEAD_BAND, DEAD_BAND),
+            )
+            if cut is not None:
+                _LOGGER.debug(
+                    "Cut for %s goes out before its slot: %.1f A -> %.1f A",
+                    self._attr_name, self._last_commanded_limit, cut,
+                )
+                self._available_current = cut
+        if cut is None and now_mono - self._last_command_time < command_interval:
             _LOGGER.debug(
                 "Site refresh for %s (command send in %.0fs)",
                 self._attr_name,
@@ -742,8 +760,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
             DEFAULT_MAX_CHARGE_CURRENT,
         )
-
-        dynamic_control_on = load_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:
             # The tank is a binary load whose thermostat - not the engine -
