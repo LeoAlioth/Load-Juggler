@@ -58,6 +58,7 @@ from ..const import (
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_GRID_EXPORT_LIMIT_PER_PHASE,
     CONF_HEATING_ELEMENT_POWER,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_ENTITY_ID,
@@ -161,6 +162,7 @@ from ..const import (
     DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
     DEFAULT_GRID_EXPORT_LIMIT,
+    DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE,
     DEFAULT_HEATING_ELEMENT_POWER,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_MAX_CHARGE_CURRENT,
@@ -363,6 +365,10 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
         # and the PV clipping forecast integrates above it. 0 = no
         # limit: grid-side Excess never triggers, forecast off.
         _num(CONF_GRID_EXPORT_LIMIT, defaults, DEFAULT_GRID_EXPORT_LIMIT, 0, 50000, 100, "W"),
+        # Optional second ceiling, per phase: only the curtailment test reads it.
+        _num(
+            CONF_GRID_EXPORT_LIMIT_PER_PHASE, defaults, DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE, 0, 20000, 100, "W",
+        ),
         _num(
             CONF_EXCESS_TRIGGER_MARGIN, defaults, DEFAULT_EXCESS_TRIGGER_MARGIN,
             0, 5000, 50, "W",
@@ -795,6 +801,7 @@ HUB_CONNECTION_KEYS = (
 )
 HUB_EXPORT_KEYS = (
     CONF_GRID_EXPORT_LIMIT,
+    CONF_GRID_EXPORT_LIMIT_PER_PHASE,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_EXCESS_HYSTERESIS,
 )

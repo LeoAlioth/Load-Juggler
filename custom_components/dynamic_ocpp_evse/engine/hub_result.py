@@ -43,6 +43,7 @@ from ..const import (
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_GRID_EXPORT_LIMIT_PER_PHASE,
     CONF_PHASES,
     CONF_TOTAL_ALLOCATED_CURRENT,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
@@ -502,7 +503,16 @@ def _compute_forecast_advice(
             site.battery_soc_full,
         )
         if off_grid
-        else export_is_clamped(site.total_export_power, export_limit)
+        else export_is_clamped(
+            site.total_export_power,
+            export_limit,
+            phase_export_w=[
+                (a or 0.0) * site.voltage for a in (
+                    site.export_current.a, site.export_current.b, site.export_current.c
+                )
+            ],
+            phase_limit_w=get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT_PER_PHASE, 0),
+        )
     )
     # The observers learn from PUBLISHED production, not the calculation's:
     # None wherever the figure is not a measurement (fleet.solar_is_assumed) -

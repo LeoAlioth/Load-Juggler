@@ -232,6 +232,7 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Phase voltage | Voltage per phase (V) | 230V |
 | Max import power entity | Template sensor for grid import limit (W) | - |
 | Grid export limit | Physical/contract export ceiling - Excess triggers at limit − margin, and it enables the PV clipping forecast (0 = unlimited, both off) | 0 |
+| Grid export limit per phase | Optional cap (W) on what one phase may export. The forecast's learning counts the inverter as curtailing when the total is at its limit OR any phase is at this one (an asymmetric inverter can breach one phase while the total passes). It does not enable the forecast or move the Excess trigger (0 = none) | 0 |
 | Excess trigger margin | How far below the export limit Excess mode engages (W) | 500W |
 | Invert phases | Flip CT polarity if installed backwards | Off |
 | Distribution mode | How to allocate power between loads | Priority |

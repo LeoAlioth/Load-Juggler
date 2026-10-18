@@ -84,6 +84,11 @@ DEFAULT_BATTERY_SOC_FREEZE_FLOOR = 5  # %
 # the forecast midday peak instead of filling up on morning production that
 # could have been exported. The hub publishes advisory sensors only - a
 # future battery-inverter device type will optionally write them to a device.
+CONF_GRID_EXPORT_LIMIT_PER_PHASE = "grid_export_limit_per_phase"  # W per phase, 0 = none.
+# An optional second export ceiling beside the total (JUG-14): an ASYMMETRIC inverter can sit
+# well under the total while one leg exceeds a per-phase cap. Read ONLY by the curtailment
+# test (calculations/calibration.py export_is_clamped); it does not enable the forecast, move
+# the Excess trigger or change the clipping threshold - those stay on the total.
 CONF_GRID_EXPORT_LIMIT = "grid_export_limit"  # W - the site's physical/contract
 # export ceiling, and the ONE export number the user enters. Everything else
 # derives from it: the Excess trigger engages at (limit − trigger margin), and
@@ -146,6 +151,7 @@ DEFAULT_FORECAST_EXCESS_ENABLED = False
 DEFAULT_FORECAST_EXCESS_SOC_SOURCE = FORECAST_EXCESS_SOURCE_TARGET
 DEFAULT_FORECAST_EXCESS_SOC = 80
 DEFAULT_GRID_EXPORT_LIMIT = 0
+DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE = 0  # 0 = no per-phase export limit
 DEFAULT_EXCESS_TRIGGER_MARGIN = 500
 DEFAULT_BASE_CONSUMPTION = 300
 DEFAULT_BATTERY_CAPACITY_KWH = 0
