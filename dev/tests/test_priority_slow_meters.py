@@ -34,6 +34,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
+    DEAD_BAND,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_CHARGE_RATE_UNIT,
     CONF_CHARGER_ID,
@@ -155,6 +156,7 @@ class World:
         }
         self.cycle = 0
         self.commanded_at = {}     # charger -> the cycle of its last command
+        self.sent = {"stara": 0, "nova": 0}   # profiles accepted, per charger
         self.extra_house = None    # optional script: extra house load (A) this cycle
         self.extra_a = 0.0
 
@@ -178,6 +180,7 @@ class World:
             period = data["custom_profile"]["chargingSchedule"]["chargingSchedulePeriod"]
             self.chargers[data["devid"]].limit = float(period[0]["limit"])
             self.commanded_at[data["devid"]] = self.cycle
+            self.sent[data["devid"]] += 1
 
 
 def _charger_entry(hub, slug, priority):
@@ -278,6 +281,7 @@ async def _evening(hass, site, minutes_after_plug_in=15, script=None,
                     "nova": world.chargers["nova"].limit,
                     "grid": max(world.grid()),
                     "total_w": sum(world.grid()) * V,
+                    "sent": dict(world.sent),
                 })
             clock.now += CYCLE_S
     return log
@@ -304,13 +308,20 @@ async def test_the_second_charger_charges_through_beside_the_first(
     if site.mode == DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED and allowance_w == TIGHT_ALLOWANCE_W:
         assert not any(nova), nova[::15]
         return
-    # It started once the first car's cut had landed - three of its command
-    # intervals at most - and held at least its minimum to the end. (Started
-    # at once, beside a first car still drawing the 15 A it was last told,
-    # the breaker carried 22.8 A until that car's next command.)
+    # The cut lands on the site cycle in which the second car is granted its
+    # minimum (plan lj-1: a cut goes out before its command slot), so the
+    # breaker stays at 20.0 A (20.1 A in Shared, the engine's 0.1 A rounding),
+    # and the second car holds at least its minimum to the end. (Before the
+    # change the cut waited for the first car's slot and the breaker carried
+    # 20.6 A for a minute.)
     running = nova[60:]
     assert min(running) >= MIN_A, running[::15]
-    assert max(row["grid"] for row in log) <= BREAKER_A + 1.0
+    peak = max(row["grid"] for row in log)
+    assert peak <= BREAKER_A + DEAD_BAND, f"the breaker carried {peak:.1f} A"
+    slots = len(log) * CYCLE_S / 30
+    for slug in ("stara", "nova"):
+        sent = log[-1]["sent"][slug] - log[0]["sent"][slug]
+        assert sent <= slots + 3, f"{slug} was sent {sent} profiles in {slots:.0f} slots"
 
 
 @pytest.mark.parametrize("allowance_w", [NO_ALLOWANCE_W, TIGHT_ALLOWANCE_W])

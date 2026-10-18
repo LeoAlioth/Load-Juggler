@@ -324,9 +324,13 @@ async def _session(hass, site, *, lockstep_enabled, frozen_minutes=20, car_draws
         site.hub.entry_id, {}
     )[site.evse.entry_id] = evse_sensor
 
-    patches = [] if lockstep_enabled else [patch.object(
-        hub_calculation, "_watch_readouts_against_household", lambda *a, **k: None
-    )]
+    # The control for the field's stuck readout: the household check is off, and so is
+    # the early cut (plan lj-1) the field build did not have - it alone settles the
+    # stuck-at-0 case at half the room instead of letting the charger hunt.
+    patches = [] if lockstep_enabled else [
+        patch.object(hub_calculation, "_watch_readouts_against_household", lambda *a, **k: None),
+        patch("custom_components.dynamic_ocpp_evse.entities.load.cut_now", lambda *a: None),
+    ]
     with clocked(world.accept, *patches, wall=True) as clock:
         first = []
         cycle = await _run(hass, site, world, 90, clock, first)           # 3 min healthy
@@ -522,13 +526,14 @@ async def _slow_meter_session(hass, site, minutes, *patches):
 async def test_a_slow_meter_hunts_when_its_old_reading_is_believed(hass, site):
     """Control: the reading from before the start taken as it stands - and
     the household check off, as it was for the field's first fifteen
-    minutes."""
+    minutes, and the early cut off, which the field build did not have."""
     log, _ = await _slow_meter_session(
         hass, site, 15,
         patch.object(readout_watch, "assumed_before_new_reading",
                      lambda *a: None),
         patch.object(hub_calculation, "_watch_readouts_against_household",
                      lambda *a, **k: None),
+        patch("custom_components.dynamic_ocpp_evse.entities.load.cut_now", lambda *a: None),
     )
     assert _stops(log) >= 2, f"expected the charger to hunt, it stopped {_stops(log)} times"
 
