@@ -32,7 +32,7 @@ from unittest.mock import patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .conftest import with_inverter
+from .conftest import INPUT_GRID, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
@@ -56,8 +56,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_WIRING_TOPOLOGY,
-    WIRING_TOPOLOGY_SERIES,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_PHASES,
@@ -218,7 +216,7 @@ def _make_site(hass, off_grid=False):
             CONF_MAIN_BREAKER_RATING: 40,
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.inverter_out_a",
             CONF_INVERTER_MAX_POWER: ALLOWANCE_W,
-            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+            **input_options(INPUT_GRID),
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
             CONF_BATTERY_MAX_DISCHARGE_POWER: 20000,

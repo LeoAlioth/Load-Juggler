@@ -40,7 +40,7 @@ from .const import (
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
-    CONF_WIRING_TOPOLOGY,
+    CONF_INVERTER_INPUT_IS_GRID,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
@@ -336,6 +336,12 @@ def inverter_features(entry: ConfigEntry) -> list:
     return infer_inverter_features({**entry.data, **entry.options})
 
 
+# The wiring-topology setting is gone (2.9); the literal survives only so old
+# hubs and not-yet-migrated inverter entries can still be read and stripped.
+LEGACY_WIRING_TOPOLOGY = "wiring_topology"
+_LEGACY_SERIES = "series"
+
+
 # The legacy hub-level fields the auto-import moves onto an inverter entry:
 # everything physically attached to the inverter, its PV array included.
 # Site policy stays behind on the hub: SOC hysteresis, the SOC target/min
@@ -352,7 +358,7 @@ HUB_INVERTER_IMPORT_FIELDS = (
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
-    CONF_WIRING_TOPOLOGY,
+    LEGACY_WIRING_TOPOLOGY,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
@@ -363,6 +369,53 @@ HUB_INVERTER_IMPORT_FIELDS = (
     CONF_BATTERY_SOC_FULL,
     CONF_BATTERY_CAPACITY_KWH,
 )
+
+
+def legacy_topology_to_input(hass, hub_entry_id, entry_id, options: dict) -> None:
+    """Turn a legacy ``wiring_topology`` in ``options`` into the input setting,
+    in place: the key is popped, and ``series`` becomes *the grid flows through
+    this inverter* (``inverter_input_is_grid``), ``parallel`` or absent no
+    input. Idempotent - a rerun finds no key and changes nothing.
+
+    One tick per hub (the grid meter can only be one inverter's input): it
+    goes to the series member with the lowest entry_id. A sibling takes it
+    when it already holds the tick, or still holds legacy ``series`` with a
+    lower entry_id - deterministic whatever order Home Assistant migrates the
+    entries in. ``entry_id`` is None for an entry being imported (no id yet):
+    any sibling that holds or would hold the tick then takes it.
+
+    A PV inverter beside a hybrid (a parallel member next to a series one) has
+    no exact equivalent - the old composite was a guess - so migrating the
+    lowest-id parallel member of such a hub logs one warning.
+    """
+    legacy = options.pop(LEGACY_WIRING_TOPOLOGY, None)
+    siblings = [
+        (sibling.entry_id, {**sibling.data, **sibling.options})
+        for sibling in (get_inverters_for_hub(hass, hub_entry_id) if hub_entry_id else ())
+        if sibling.entry_id != entry_id
+    ]
+
+    def _is_series(cfg) -> bool:
+        return bool(cfg.get(CONF_INVERTER_INPUT_IS_GRID)) or (
+            cfg.get(LEGACY_WIRING_TOPOLOGY) == _LEGACY_SERIES
+        )
+
+    if legacy == _LEGACY_SERIES:
+        for sibling_id, cfg in siblings:
+            if cfg.get(CONF_INVERTER_INPUT_IS_GRID) or (
+                cfg.get(LEGACY_WIRING_TOPOLOGY) == _LEGACY_SERIES
+                and (entry_id is None or sibling_id < entry_id)
+            ):
+                return
+        options[CONF_INVERTER_INPUT_IS_GRID] = True
+    elif entry_id is not None and any(_is_series(cfg) for _, cfg in siblings):
+        if all(entry_id < sibling_id for sibling_id, cfg in siblings if not _is_series(cfg)):
+            hub = hass.config_entries.async_get_entry(hub_entry_id)
+            _LOGGER.warning(
+                "%s: a PV inverter beside a hybrid: if it feeds the grid side, "
+                "give the hybrid its input sensors",
+                hub.title if hub is not None else hub_entry_id,
+            )
 
 
 def strip_hub_inverter_fields(hass, hub_entry: ConfigEntry) -> None:

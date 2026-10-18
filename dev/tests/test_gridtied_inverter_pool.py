@@ -40,7 +40,7 @@ from types import SimpleNamespace
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .conftest import with_inverter
+from .conftest import INPUT_GRID, INPUT_NONE, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
@@ -69,15 +69,12 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PROFILE_VALIDITY_MODE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
-    CONF_WIRING_TOPOLOGY,
     DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_LOAD,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
 )
 from custom_components.dynamic_ocpp_evse.engine import hub_calculation
 
@@ -211,10 +208,8 @@ def site(hass, request):
     else:
         reading = {
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.inverter_out_a",
-            CONF_WIRING_TOPOLOGY: (
-                WIRING_TOPOLOGY_SERIES
-                if sensors == "series-output"
-                else WIRING_TOPOLOGY_PARALLEL
+            **input_options(
+                INPUT_GRID if sensors == "series-output" else INPUT_NONE
             ),
         }
     battery = (

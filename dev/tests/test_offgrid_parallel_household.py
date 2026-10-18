@@ -6,15 +6,16 @@ Off-grid there is no grid for an inverter to feed beside: everything the site
 consumes - the house AND our own managed loads - comes out of the inverters,
 whatever their wiring (``engine/hub_calculation._supply_per_phase`` says the
 same for the stuck-readout watch). So the household is the inverter output
-less the managed draw on both wirings. ``compute_household_per_phase`` has two
-formulas: series takes the draw off the output; parallel is
-``grid consumption + output - grid export``, which grid-tied is right because
-the feedback loop has already taken the draws off the grid terms. Off-grid the
-grid terms are synthetic zeros the feedback loop leaves alone, so until
-2026-09-24 the parallel household was the inverter's whole output, nothing
-taken off: a charger's own draw was read as house load, the inverter's
-allowance for it (rating - household) shrank by that draw, and the car met its
-own draw halfway. Parallel is the setup form's DEFAULT wiring.
+less the managed draw whether or not the grid flows through the inverter
+(``household_per_phase`` is one sum: ``grid + output - input - draws``). Until
+2026-09-24 the household had two formulas, and the parallel one was
+``grid consumption + output - grid export``, right grid-tied because the
+feedback loop has already taken the draws off the grid terms. Off-grid the
+grid terms are synthetic zeros the feedback loop leaves alone, so the
+parallel household was the inverter's whole output, nothing taken off: a
+charger's own draw was read as house load, the inverter's allowance for it
+(rating - household) shrank by that draw, and the car met its own draw
+halfway. "No input" was the setup form's default (then called Parallel).
 
 This rig closes the loop through ``run_hub_calculation`` and the real permit
 pipeline (``control.smoothing.apply_smoothing``) against a plant: one inverter
@@ -28,7 +29,7 @@ the house - 21.74 A - on every cycle, and the output must never pass 6 kW.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .conftest import with_inverter
+from .conftest import INPUT_GRID, INPUT_NONE, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -42,14 +43,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
     CONF_PHASE_VOLTAGE,
-    CONF_WIRING_TOPOLOGY,
     DOMAIN,
     EVSE_MODE_SOLAR_ONLY,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .closed_loop import (
@@ -82,7 +80,7 @@ def _hub(slug, topology):
             CONF_MAIN_BREAKER_RATING: 40,
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: OUTPUT,
             CONF_INVERTER_MAX_POWER: int(RATING_W),
-            CONF_WIRING_TOPOLOGY: topology,
+            **input_options(topology),
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.ogp_battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: BATTERY,
             # A large pack, so the inverter's rating binds and not the battery.
@@ -102,7 +100,7 @@ def _pv_inverter(hub):
               CONF_HUB_ENTRY_ID: hub.entry_id},
         options={
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: PV_OUTPUT,
-            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_PARALLEL,
+            **input_options(INPUT_NONE),
         },
     )
 
@@ -150,7 +148,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200, mixed=False,
         load_data={"operating_mode": mode} if mode else None)
 
 
-@pytest.mark.parametrize("topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES])
+@pytest.mark.parametrize("topology", [INPUT_NONE, INPUT_GRID])
 @pytest.mark.parametrize("car_ramp_a_s", [1.0, 100.0], ids=["car-1A/s", "step"])
 async def test_a_charger_gets_the_inverter_rating_less_the_house(
     hass, car_ramp_a_s, topology
@@ -203,9 +201,9 @@ async def test_both_wirings_give_the_same_permits_off_grid(hass, car_ramp_a_s):
     cycle the car drew current.
     """
     parallel = await _run(
-        hass, f"agree_p{car_ramp_a_s:g}", WIRING_TOPOLOGY_PARALLEL, car_ramp_a_s)
+        hass, f"agree_p{car_ramp_a_s:g}", INPUT_NONE, car_ramp_a_s)
     series = await _run(
-        hass, f"agree_s{car_ramp_a_s:g}", WIRING_TOPOLOGY_SERIES, car_ramp_a_s)
+        hass, f"agree_s{car_ramp_a_s:g}", INPUT_GRID, car_ramp_a_s)
 
     differing = [
         (p["i"], p["permit"], s["permit"])
@@ -225,7 +223,7 @@ async def test_the_published_household_is_the_house_not_the_charger(hass):
     with the car settled at 10.9 A. Now it is the house, within the permit's
     0.1 A rounding.
     """
-    trace = await _run(hass, "published", WIRING_TOPOLOGY_PARALLEL, 100.0)
+    trace = await _run(hass, "published", INPUT_NONE, 100.0)
 
     last = trace[-1]
     household_w = last["result"]["household_power"]
@@ -239,11 +237,11 @@ async def test_the_published_household_is_the_house_not_the_charger(hass):
 async def test_a_mixed_fleet_takes_the_draw_off_once(hass, car_ramp_a_s):
     """A mixed fleet off-grid - the hub's series hybrid plus a parallel PV
     inverter on the same bus - takes the managed draw off exactly once: the
-    composite household is the parallel output plus the series output less
-    the draw (hub_calculation._mixed_household_per_phase). The parallel half
-    must not take it off a second time now that the parallel formula does so
-    off-grid; if it did, the household would read low by the car's draw and
-    the permit would run away from the allowance with the car.
+    household is the sum of both outputs less the draw, once
+    (``household_per_phase``): the hybrid's grid-input tick makes its grid
+    term cancel, and the PV inverter has no input. The draw must not come off
+    a second time; if it did, the household would read low by the car's draw
+    and the permit would run away from the allowance with the car.
 
     The fleet's rating is the hybrid's 6 kW (the PV inverter has none), so
     the allowance is the same 21.74 A as the single-inverter rig. Before and
@@ -251,7 +249,7 @@ async def test_a_mixed_fleet_takes_the_draw_off_once(hass, car_ramp_a_s):
     the allowance.
     """
     trace = await _run(
-        hass, f"mixed{car_ramp_a_s:g}", WIRING_TOPOLOGY_SERIES, car_ramp_a_s,
+        hass, f"mixed{car_ramp_a_s:g}", INPUT_GRID, car_ramp_a_s,
         mixed=True,
     )
 
@@ -268,7 +266,7 @@ async def test_a_mixed_fleet_takes_the_draw_off_once(hass, car_ramp_a_s):
     )
 
 
-@pytest.mark.parametrize("topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES])
+@pytest.mark.parametrize("topology", [INPUT_NONE, INPUT_GRID])
 @pytest.mark.parametrize("solar_w", [0.0, 3000.0], ids=["night", "day"])
 async def test_the_published_solar_is_the_panels_not_the_battery(
     hass, solar_w, topology
@@ -322,10 +320,10 @@ async def test_a_solar_only_car_gets_the_same_on_either_wiring(hass, solar_w):
     """
     mode = EVSE_MODE_SOLAR_ONLY.key
     parallel = await _run(
-        hass, f"so_p{solar_w:g}", WIRING_TOPOLOGY_PARALLEL, 100.0,
+        hass, f"so_p{solar_w:g}", INPUT_NONE, 100.0,
         solar_w=solar_w, mode=mode)
     series = await _run(
-        hass, f"so_s{solar_w:g}", WIRING_TOPOLOGY_SERIES, 100.0,
+        hass, f"so_s{solar_w:g}", INPUT_GRID, 100.0,
         solar_w=solar_w, mode=mode)
 
     assert parallel[-1]["draw"] >= series[-1]["draw"] - 0.1, (
@@ -344,7 +342,7 @@ async def test_a_solar_only_car_gets_the_same_on_either_wiring(hass, solar_w):
     )
 
 
-@pytest.mark.parametrize("topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES])
+@pytest.mark.parametrize("topology", [INPUT_NONE, INPUT_GRID])
 @pytest.mark.parametrize("solar_w", [0.0, 3000.0], ids=["night", "day"])
 async def test_the_published_solar_remaining_is_the_solar_less_the_house(
     hass, solar_w, topology

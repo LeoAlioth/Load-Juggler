@@ -139,7 +139,10 @@
                     "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
                     "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
                     "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
-                    "wiring_topology": "Wiring topology",
+                    "inverter_input_phase_a_entity_id": "Inverter input sensor for phase A (optional)",
+                    "inverter_input_phase_b_entity_id": "Inverter input sensor for phase B (optional)",
+                    "inverter_input_phase_c_entity_id": "Inverter input sensor for phase C (optional)",
+                    "inverter_input_is_grid": "The grid flows through this inverter, straight from the grid meter",
                     "solar_production_entity_id": "Solar power production sensor",
                     "solar_forecast_device_ids": "Solar forecast (one device per PV array)"
                 },
@@ -147,7 +150,8 @@
                     "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
                     "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
-                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery).",
+                    "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
+                    "inverter_input_is_grid": "For a hybrid the grid flows through, when nothing sits between the grid meter and the inverter - no other loads, no other inverter. Its input is then the same as the grid meter's reading, so it needs no input sensors. Only one inverter can have this.",
                     "solar_production_entity_id": "Optional - if left empty, solar production is calculated from grid export + household consumption. Only set this if your inverter provides a direct solar power reading.",
                     "solar_forecast_device_ids": "Forecast devices from the Open-Meteo Solar Forecast integration - it creates one device per PV array, so select each array's device. With the grid export limit and battery capacity set, enables advisory sensors recommending how full the battery may get before the midday production peak.",
                     "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.[prefix]_power)."
@@ -155,7 +159,7 @@
             },
             "inverter_battery": {
                 "title": "Inverter Battery",
-                "description": "The battery behind this inverter.",
+                "description": "The battery behind this inverter. An AC-coupled battery with an inverter of its own is added as its own inverter.",
                 "data": {
                     "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
                     "battery_power_entity_id": "Battery power sensor",
@@ -490,7 +494,10 @@
             "entity_id_in_use": "This entity ID is already used by another Load Juggler device - choose a unique one.",
             "invalid_unit": "Sensor unit mismatch - check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
             "unknown": "An unknown error occurred",
-            "control_needs_battery": "Battery charge management needs a battery - tick “Battery” as well."
+            "control_needs_battery": "Battery charge management needs a battery - tick “Battery” as well.",
+            "input_grid_and_sensors": "Choose one: the grid meter, or input sensors.",
+            "input_grid_taken": "Another inverter on this hub already takes its input from the grid meter.",
+            "input_without_output": "An input needs this inverter's output sensors too."
         },
         "abort": {
             "entry_not_found": "Configuration entry not found",
@@ -508,7 +515,10 @@
             "ocpp_device_not_usable": "That device has no usable OCPP charger sensors. Pick the device the OCPP integration created for the charger - it needs a current import sensor plus a current offered or power offered sensor.",
             "invalid_unit": "Sensor unit mismatch - check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
             "control_needs_battery": "Battery charge management needs a battery - tick “Battery” as well.",
-            "fast_filter_not_below_input": "The battery controller fast filter must be shorter than the site reading filter."
+            "fast_filter_not_below_input": "The battery controller fast filter must be shorter than the site reading filter.",
+            "input_grid_and_sensors": "Choose one: the grid meter, or input sensors.",
+            "input_grid_taken": "Another inverter on this hub already takes its input from the grid meter.",
+            "input_without_output": "An input needs this inverter's output sensors too."
         },
         "abort": {
             "entry_not_found": "Configuration entry not found"
@@ -670,7 +680,7 @@
             },
             "inverter_core": {
                 "title": "Inverter",
-                "description": "The inverter's AC side: capacity, topology and per-phase output sensors.",
+                "description": "The inverter's AC side: capacity, and its output and input sensors per phase.",
                 "data": {
                     "inverter_max_power": "Total inverter power capacity",
                     "inverter_max_power_per_phase": "Maximum inverter power per phase",
@@ -678,13 +688,17 @@
                     "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
                     "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
                     "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)",
-                    "wiring_topology": "Wiring topology"
+                    "inverter_input_phase_a_entity_id": "Inverter input sensor for phase A (optional)",
+                    "inverter_input_phase_b_entity_id": "Inverter input sensor for phase B (optional)",
+                    "inverter_input_phase_c_entity_id": "Inverter input sensor for phase C (optional)",
+                    "inverter_input_is_grid": "The grid flows through this inverter, straight from the grid meter"
                 },
                 "data_description": {
                     "inverter_max_power": "Nameplate rated power from this inverter's datasheet. Set to 0 to leave unconstrained.",
                     "inverter_max_power_per_phase": "Usually total power divided by the number of phases. Set to 0 to skip per-phase limits.",
                     "inverter_supports_asymmetric": "Most hybrid inverters (Deye, Victron, Huawei) support asymmetric output. SolarEdge and Fronius are typically symmetric.",
-                    "wiring_topology": "Parallel: this inverter feeds the grid bus directly (AC-coupled solar, no battery). Series: power flows through this inverter (hybrid with DC-coupled battery)."
+                    "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
+                    "inverter_input_is_grid": "For a hybrid the grid flows through, when nothing sits between the grid meter and the inverter - no other loads, no other inverter. Its input is then the same as the grid meter's reading, so it needs no input sensors. Only one inverter can have this."
                 }
             },
             "inverter_solar": {
@@ -701,7 +715,7 @@
             },
             "inverter_battery": {
                 "title": "Battery",
-                "description": "The battery behind this inverter.",
+                "description": "The battery behind this inverter. An AC-coupled battery with an inverter of its own is added as its own inverter.",
                 "data": {
                     "battery_soc_entity_id": "Battery state of charge (SOC) sensor",
                     "battery_power_entity_id": "Battery power sensor",

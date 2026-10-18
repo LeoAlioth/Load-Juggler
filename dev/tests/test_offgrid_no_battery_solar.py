@@ -29,7 +29,7 @@ from types import SimpleNamespace
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .conftest import with_inverter
+from .conftest import INPUT_GRID, INPUT_NONE, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
@@ -53,7 +53,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PROFILE_VALIDITY_MODE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
-    CONF_WIRING_TOPOLOGY,
     DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DOMAIN,
@@ -63,8 +62,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     EVSE_MODE_EXCESS,
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_SOLAR_PRIORITY,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .closed_loop import clocked
@@ -122,13 +119,13 @@ class World:
 SITES = pytest.mark.parametrize(
     "site",
     [
-        (WIRING_TOPOLOGY_SERIES, EVSE_MODE_SOLAR_ONLY.key, 4000.0, 1000.0),
-        (WIRING_TOPOLOGY_PARALLEL, EVSE_MODE_SOLAR_ONLY.key, 4000.0, 1000.0),
-        (WIRING_TOPOLOGY_SERIES, EVSE_MODE_SOLAR_PRIORITY.key, 4000.0, 1000.0),
-        (WIRING_TOPOLOGY_PARALLEL, EVSE_MODE_SOLAR_PRIORITY.key, 4000.0, 1000.0),
-        (WIRING_TOPOLOGY_SERIES, EVSE_MODE_EXCESS.key, 4000.0, 1000.0),
-        (WIRING_TOPOLOGY_SERIES, EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0),
-        (WIRING_TOPOLOGY_SERIES, EVSE_MODE_SOLAR_PRIORITY.key, 1500.0, 1500.0),
+        (INPUT_GRID, EVSE_MODE_SOLAR_ONLY.key, 4000.0, 1000.0),
+        (INPUT_NONE, EVSE_MODE_SOLAR_ONLY.key, 4000.0, 1000.0),
+        (INPUT_GRID, EVSE_MODE_SOLAR_PRIORITY.key, 4000.0, 1000.0),
+        (INPUT_NONE, EVSE_MODE_SOLAR_PRIORITY.key, 4000.0, 1000.0),
+        (INPUT_GRID, EVSE_MODE_EXCESS.key, 4000.0, 1000.0),
+        (INPUT_GRID, EVSE_MODE_SOLAR_ONLY.key, 1500.0, 1500.0),
+        (INPUT_GRID, EVSE_MODE_SOLAR_PRIORITY.key, 1500.0, 1500.0),
     ],
     ids=[
         "series-solar-only",
@@ -156,7 +153,7 @@ def site(hass, request):
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.inverter_out_a",
             CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.solar_production",
             CONF_INVERTER_MAX_POWER: RATING_W,
-            CONF_WIRING_TOPOLOGY: wiring,
+            **input_options(wiring),
         },
     ))
     evse = MockConfigEntry(
