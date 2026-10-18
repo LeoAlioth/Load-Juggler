@@ -111,6 +111,12 @@ CONF_BASE_CONSUMPTION = "base_consumption"  # W - typical daytime minimum house 
 CONF_BASE_CONSUMPTION_ENTITY_ID = "base_consumption_entity_id"
 CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"  # kWh the SOC percentage spans; 0 = off
 CONF_BATTERY_CAPACITY_ENTITY_ID = "battery_capacity_entity_id"  # Wh/kWh sensor; overrides the number while it reads
+# Optional per-inverter entity (%; sensor, number or input_number) holding where this battery is
+# meant to END the day - the DESTINATION the clipping reserve is carved below. Unset, the
+# destination is read from CONF_SOC_LIMIT_NORMAL_ENTITY_ID as before. Set, the ceiling source
+# keeps only its write-side job (the fan-out's restore value), so a cheap-tariff night can drop
+# the slots without dragging the destination down with them.
+CONF_BATTERY_CHARGE_TARGET_ENTITY_ID = "battery_charge_target_entity_id"
 CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % - never recommend a ceiling below this
 # Pacing (per-load option CONF_PACE_OVER_HORIZON): the excess energy
 # (kWh sensor) and sunset (timestamp sensor: when that energy has to be used by). With

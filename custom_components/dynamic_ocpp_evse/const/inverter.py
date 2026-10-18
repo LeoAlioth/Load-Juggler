@@ -132,8 +132,9 @@ DEFAULT_SOC_LIMIT_NORMAL = 100.0  # % - where an unmanaged battery ceiling sits
 
 # What a WRITE to the inverter's SOC entities MEANS - and only a write. This
 # flag never decides where the pack should go: the destination is always read
-# from CONF_SOC_LIMIT_NORMAL_ENTITY_ID when that is set, whatever the hardware
-# calls the register (see engine/readers.py). A floor register whose value is
+# from CONF_BATTERY_CHARGE_TARGET_ENTITY_ID when that is set, else from
+# CONF_SOC_LIMIT_NORMAL_ENTITY_ID, whatever the hardware calls the register
+# (see engine/readers.py). A floor register whose value is
 # NOT the owner's charge target simply leaves the source unset and anchors at
 # 100 % - that knob already existed, and the flag must not duplicate it.
 #

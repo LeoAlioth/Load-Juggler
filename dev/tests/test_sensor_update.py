@@ -76,6 +76,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     INVERTER_RT_ENFORCED_CHARGE_W,
     INVERTER_RT_LAST_WRITE,
     CONF_SOC_LIMIT_ENTITY_IDS,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     INVERTER_RT_SOC_CONTROL_ENABLED,
     INPUT_STALE_TIMEOUT,
@@ -3509,7 +3510,8 @@ def _destination_hub(slug, base=300):
 
 
 def _destination_inverter(
-    hass, hub, slug, normal_entity=None, solar_entity=None, forecast=True
+    hass, hub, slug, normal_entity=None, solar_entity=None, forecast=True,
+    target_entity=None,
 ):
     """That hub's inverter: a 20 kWh battery and (``forecast``) the site's
     forecast source, optionally with a ceiling source."""
@@ -3525,6 +3527,8 @@ def _destination_inverter(
     }
     if normal_entity:
         options[CONF_SOC_LIMIT_NORMAL_ENTITY_ID] = normal_entity
+    if target_entity:
+        options[CONF_BATTERY_CHARGE_TARGET_ENTITY_ID] = target_entity
     if solar_entity:
         options[CONF_SOLAR_PRODUCTION_ENTITY_ID] = solar_entity
     return MockConfigEntry(
@@ -3614,6 +3618,42 @@ async def test_forecast_max_soc_is_carved_below_the_configured_destination(hass)
     assert (
         dest_result["inverters"][inv_with.entry_id]["forecast_battery_max_soc"] == 85
     )
+
+
+async def test_the_charge_target_entity_is_the_destination_while_the_slot_is_dropped(hass):
+    """JUG-21: the ceiling source (a managed slot) drops to 20 % for a cheap-tariff night.
+
+    Without a charge target the destination follows it down - the advice collapses to
+    the 30 % floor. With one at 95 % the reserve stays carved below 95 (85 %), also
+    while the target entity is briefly unavailable (held).
+    """
+    from freezegun import freeze_time
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    shared = _destination_hub("tgt")
+    plain = _destination_hub("plain")
+    inv_tgt = _destination_inverter(
+        hass, shared, "tgt", "number.dst_normal", target_entity="number.dst_target"
+    )
+    inv_plain = _destination_inverter(hass, plain, "plain", "number.dst_normal")
+    for entry in (inv_tgt, inv_plain):
+        entry.add_to_hass(hass)
+    hass.data[DOMAIN] = {
+        "hubs": {shared.entry_id: {"loads": []}, plain.entry_id: {"loads": []}},
+        "loads": {},
+        "load_allocations": {},
+        "inverters": {},
+    }
+    _set_destination_states(hass, soc=70, normal="20")
+    hass.states.async_set("number.dst_target", "95", {"unit_of_measurement": "%"})
+
+    with freeze_time("2026-08-14 08:00:00+00:00"):
+        assert run_hub_calculation(hass, shared)["forecast_battery_max_soc"] == 85
+        assert run_hub_calculation(hass, plain)["forecast_battery_max_soc"] == 30
+        hass.states.async_set("number.dst_target", "unavailable")
+        assert run_hub_calculation(hass, shared)["forecast_battery_max_soc"] == 85
 
 
 async def test_forecast_charge_gate_engages_relative_to_the_destination_advice(hass):

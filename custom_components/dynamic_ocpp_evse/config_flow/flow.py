@@ -23,6 +23,7 @@ from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_ID,
     CONF_LOAD_PRIORITY,
@@ -778,6 +779,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     CONF_BATTERY_SOC_ENTITY_ID,
                     CONF_BATTERY_POWER_ENTITY_ID,
                     CONF_BATTERY_CAPACITY_ENTITY_ID,
+                    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
                 ],
             )
             _validate_entity_units(self.hass, user_input, _BATTERY_UNIT_MAP, errors)
