@@ -38,6 +38,10 @@ from ..const import (
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_HUB_ENTRY_ID,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
@@ -96,7 +100,7 @@ _ENERGY_UNITS = units.ENERGY_UNITS
 # groups it shows, composing them with ``|``:
 #
 #   hub grid (create + options)   _GRID_UNIT_MAP
-#   inverter config (create)      _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP
+#   inverter config (create)      _INVERTER_AC_UNIT_MAP | _SOLAR_UNIT_MAP
 #   inverter battery (create)     _BATTERY_UNIT_MAP
 #   inverter control (create)     _write_control_unit_map(data)
 #   inverter (options, per page)  the matching one of the above
@@ -114,10 +118,13 @@ _GRID_UNIT_MAP = {
 _PACING_UNIT_MAP = {
     CONF_PACING_ENERGY_ENTITY_ID: _ENERGY_UNITS,
 }
-_INVERTER_OUTPUT_UNIT_MAP = {
+_INVERTER_AC_UNIT_MAP = {
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
 }
 _SOLAR_UNIT_MAP = {
     CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
@@ -229,10 +236,16 @@ _BATTERY_ENTITY_KEYS = [
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
 ]
+_INVERTER_INPUT_KEYS = [
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+]
 _INVERTER_ENTITY_KEYS = [
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    *_INVERTER_INPUT_KEYS,
 ]
 _PACING_ENTITY_KEYS = [
     CONF_PACING_ENERGY_ENTITY_ID,
@@ -615,6 +628,40 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
         if any(source.get(key) for source in sources)
     )
     return max(count, 1)
+
+
+def _validate_inverter_input(
+    hass, entry_id, hub_entry_id, data: dict, errors: dict
+) -> None:
+    """An inverter's input (grid side) is the grid meter or sensors, not both,
+    taken from the grid meter by at most one inverter per hub, and only beside
+    output sensors (the household adds ``output - input``, so an input alone
+    says nothing). ``entry_id`` is this inverter's own entry (None while it is
+    being created), skipped when looking at its siblings."""
+    sensors = [key for key in _INVERTER_INPUT_KEYS if data.get(key)]
+    is_grid = bool(data.get(CONF_INVERTER_INPUT_IS_GRID))
+    if is_grid and sensors:
+        errors[CONF_INVERTER_INPUT_IS_GRID] = "input_grid_and_sensors"
+        return
+    if is_grid and any(
+        inverter.entry_id != entry_id
+        and get_entry_value(inverter, CONF_INVERTER_INPUT_IS_GRID, False)
+        for inverter in get_inverters_for_hub(hass, hub_entry_id)
+    ):
+        errors[CONF_INVERTER_INPUT_IS_GRID] = "input_grid_taken"
+        return
+    has_output = any(
+        data.get(key)
+        for key in (
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        )
+    )
+    if (sensors or is_grid) and not has_output:
+        errors[sensors[0] if sensors else CONF_INVERTER_INPUT_IS_GRID] = (
+            "input_without_output"
+        )
 
 
 def _validate_inverter_features(data: dict, errors: dict) -> None:

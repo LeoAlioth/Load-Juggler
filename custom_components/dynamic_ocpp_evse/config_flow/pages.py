@@ -55,7 +55,10 @@ from ..const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
-    CONF_WIRING_TOPOLOGY,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_DISTRIBUTION_MODE,
@@ -68,7 +71,6 @@ from ..const import (
     DEFAULT_PLUG_POWER_RATING,
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_MIN_CHARGE_POWER,
-    DEFAULT_WIRING_TOPOLOGY,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
@@ -836,6 +838,23 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
     except Exception:  # pragma: no cover - display path
         _LOGGER.debug("Could not read inverter output for the overview", exc_info=True)
     lines += phase_lines or ["- No per-phase output sensors configured"]
+    # What the inverter takes in at its AC input (grid side), signed: positive
+    # while it draws from the grid, negative while it feeds it.
+    try:
+        for label, key in (
+            ("A", CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID),
+            ("B", CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID),
+            ("C", CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID),
+        ):
+            entity_id = get_entry_value(entry, key, None)
+            if not entity_id:
+                continue
+            value = _read_signed_amps(hass, entity_id, voltage)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                value = None
+            lines.append(f"- Input phase {label}: {_fmt(value, 'A')}")
+    except Exception:  # pragma: no cover - display path
+        _LOGGER.debug("Could not read inverter input for the overview", exc_info=True)
     lines.append(f"- Solar production: {_fmt(own.get('solar_w'), 'W', 0)}")
     max_power = get_entry_value(entry, CONF_INVERTER_MAX_POWER, None)
     per_phase = get_entry_value(entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None)
@@ -1004,11 +1023,17 @@ def _summary_text(hass, hub_entry_id: str) -> str:
                 if get_entry_value(inverter, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False)
                 else "symmetric"
             )
-            topology = get_entry_value(
-                inverter, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY
-            )
-            if topology:
-                bits.append(str(topology))
+            if get_entry_value(inverter, CONF_INVERTER_INPUT_IS_GRID, False):
+                bits.append("input: grid meter")
+            elif any(
+                get_entry_value(inverter, key, None)
+                for key in (
+                    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+                    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+                    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+                )
+            ):
+                bits.append("input: sensors")
             if get_entry_value(inverter, CONF_BATTERY_SOC_ENTITY_ID, None):
                 bits.append(
                     "battery "

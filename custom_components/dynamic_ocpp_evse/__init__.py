@@ -86,7 +86,9 @@ from .const import (
 )
 from .helpers import (
     get_entry_value,
+    LEGACY_WIRING_TOPOLOGY,
     infer_inverter_features,
+    legacy_topology_to_input,
     strip_hub_inverter_fields,
     strip_unfeatured_inverter_options,
 )
@@ -385,6 +387,28 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 ", ".join(dropped),
             )
         _LOGGER.info("Updated minor version to 8")
+
+    # 2.9: the wiring-topology setting is gone. What it answered is now the
+    # inverter's own input (grid side): Series -> "the grid flows through this
+    # inverter" (one per hub, the lowest entry_id - see
+    # helpers.legacy_topology_to_input), Parallel -> no input. Inverter-scoped
+    # and idempotent: an entry without the legacy key is only version-bumped.
+    # A hub entry keeps its legacy key untouched - the inverter import reads it
+    # off the hub (strip_hub_inverter_fields) and converts it there.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 9:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        if data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER:
+            if LEGACY_WIRING_TOPOLOGY in data:
+                options.setdefault(LEGACY_WIRING_TOPOLOGY, data[LEGACY_WIRING_TOPOLOGY])
+            legacy_topology_to_input(
+                hass, data.get(CONF_HUB_ENTRY_ID), entry.entry_id, options
+            )
+            data.pop(LEGACY_WIRING_TOPOLOGY, None)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=9
+        )
+        _LOGGER.info("Updated minor version to 9")
 
     return True
 

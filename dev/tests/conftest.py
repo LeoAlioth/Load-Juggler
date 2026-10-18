@@ -28,6 +28,10 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -57,7 +61,25 @@ from custom_components.dynamic_ocpp_evse.helpers import (
 # none of them off the hub, so a test's site carries them on an inverter.
 INVERTER_KEYS = frozenset(HUB_INVERTER_IMPORT_FIELDS).union(
     *INVERTER_FEATURE_KEYS.values()
-)
+) | {
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+}
+
+# How the closed-loop tests name an inverter's input setting. Two arrangements
+# stand for what the old Series / Parallel wiring pair did to the household:
+# INPUT_GRID - the grid flows through the inverter, straight from the grid
+# meter (the tick); INPUT_NONE - no input. They are labels for parametrize ids
+# and slugs; ``input_options`` turns one into the inverter's stored keys.
+INPUT_GRID = "gridtick"
+INPUT_NONE = "noinput"
+
+
+def input_options(arrangement) -> dict:
+    """The inverter-entry options for an ``INPUT_*`` arrangement."""
+    return {CONF_INVERTER_INPUT_IS_GRID: True} if arrangement == INPUT_GRID else {}
 
 
 def add_inverter(hass, hub_entry, options, slug="inverter") -> MockConfigEntry:

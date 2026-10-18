@@ -60,6 +60,10 @@ from ..const import (
     CONF_HEATING_ELEMENT_POWER,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
@@ -136,7 +140,6 @@ from ..const import (
     CONF_TANK_OFF_OPERATION_MODE,
     CONF_TANK_PRIORITIZE_BELOW_NORMAL,
     CONF_UPDATE_FREQUENCY,
-    CONF_WIRING_TOPOLOGY,
     DEFAULT_BASE_CONSUMPTION,
     DEFAULT_BATTERY_CAPACITY_KWH,
     DEFAULT_BATTERY_MAX_POWER,
@@ -186,15 +189,12 @@ from ..const import (
     DEFAULT_STATION_STORM_RESERVE,
     DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
     DEFAULT_UPDATE_FREQUENCY,
-    DEFAULT_WIRING_TOPOLOGY,
     FIELD_OCPP_DEVICE,
     OCPP_INTEGRATION_DOMAIN,
     PROFILE_VALIDITY_MODE_ABSOLUTE,
     PROFILE_VALIDITY_MODE_RELATIVE,
     STATION_CHARGE_POWER_MAX,
     STATION_CHARGE_POWER_STEP,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
     CONF_INVERTER_FEATURES,
     INVERTER_FEATURE_SOLAR,
     INVERTER_FEATURES,
@@ -505,13 +505,6 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
         key: defaults.get(key) or 0
         for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE)
     }
-    topology_options = [
-        {
-            "value": WIRING_TOPOLOGY_PARALLEL,
-            "label": "Parallel (AC-coupled / no battery)",
-        },
-        {"value": WIRING_TOPOLOGY_SERIES, "label": "Series (Hybrid / battery)"},
-    ]
     return [
         _num(CONF_INVERTER_MAX_POWER, caps, 0, 0, 50000, 100, "W"),
         _num(CONF_INVERTER_MAX_POWER_PER_PHASE, caps, 0, 0, 20000, 100, "W"),
@@ -530,12 +523,20 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
                 CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
             )
         ),
+        *(
+            (_optional_entity_field(key, defaults), current_power)
+            for key in (
+                CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+                CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+                CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+            )
+        ),
         (
-            vol.Required(
-                CONF_WIRING_TOPOLOGY,
-                default=defaults.get(CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY),
+            vol.Optional(
+                CONF_INVERTER_INPUT_IS_GRID,
+                default=defaults.get(CONF_INVERTER_INPUT_IS_GRID, False),
             ),
-            selector({"select": {"options": topology_options, "mode": "dropdown"}}),
+            bool,
         ),
     ]
 

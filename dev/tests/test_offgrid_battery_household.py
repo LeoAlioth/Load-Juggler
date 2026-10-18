@@ -38,7 +38,7 @@ on every cycle, day or night.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .conftest import with_inverter
+from .conftest import INPUT_GRID, INPUT_NONE, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -51,12 +51,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_NAME,
     CONF_PHASE_VOLTAGE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
-    CONF_WIRING_TOPOLOGY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .closed_loop import (
@@ -86,7 +83,7 @@ def _hub(slug, topology, solar_sensor, battery_sensor=True):
         CONF_PHASE_VOLTAGE: int(V),
         CONF_MAIN_BREAKER_RATING: 40,
         CONF_INVERTER_MAX_POWER: int(RATING_W),
-        CONF_WIRING_TOPOLOGY: topology,
+        **input_options(topology),
         CONF_BATTERY_SOC_ENTITY_ID: SOC,
         # A large pack, so the inverter's rating binds and not the battery.
         CONF_BATTERY_MAX_DISCHARGE_POWER: 20000,
@@ -168,7 +165,7 @@ def _assert_rating_less_the_house(trace, what):
     )
 
 
-TOPOLOGIES = [WIRING_TOPOLOGY_SERIES, WIRING_TOPOLOGY_PARALLEL]
+TOPOLOGIES = [INPUT_GRID, INPUT_NONE]
 CARS = pytest.mark.parametrize(
     "car_ramp_a_s", [1.0, 100.0], ids=["car-1A/s", "step"])
 
@@ -268,7 +265,7 @@ async def test_an_unread_battery_hands_out_nothing(hass, solar_w):
     neither solar nor battery.
     """
     trace = await _run(
-        hass, f"unread{solar_w:g}", WIRING_TOPOLOGY_SERIES, 1.0,
+        hass, f"unread{solar_w:g}", INPUT_GRID, 1.0,
         solar_w=lambda i: solar_w, solar_sensor=True, battery_sensor=False,
     )
     supply_over = over_w(trace, "supply", RATING_A)
@@ -295,7 +292,7 @@ async def test_a_battery_sensor_that_dies_hands_out_nothing(hass):
     """
     dies = START + 90
     trace = await _run(
-        hass, "dies", WIRING_TOPOLOGY_SERIES, 1.0,
+        hass, "dies", INPUT_GRID, 1.0,
         solar_w=lambda i: 0.0, solar_sensor=True, battery_dies_at=dies,
     )
     supply_over = over_w(trace, "supply", RATING_A)

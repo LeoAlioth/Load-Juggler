@@ -73,6 +73,7 @@ from ..const import (
 from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR
 from ..helpers import (
     HUB_INVERTER_IMPORT_FIELDS,
+    legacy_topology_to_input,
     strip_hub_inverter_fields,
     detect_charge_rate_unit,
     get_entry_value,
@@ -88,7 +89,7 @@ from .helpers import (
     _PACING_UNIT_MAP,
     _GRID_UNIT_MAP,
     _INVERTER_ENTITY_KEYS,
-    _INVERTER_OUTPUT_UNIT_MAP,
+    _INVERTER_AC_UNIT_MAP,
     _LOGGER,
     _PLUG_ENTITY_KEYS,
     _SOLAR_UNIT_MAP,
@@ -110,6 +111,7 @@ from .helpers import (
     _write_control_unit_map,
     _validate_forecast_devices,
     _validate_inverter_features,
+    _validate_inverter_input,
 )
 from ..ocpp_discovery import (
     ocpp_charger_for_device,
@@ -162,7 +164,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
     VERSION = 2
-    MINOR_VERSION = 8
+    MINOR_VERSION = 9
 
     def __init__(self):
         self._data = {}
@@ -707,7 +709,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     async def async_step_inverter_config(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """Inverter step 1: name, capacity, topology, output - and the PV
+        """Inverter step 1: name, capacity, output and input - and the PV
         sensors when the solar feature is declared."""
         errors: dict[str, str] = {}
         bad_forecast_entity = None
@@ -728,8 +730,11 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             _validate_entity_units(
                 self.hass,
                 user_input,
-                _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP,
+                _INVERTER_AC_UNIT_MAP | _SOLAR_UNIT_MAP,
                 errors,
+            )
+            _validate_inverter_input(
+                self.hass, None, self._data.get(CONF_HUB_ENTRY_ID), user_input, errors
             )
             bad_forecast_entity = _validate_forecast_devices(
                 self.hass, user_input, errors
@@ -941,6 +946,10 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             for key in HUB_INVERTER_IMPORT_FIELDS
         }
         imported = {k: v for k, v in imported.items() if v is not None}
+        # The legacy wiring topology becomes the inverter's input setting
+        # (this entry is created at the current version, so no migration runs
+        # on it).
+        legacy_topology_to_input(self.hass, hub_entry_id, None, imported)
         strip_hub_inverter_fields(self.hass, hub_entry)
         # The imported entry declares what the legacy fields say it has, and
         # carries nothing for the rest (a hub with battery caps but no battery

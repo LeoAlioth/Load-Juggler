@@ -35,7 +35,7 @@ from types import SimpleNamespace
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .conftest import with_inverter
+from .conftest import INPUT_GRID, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
@@ -62,7 +62,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PROFILE_VALIDITY_MODE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
-    CONF_WIRING_TOPOLOGY,
     DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DOMAIN,
@@ -76,7 +75,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     PERMIT_TAU_S,
     SETTLE_DRAW_SECONDS,
     SUN_PROBE_MAX_PAUSE_S,
-    WIRING_TOPOLOGY_SERIES,
 )
 from custom_components.dynamic_ocpp_evse.control import status
 
@@ -176,7 +174,7 @@ def site(hass, request):
         CONF_MAIN_BREAKER_RATING: 40,
         # No grid CT and no battery entity at all.
         CONF_INVERTER_MAX_POWER: rating_w,
-        CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+        **input_options(INPUT_GRID),
     }
     if sensors in ("output", "both"):
         options[CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID] = "sensor.inverter_out_a"

@@ -28,7 +28,7 @@ household low while the charger starts.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from .conftest import with_inverter
+from .conftest import INPUT_GRID, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -41,11 +41,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
     CONF_PHASE_VOLTAGE,
-    CONF_WIRING_TOPOLOGY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .closed_loop import (
@@ -73,7 +71,7 @@ def _hub(slug):
             CONF_MAIN_BREAKER_RATING: 40,
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: OUTPUT,
             CONF_INVERTER_MAX_POWER: int(RATING_W),
-            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+            **input_options(INPUT_GRID),
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.og_battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.og_battery_power",
             # A large pack, so the inverter's rating binds and not the battery.

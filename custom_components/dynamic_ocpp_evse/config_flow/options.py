@@ -62,8 +62,8 @@ from .helpers import (
     _PACING_ENTITY_KEYS,
     _PACING_UNIT_MAP,
     _GRID_UNIT_MAP,
+    _INVERTER_AC_UNIT_MAP,
     _INVERTER_ENTITY_KEYS,
-    _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
     _PLUG_ENTITY_KEYS,
     _SOLAR_UNIT_MAP,
@@ -83,6 +83,7 @@ from .helpers import (
     _write_control_unit_map,
     _validate_forecast_devices,
     _validate_inverter_features,
+    _validate_inverter_input,
 )
 from ..ocpp_discovery import (
     ocpp_charger_for_device,
@@ -374,7 +375,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_inverter_core(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """The inverter's AC side: capacity, topology, per-phase output."""
+        """The inverter's AC side: capacity, per-phase output and input."""
         return await self._async_edit_page(
             user_input,
             step_id="inverter_core",
@@ -382,7 +383,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 dict(_build_hub_inverter_schema(self.hass, defaults))
             ),
             entity_keys=_INVERTER_ENTITY_KEYS,
-            unit_map=_INVERTER_OUTPUT_UNIT_MAP,
+            unit_map=_INVERTER_AC_UNIT_MAP,
+            validate=lambda data, errors: _validate_inverter_input(
+                self.hass,
+                self.config_entry.entry_id,
+                self._defaults.get(CONF_HUB_ENTRY_ID),
+                data,
+                errors,
+            ),
             finalize=_normalize_inverter_power_caps,
         )
 
