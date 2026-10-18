@@ -22,10 +22,15 @@ from ..calculations.catch_up import catch_up_verdict, max_power_w
 from ..calculations.forecast_excess import (
     forecast_excess_gate,
     forecast_excess_verdict,
+    starts_early,
 )
 from ..calculations.pacing import pace_watts
 from ..calculations.models import INACTIVE_STATUSES
+from homeassistant.util import dt as dt_util
+
 from ..const import (
+    BEHAVIOR_BINARY_EXCESS,
+    BEHAVIOR_EXCESS,
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BATTERY_SOC_HYSTERESIS,
     CONF_BATTERY_SOC_FREEZE_FLOOR,
@@ -110,6 +115,7 @@ from .readers import (
     _fv2,
     _read_fleet_members,
     _read_grid_phases,
+    _read_full_hours,
     _read_pacing,
     _resolve_grid_phases,
     _smooth,
@@ -684,7 +690,7 @@ def _forecast_gate(hub_entry, site):
     )
 
 
-def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
+def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     """Latch the forecast-driven Excess verdict and hand it to the calculator.
 
     Sets ``site.forecast_excess`` and ``site.forecast_excess_pace_w`` and returns
@@ -694,8 +700,14 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
     gate SOC is the hub's own latched minimum/target already on the site (the
     battery SOC hysteresis is in them), or the fixed value. The latch bit lives
     in ``hub_runtime``, like the Excess latch's. See calculations/forecast_excess.py.
+
+    The verdict is per load as well: ``full_hours`` (``readers._read_full_hours``,
+    the time to the battery's next full charge) says when each load may take it -
+    ``load.early_start_ok``, latched per load id. The site verdict stays on only
+    while at least one load may, so the pool is not topped up for nobody.
     """
-    planned, hours_left = pacing if pacing is not None else (None, None)
+    planned = pacing[0] if pacing is not None else None
+    hours_left = full_hours
     gate, band = _forecast_gate(hub_entry, site)
     on = forecast_excess_verdict(
         get_entry_value(
@@ -707,7 +719,19 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
         planned,
         hub_runtime.get("_excess_by_forecast_on", False),
     )
+    latch = hub_runtime.setdefault("_early_start_on", {})
+    for load in site.loads:
+        load.early_start_ok = starts_early(
+            planned,
+            hours_left,
+            load.min_current * site.voltage * max(len(load.active_phases_mask or "A"), 1),
+            latch.get(load.load_id, False),
+        )
+        latch[load.load_id] = load.early_start_ok
+    for gone in set(latch) - {load.load_id for load in site.loads}:
+        del latch[gone]
     hub_runtime["_excess_by_forecast_on"] = on
+    on = on and (not site.loads or any(load.early_start_ok for load in site.loads))
     site.forecast_excess = on
     site.forecast_excess_pace_w = pace_watts(planned, hours_left) if on else 0.0
     if on:
@@ -716,6 +740,32 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing):
             site.battery_soc, gate, planned, site.forecast_excess_pace_w,
         )
     return on
+
+
+def _publish_early_start(hass, hub_runtime, site, planned, hours_left):
+    """Tell each Excess-type load that is still waiting its turn for the forecast
+    verdict when it will start and at what power (``early_start_note`` in its
+    runtime, read by the status sensors): the latest start - ``hours_left`` less
+    the hours its minimum power needs for ``planned`` kWh - and that minimum
+    power. None while the verdict is off or the load is due."""
+    on = hub_runtime.get("_excess_by_forecast_on", False)
+    for load in site.loads:
+        load_rt = hass.data[DOMAIN]["loads"].get(load.load_id)
+        if load_rt is None:
+            continue
+        note = None
+        watts = load.min_current * site.voltage * max(len(load.active_phases_mask or "A"), 1)
+        if (
+            on
+            and hours_left is not None
+            and not load.early_start_ok
+            and watts > 0
+            and load.mode_behavior in (BEHAVIOR_EXCESS, BEHAVIOR_BINARY_EXCESS)
+        ):
+            wait_h = hours_left - planned * 1000.0 / watts
+            at = dt_util.as_local(dt_util.utcnow() + timedelta(hours=max(wait_h, 0.0)))
+            note = f"Early start {at:%H:%M} at {watts / 1000:.1f} kW"
+        load_rt["early_start_note"] = note
 
 
 def _apply_catch_up(hub_runtime, hub_entry, site, pacing):
@@ -1712,7 +1762,9 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
 
     excess_on, margin = _apply_excess_latch(hub_runtime, site, excess_hysteresis)
-    forecast_on = _apply_forecast_excess(hub_runtime, hub_entry, site, pacing)
+    full_hours = _read_full_hours(hass, hub_entry, hub_runtime, pacing)
+    forecast_on = _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours)
+    _publish_early_start(hass, hub_runtime, site, pacing[0] if pacing else None, full_hours)
     _apply_catch_up(hub_runtime, hub_entry, site, pacing)
 
     _apply_household_figures(

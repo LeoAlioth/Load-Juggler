@@ -31,6 +31,31 @@ FORECAST_EXCESS_MIN_KWH = 0.2
 FORECAST_EXCESS_RELEASE_KWH = FORECAST_EXCESS_MIN_KWH / 2
 
 
+# A load that began early keeps going until its start condition has slipped by
+# this much (a 20 % band, as catch-up's release and pacing's restart margin), so
+# a planned energy or full-charge time wobbling at the boundary does not start
+# and stop it each cycle.
+EARLY_START_RELEASE_RATIO = 0.8
+
+
+def starts_early(planned_kwh, hours_left, load_min_w, was_on=False) -> bool:
+    """May this load start early now? Counting back from the time the battery is
+    next full: the planned energy has to be spent at the load's minimum power, so
+    the latest start is ``planned_kwh / load_min_kW`` hours before then - the
+    paced rate (planned / hours left) is at or above that minimum. ``hours_left``
+    is the real time to the full charge, 0 once it has passed (full now). A latch:
+    ``was_on`` is last cycle's answer, held down to ``EARLY_START_RELEASE_RATIO``
+    of the start condition. Unreadable planned energy or time: False. A load with
+    no minimum power (0) is never held back.
+    """
+    if planned_kwh is None or hours_left is None:
+        return False
+    if load_min_w <= 0:
+        return True
+    ratio = EARLY_START_RELEASE_RATIO if was_on else 1.0
+    return planned_kwh * 1000.0 >= ratio * load_min_w * hours_left
+
+
 def forecast_excess_gate(source, soc_min, soc_target, fixed):
     """``(gate_soc, band_pct)``: the SOC the verdict needs, and how far below it
     the latch holds.

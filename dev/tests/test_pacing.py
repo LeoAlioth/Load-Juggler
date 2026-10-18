@@ -220,18 +220,19 @@ def test_unreadable_timestamp_with_nothing_held_means_no_pacing():
 
 # --- the wiring: a load's own option decides --------------------------------
 
-def _plug_entry(pace, phase="A"):
+def _load_entry(pace, phase="A", plug=False):
     from custom_components.dynamic_ocpp_evse.const import (
         CONF_CONNECTED_TO_PHASE, CONF_DEVICE_TYPE, CONF_ENTITY_ID,
         CONF_PACE_OVER_HORIZON, CONF_PLUG_POWER_RATING, DEVICE_TYPE_PLUG,
+        DEVICE_TYPE_POWER_STATION,
     )
 
     options = {} if pace is None else {CONF_PACE_OVER_HORIZON: pace}
     return SimpleNamespace(
-        entry_id="plug1",
+        entry_id="load1",
         data={
-            CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG,
-            CONF_ENTITY_ID: "plug",
+            CONF_DEVICE_TYPE: DEVICE_TYPE_PLUG if plug else DEVICE_TYPE_POWER_STATION,
+            CONF_ENTITY_ID: "load",
             CONF_PLUG_POWER_RATING: 2300,
             CONF_CONNECTED_TO_PHASE: phase,
         },
@@ -239,7 +240,7 @@ def _plug_entry(pace, phase="A"):
     )
 
 
-def _built_cap(pace, pacing, phase="A"):
+def _built_cap(pace, pacing, phase="A", plug=False):
     from custom_components.dynamic_ocpp_evse.const import DOMAIN
     from custom_components.dynamic_ocpp_evse.engine.load_builders import (
         _add_loads_to_site,
@@ -247,11 +248,10 @@ def _built_cap(pace, pacing, phase="A"):
 
     hass = SimpleNamespace(
         states=_States(),
-        data={DOMAIN: {"loads": {"plug1": {"operating_mode": "Excess"}}}},
+        data={DOMAIN: {"loads": {"load1": {"operating_mode": "Excess"}}}},
     )
     site = _site()
-    _add_loads_to_site(hass, site, "hub", [_plug_entry(pace, phase)], pacing=pacing)
-    assert site.loads[0].mode_behavior == BEHAVIOR_BINARY_EXCESS
+    _add_loads_to_site(hass, site, "hub", [_load_entry(pace, phase, plug)], pacing=pacing)
     return site.loads[0].pace_cap_current
 
 
@@ -273,3 +273,7 @@ def test_option_off_or_unset_leaves_the_load_unpaced():
 
 def test_no_pacing_reading_leaves_every_load_unpaced():
     assert _built_cap(True, None) is None
+
+
+def test_a_plug_is_never_paced_it_is_on_or_off():
+    assert _built_cap(True, (4.6, 2.0), plug=True) is None

@@ -117,6 +117,7 @@ from ..const import (
     CONF_CATCH_UP_ENABLED,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STACK_LEVEL,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -417,6 +418,10 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
                 ),
             ),
             bool,
+        ),
+        (
+            _optional_entity_field(CONF_FORECAST_EXCESS_FULL_ENTITY_ID, defaults),
+            _entity_sel(hass, {"timestamp"}, None),
         ),
         (
             vol.Required(
@@ -778,6 +783,7 @@ HUB_POLICY_KEYS = (
     CONF_FORECAST_SOC_FLOOR,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_FORECAST_EXCESS_ENABLED,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_FORECAST_EXCESS_SOC,
@@ -1112,15 +1118,6 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                 _num(
                     CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
                     MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
-                ),
-                (
-                    vol.Required(
-                        CONF_PACE_OVER_HORIZON,
-                        default=defaults.get(
-                            CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
-                        ),
-                    ),
-                    bool,
                 ),
                 (
                     vol.Required(

@@ -25,6 +25,14 @@ def hands_off_status(load_rt: dict) -> str:
     return "Dynamic Control Off"
 
 
+def with_early_start(status: str, load_rt: dict) -> str:
+    """``status`` with the load's early-start note after it ("Early start 09:30
+    at 1.9 kW", set by the engine while the load waits its turn for the forecast
+    Excess verdict). The caller applies it to waiting states only."""
+    note = load_rt.get("early_start_note")
+    return f"{status} - {note}" if note else status
+
+
 def determine_charging_status(
     sensor,
     hub_data: dict,

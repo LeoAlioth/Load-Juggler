@@ -1407,8 +1407,13 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
             )
             load.active_phases_mask = clamped
 
-        if pacing is not None and get_entry_value(
-            entry, CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+        # Pacing is for loads that can vary their power: an EVSE or a power
+        # station. A plug or tank is on or off, so a cap under its power only
+        # ever means off.
+        if (
+            pacing is not None
+            and device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION)
+            and get_entry_value(entry, CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON)
         ):
             load.pace_cap_current = pace_cap_current(
                 *pacing, site.voltage, len(load.active_phases_mask or "A")

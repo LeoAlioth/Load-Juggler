@@ -41,6 +41,7 @@ from ..const import (
     CONF_NAME,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
@@ -363,6 +364,7 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
         # moment a paced load starts racing, so the status says why.
         ("Pacing energy sensor", CONF_PACING_ENERGY_ENTITY_ID),
         ("Pacing horizon sensor", CONF_PACING_HORIZON_ENTITY_ID),
+        ("Next full charge sensor", CONF_FORECAST_EXCESS_FULL_ENTITY_ID),
     ))
     # Per-inverter entries: their output and battery sensors feed the fleet
     # aggregation, which fails open member-by-member - the status sensor is
@@ -823,6 +825,32 @@ def _read_pacing(hass, hub_entry, hub_runtime, now: datetime | None = None):
         return None
     now = now or dt_util.utcnow()
     return energy, max((horizon - now).total_seconds() / 3600.0, 0.0)
+
+
+def _read_full_hours(hass, hub_entry, hub_runtime, pacing, now: datetime | None = None):
+    """Hours until the battery is next full by the forecast, 0 once that time has
+    passed - what the early-start rule counts back from
+    (calculations/forecast_excess.py ``starts_early``).
+
+    The ``next full charge`` entity's timestamp; the pacing horizon's hours stand
+    in while it is not configured (``pacing`` is ``_read_pacing``'s pair). None -
+    the early start is off - when it is configured but unreadable past
+    INPUT_STALE_TIMEOUT, like the pacing entities.
+    """
+    entity = get_entry_value(hub_entry, CONF_FORECAST_EXCESS_FULL_ENTITY_ID, None)
+    if not entity:
+        return pacing[1] if pacing is not None else None
+    held = hub_runtime.setdefault("_full_hold", {})
+    value = _stale_guard(hub_runtime, held, "full", _read_horizon(hass, entity), None)
+    if value is _UNAVAILABLE:  # a dropout inside the stale timeout: hold
+        value = held.get("full")
+    elif value is None:  # past it: the guard has cleared the hold
+        held.pop("full", None)
+    else:
+        held["full"] = value
+    if value is None:
+        return None
+    return max((value - (now or dt_util.utcnow())).total_seconds() / 3600.0, 0.0)
 
 
 def _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage):

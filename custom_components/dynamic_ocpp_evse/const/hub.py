@@ -107,6 +107,11 @@ CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % - never recommend a ceiling 
 # either unset, or unreadable, no load is paced.
 CONF_PACING_ENERGY_ENTITY_ID = "pacing_energy_entity_id"
 CONF_PACING_HORIZON_ENTITY_ID = "pacing_horizon_entity_id"
+# Early-start (owner, 2026-10-18): a timestamp sensor for when the battery is next
+# full by the forecast. Each load starts early only once the time left to it lets
+# the load's minimum power use the pacing energy (calculations/forecast_excess.py,
+# ``starts_early``). Unset: the pacing horizon above stands in.
+CONF_FORECAST_EXCESS_FULL_ENTITY_ID = "forecast_excess_full_entity_id"
 # Forecast-driven Excess (owner, 2026-10-17): the Excess verdict may start before
 # the battery is full while the pacing energy says the day will overfill it -
 # see calculations/forecast_excess.py. Off by default.

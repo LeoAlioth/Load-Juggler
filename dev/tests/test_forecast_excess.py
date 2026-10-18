@@ -16,6 +16,7 @@ from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
     FORECAST_EXCESS_MIN_KWH,
     forecast_excess_gate,
     forecast_excess_verdict,
+    starts_early,
 )
 from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_watts
 from custom_components.dynamic_ocpp_evse.calculations.models import (
@@ -26,6 +27,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import (
 )
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     _calculate_excess_available,
+    _excess_permits,
     _excess_phase_is_importing,
     _excess_verdict,
     _source_limit,
@@ -47,7 +49,9 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
     _apply_forecast_excess,
+    _publish_early_start,
 )
+from custom_components.dynamic_ocpp_evse.control.status import with_early_start
 
 MIN, TARGET = 20.0, 80.0
 
@@ -154,6 +158,14 @@ def _site(charge_w=3000.0, *, forecast=True, pace_w=2000.0, phases=1,
     )
 
 
+def _tank(**kw):
+    """A binary element of 8.3 A on one phase: 1.9 kW at 230 V."""
+    return LoadContext(
+        load_id="tank", entity_id="tank", min_current=8.3, max_current=8.3, phases=1,
+        mode_behavior=BEHAVIOR_BINARY_EXCESS, active_phases_mask="A", **kw,
+    )
+
+
 def test_pool_is_the_paced_part_of_the_battery_charge():
     pool = _calculate_excess_available(_site(3000, pace_w=2000))
     assert pool.get_available("A") == pytest.approx(2000 / 230)
@@ -166,13 +178,13 @@ def test_pool_is_capped_by_the_charge_when_the_pace_is_higher():
 
 def test_no_planned_energy_no_top_up_but_the_verdict_stands():
     site = _site(3000, pace_w=0.0)
-    assert _excess_verdict(site) is True
+    assert _excess_verdict(site, _tank()) is True
     assert _calculate_excess_available(site).get_available("A") == 0
 
 
 def test_without_the_forecast_the_pool_is_empty():
     site = _site(3000, forecast=False)
-    assert _excess_verdict(site) is False
+    assert _excess_verdict(site, _tank()) is False
     assert _calculate_excess_available(site).get_available("A") == 0
 
 
@@ -282,7 +294,7 @@ def _apply(entry, runtime, soc=85.0, pacing=(3.0, 2.0)):
     site.battery_soc = soc
     site.forecast_excess = False
     site.forecast_excess_pace_w = 0.0
-    return _apply_forecast_excess(runtime, entry, site, pacing), site
+    return _apply_forecast_excess(runtime, entry, site, pacing, pacing[1] if pacing else None), site
 
 
 def test_option_off_by_default():
@@ -437,3 +449,83 @@ async def test_hub_without_a_battery_reading_is_inert(hass):
     states, run = _rig(hass, **{CONF_FORECAST_EXCESS_ENABLED: True})
     states(soc="unavailable")
     assert run()["forecast_excess"] is False
+
+
+# --- early start per load: counting back from the next full charge ---------------------
+
+def test_starts_early_is_the_latest_start_before_the_next_full_charge():
+    # 16.1 kWh at a 1.9 kW element is 8.5 h of heating: from 8.4 h before full
+    assert starts_early(16.1, 8.4, 1900) is True
+    assert starts_early(16.1, 9.0, 1900) is False
+    # 2.4 kWh is 1.3 h: nowhere near, the boiler waits for the full battery
+    assert starts_early(2.4, 8.4, 1900) is False
+    assert starts_early(2.4, 1.2, 1900) is True
+    # full now (0 h left): any energy goes
+    assert starts_early(0.5, 0.0, 1900) is True
+
+
+def test_starts_early_holds_inside_a_band_and_is_off_when_unreadable():
+    assert starts_early(16.1, 9.0, 1900) is False
+    assert starts_early(16.1, 9.0, 1900, was_on=True) is True  # inside the 20 % band
+    assert starts_early(16.1, 11.0, 1900, was_on=True) is False
+    assert starts_early(None, 2.0, 1900) is False
+    assert starts_early(3.0, None, 1900) is False
+    assert starts_early(0.1, 5.0, 0.0) is True  # a load with no minimum is never held back
+
+
+def test_a_load_not_yet_due_does_not_take_the_forecast_verdict():
+    site = _site(3000, forecast=True)
+    site.battery_power = 0  # nothing absorbed: the pool is empty, only the verdict is left
+    assert _excess_permits(_tank(early_start_ok=True), site, 0.0) is True
+    assert _excess_permits(_tank(early_start_ok=False), site, 0.0) is False
+
+
+def test_the_engine_sends_each_load_when_its_own_minimum_can_use_the_energy():
+    entry = _entry(**{CONF_FORECAST_EXCESS_ENABLED: True})
+    boiler = _tank()
+    small = LoadContext(
+        load_id="small", entity_id="small", min_current=1.3, max_current=1.3, phases=1,
+        mode_behavior=BEHAVIOR_BINARY_EXCESS, active_phases_mask="A",
+    )
+
+    def run(planned, hours, loads):
+        site = _site()
+        site.battery_soc = 85.0
+        site.loads = loads
+        on = _apply_forecast_excess({}, entry, site, (planned, 8.0), hours)
+        return on, site
+
+    # midnight: 16.1 kWh, 15 h to full - only a 300 W load fits yet
+    on, site = run(16.1, 15.0, [boiler, small])
+    assert (boiler.early_start_ok, small.early_start_ok) == (False, True)
+    assert on is True and site.forecast_excess is True
+    # 8.4 h before full the boiler joins
+    run(16.1, 8.4, [boiler, small])
+    assert boiler.early_start_ok is True
+    # today: 2.4 kWh, 8 h to full - the boiler waits
+    run(2.4, 8.0, [boiler, small])
+    assert (boiler.early_start_ok, small.early_start_ok) == (False, True)
+    # the boiler alone, not due: no site verdict at all, so no pool top-up either
+    on, site = run(2.4, 8.0, [boiler])
+    assert on is False and site.forecast_excess is False and site.forecast_excess_pace_w == 0.0
+
+
+def test_a_waiting_load_says_when_it_will_start_and_at_what_power():
+    from custom_components.dynamic_ocpp_evse.const import DOMAIN
+
+    waiting, due = _tank(early_start_ok=False), _tank(early_start_ok=True)
+    due.load_id = "due"
+    solar = _tank(early_start_ok=False)
+    solar.load_id, solar.mode_behavior = "solar", BEHAVIOR_SOLAR_ONLY
+    site = _site()
+    site.loads = [waiting, due, solar]
+    hass = SimpleNamespace(data={DOMAIN: {"loads": {"tank": {}, "due": {}, "solar": {}}}})
+    _publish_early_start(hass, {"_excess_by_forecast_on": True}, site, 2.4, 8.0)
+    note = hass.data[DOMAIN]["loads"]["tank"]["early_start_note"]
+    assert note.startswith("Early start ") and note.endswith(" at 1.9 kW")
+    assert hass.data[DOMAIN]["loads"]["due"]["early_start_note"] is None      # already its turn
+    assert hass.data[DOMAIN]["loads"]["solar"]["early_start_note"] is None    # not an Excess load
+    _publish_early_start(hass, {"_excess_by_forecast_on": False}, site, 2.4, 8.0)
+    assert hass.data[DOMAIN]["loads"]["tank"]["early_start_note"] is None     # verdict off
+    assert with_early_start("Off", {"early_start_note": note}) == f"Off - {note}"
+    assert with_early_start("Off", {}) == "Off"
