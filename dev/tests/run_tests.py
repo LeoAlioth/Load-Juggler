@@ -788,6 +788,10 @@ def build_site_from_scenario(scenario, excess_on=False):
         # Catch-up's per-load option (loads: catch_up: true); the verdict is
         # latched per cycle in run_scenario_simulation.
         load.catch_up_enabled = bool(load_data.get("catch_up"))
+        # The early-start group's per-load inputs (engine/load_builders.py):
+        # what the load can still absorb today, and a thermostat load's room.
+        load.early_room_kwh = load_data.get("early_room_kwh")
+        load.thermal_headroom_k = load_data.get("thermal_headroom_k")
         site.loads.append(load)
 
     # Build circuit groups
@@ -889,6 +893,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     # soc}; source minimum = the hub's early-Excess option off) - the
     # hub_runtime["_catch_up_on"] equivalent.
     catch_on = {}
+    clip_runtime = {}  # hub_runtime's clip-early latches (site: forecast_clip)
     invariant_breaches = set()  # physical guards, deduplicated across cycles
 
     # Per-load draw-settle tracking: last measured draw and the count of
@@ -1043,6 +1048,36 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
                 pace_watts(fx['energy_kwh'], fx.get('hours_left', 0))
                 if forecast_on else 0.0
             )
+
+        # 6b2. The early start on forecast clipping (JUG-18): the real engine
+        #      function, fed the clip the advice would have published
+        #      (site: forecast_clip {kwh, start_hours, span_hours, enabled,
+        #      source, soc}); no clip the battery cannot take, no entry.
+        fcl = scenario['site'].get('forecast_clip')
+        if fcl:
+            from types import SimpleNamespace
+            from custom_components.dynamic_ocpp_evse.const import (
+                CONF_FORECAST_CLIP_EARLY_ENABLED,
+                CONF_FORECAST_EXCESS_SOC,
+                CONF_FORECAST_EXCESS_SOC_SOURCE,
+            )
+            from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+                _apply_forecast_excess,
+            )
+            if fcl.get('kwh', 0) > 0:
+                clip_runtime['_clip_early'] = {
+                    'kwh': fcl['kwh'],
+                    'start_h': fcl.get('start_hours', 0.0),
+                    'span_h': fcl.get('span_hours', 1.0),
+                }
+            else:
+                clip_runtime.pop('_clip_early', None)
+            clip_entry = SimpleNamespace(entry_id='sim', data={}, options={
+                CONF_FORECAST_CLIP_EARLY_ENABLED: fcl.get('enabled', True),
+                CONF_FORECAST_EXCESS_SOC_SOURCE: fcl.get('source', 'target'),
+                CONF_FORECAST_EXCESS_SOC: fcl.get('soc', 80),
+            })
+            forecast_on = _apply_forecast_excess(clip_runtime, clip_entry, site, None, None)
 
         # 6c. Catch-up, as engine/hub_calculation.py latches it per load.
         cu = scenario['site'].get('catch_up')

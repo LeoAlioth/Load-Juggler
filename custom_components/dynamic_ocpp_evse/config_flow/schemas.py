@@ -119,6 +119,7 @@ from ..const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_MANUAL_OVERRIDE_TIMEOUT,
+    CONF_FORECAST_CLIP_EARLY_ENABLED,
     CONF_FORECAST_EXCESS_ENABLED,
     CONF_FORECAST_EXCESS_SOC,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
@@ -183,6 +184,7 @@ from ..const import (
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+    DEFAULT_FORECAST_CLIP_EARLY_ENABLED,
     DEFAULT_FORECAST_EXCESS_ENABLED,
     DEFAULT_FORECAST_EXCESS_SOC,
     DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
@@ -447,6 +449,17 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
                 CONF_FORECAST_EXCESS_ENABLED,
                 default=defaults.get(
                     CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
+                ),
+            ),
+            bool,
+        ),
+        # JUG-18: the same early start, counted back from the PV clipping window
+        # instead of the next full charge.
+        (
+            vol.Required(
+                CONF_FORECAST_CLIP_EARLY_ENABLED,
+                default=defaults.get(
+                    CONF_FORECAST_CLIP_EARLY_ENABLED, DEFAULT_FORECAST_CLIP_EARLY_ENABLED
                 ),
             ),
             bool,
@@ -834,6 +847,7 @@ HUB_POLICY_KEYS = (
     CONF_PACING_HORIZON_ENTITY_ID,
     CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_CLIP_EARLY_ENABLED,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_FORECAST_EXCESS_SOC,
 )

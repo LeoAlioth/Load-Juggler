@@ -83,10 +83,18 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   restart margin (applied in _source_limit; entities read in engine/readers.py)
 │   ├── forecast_excess.py         # Forecast-driven Excess verdict latch and pool top-up (gate SOC, planned
 │   │                              #   energy > 0.2 kWh, paced rate); the engine latches it, the calculator reads it
+│   │                              #   The early-start group rule (``early_group``/``early_blocker``) has two energy
+│   │                              #   sources, both latched in engine/hub_calculation._apply_forecast_excess: the
+│   │                              #   planned energy counted back from the next full charge, and (hub option
+│   │                              #   ``forecast_clip_early_enabled``) the forecast clip the battery cannot take counted
+│   │                              #   back from the clipping window - published into hub_runtime["_clip_early"] by
+│   │                              #   engine/hub_result._compute_forecast_advice, read the NEXT cycle; per-load energy:
+│   │                              #   ``clip_load_room_kwh``
 │   ├── catch_up.py                # Per-load catch-up: a Solar Only / Solar Priority load may start below the target
 │                                  #   SOC when its max power can't keep up with the pacing energy (rate >= max W,
 │                                  #   latched per load); the engine sets LoadContext.catch_up_active
-│   ├── forecast.py                # Forecast-based charging advice
+│   ├── forecast.py                # Forecast-based charging advice (+ ``clip_window_span`` and ``unavoidable_clip_kwh``,
+│   │                              #   what the early start on forecast clipping reads, JUG-18)
 │   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
 │   └── utils.py                   # Utility functions (is_number, household_per_phase)
 ├── control/                       # Actuation layer (imports only const/helpers/units - never entities or engine)

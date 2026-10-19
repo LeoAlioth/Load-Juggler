@@ -153,6 +153,12 @@ FORECAST_EXCESS_SOC_SOURCES = [
     FORECAST_EXCESS_SOURCE_TARGET,
     FORECAST_EXCESS_SOURCE_FIXED,
 ]
+# Early start on forecast CLIPPING (JUG-18): Excess loads start ahead of the PV
+# clipping window when the clip the battery cannot take would otherwise be
+# curtailed. Needs the clipping advice (export limit or off-grid, battery
+# capacity, solar forecast); shares the early-start SOC gate above. Off by default.
+CONF_FORECAST_CLIP_EARLY_ENABLED = "forecast_clip_early_enabled"
+DEFAULT_FORECAST_CLIP_EARLY_ENABLED = False
 DEFAULT_FORECAST_EXCESS_ENABLED = False
 DEFAULT_FORECAST_EXCESS_SOC_SOURCE = FORECAST_EXCESS_SOURCE_TARGET
 DEFAULT_FORECAST_EXCESS_SOC = 80

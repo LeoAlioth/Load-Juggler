@@ -97,6 +97,7 @@
                     "pacing_horizon_entity_id": "Sončni zahod (neobvezno)",
                     "forecast_excess_full_entity_id": "Naslednja polna baterija (neobvezno)",
                     "forecast_excess_enabled": "Predčasni začetek glede na viške",
+                    "forecast_clip_early_enabled": "Predčasni začetek glede na rezanje PV",
                     "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
                     "forecast_excess_soc": "Fiksni SOC za predčasni začetek"
                 },
@@ -124,6 +125,7 @@
                     "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba ta višek energije porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
                     "forecast_excess_full_entity_id": "Senzor časovnega žiga, kdaj bo baterija po napovedi spet polna - npr. Load Insights Naslednja polna baterija. Z njim se vsaka naprava zgodaj zažene šele, ko ji preostali čas omogoča, da z minimalno močjo porabi višek energije do takrat (višek energije, deljen z minimalno močjo naprave, je število potrebnih ur). Ni nastavljeno: uporabi se senzor sončnega zahoda zgoraj.",
                     "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot predčasni začetek zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za predčasni začetek in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od predčasnega začetka zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
                     "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
                     "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
                 }
@@ -640,6 +642,7 @@
                     "pacing_horizon_entity_id": "Sončni zahod (neobvezno)",
                     "forecast_excess_full_entity_id": "Naslednja polna baterija (neobvezno)",
                     "forecast_excess_enabled": "Predčasni začetek glede na viške",
+                    "forecast_clip_early_enabled": "Predčasni začetek glede na rezanje PV",
                     "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
                     "forecast_excess_soc": "Fiksni SOC za predčasni začetek"
                 },
@@ -653,6 +656,7 @@
                     "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba ta višek energije porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
                     "forecast_excess_full_entity_id": "Senzor časovnega žiga, kdaj bo baterija po napovedi spet polna - npr. Load Insights Naslednja polna baterija. Z njim se vsaka naprava zgodaj zažene šele, ko ji preostali čas omogoča, da z minimalno močjo porabi višek energije do takrat (višek energije, deljen z minimalno močjo naprave, je število potrebnih ur). Ni nastavljeno: uporabi se senzor sončnega zahoda zgoraj.",
                     "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot predčasni začetek zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za predčasni začetek in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od predčasnega začetka zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
                     "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
                     "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
                 }
