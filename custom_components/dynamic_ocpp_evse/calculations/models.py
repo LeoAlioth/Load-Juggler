@@ -367,6 +367,11 @@ class SiteContext:
     # connection). Its grid reading is a synthetic 0 A, so it has no grid
     # headroom and the managed draws are not taken off it - off-grid, per phase.
     gridless_phases: tuple = (False, False, False)
+    # Off-grid with a generator on the grid input (JUG-13): its per-phase rating
+    # (A; 0 = none) and the AC-in current it is carrying now, per phase (None
+    # while no source is connected - the site is then plainly off-grid).
+    generator_rating: float = 0.0
+    generator_current: PhaseValues | None = None
 
     # Loads at this site
     loads: list[LoadContext] = field(default_factory=list)

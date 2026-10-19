@@ -43,7 +43,9 @@ from ..const import (
     CONF_FORECAST_EXCESS_ENABLED,
     CONF_FORECAST_EXCESS_SOC,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
+    CONF_GENERATOR_RATING,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
@@ -70,6 +72,7 @@ from ..const import (
     DEFAULT_FORECAST_EXCESS_ENABLED,
     DEFAULT_FORECAST_EXCESS_SOC,
     DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
+    DEFAULT_GENERATOR_RATING,
     DEFAULT_GRID_EXPORT_LIMIT,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
@@ -408,6 +411,10 @@ def _read_site_phases(hass, hub_entry, voltage):
     # the only thing allowed to substitute a number for the sentinel. Until
     # then, every test here has to be on None, never on truthiness or 0.
     raw_phases = _read_grid_phases(hass, hub_entry, voltage)
+    # A generator on the grid input (JUG-13) is not a grid: its reading never
+    # makes the site grid-tied (``_read_generator`` takes it separately).
+    if get_entry_value(hub_entry, CONF_GRID_INPUT_IS_GENERATOR, False):
+        raw_phases = [None, None, None]
     has_grid_cts = any(r is not None for r in raw_phases)
 
     # A site phase exists if it has EITHER a grid CT or an inverter output
@@ -438,6 +445,34 @@ def _read_site_phases(hass, hub_entry, voltage):
     if all(r is None for r in raw_phases):
         raw_phases = [0.0, None, None]
     return raw_phases, has_grid_cts, tuple(gridless)
+
+
+def _read_generator(hass, hub_entry, voltage, ema_inputs):
+    """``(rating, current)`` of a generator on the grid input (JUG-13).
+
+    ``rating`` is the per-phase current setting (A), 0 unless the hub says its
+    "grid" sensors read a generator. ``current`` is what the generator carries
+    now per phase (A, smoothed like a grid CT, never negative), None for a phase
+    with no sensor - and for ALL phases while a sensor cannot be read: a GX
+    device only exposes its AC-in readings while a source is connected, so an
+    unreadable one means the generator is off, not "hold the last value". The
+    smoothing state is dropped then, so the next start reads fresh. With every
+    phase None the calculator treats the site exactly as off-grid.
+    """
+    if not get_entry_value(hub_entry, CONF_GRID_INPUT_IS_GENERATOR, False):
+        return 0.0, None
+    rating = float(
+        get_entry_value(hub_entry, CONF_GENERATOR_RATING, DEFAULT_GENERATOR_RATING)
+        or 0
+    )
+    phases = []
+    for i, raw in enumerate(_read_grid_phases(hass, hub_entry, voltage)):
+        if raw is None or units.is_unusable_number(raw):
+            ema_inputs.pop(f"generator_{i}", None)
+            phases.append(None)
+        else:
+            phases.append(max(0.0, _smooth(ema_inputs, f"generator_{i}", raw)))
+    return rating, (PhaseValues(*phases) if any(p is not None for p in phases) else None)
 
 
 def _read_max_import_power(hass, hub_entry, hub_runtime):
@@ -1485,6 +1520,10 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     ]
     ctrl_consumption_pv, ctrl_export_pv = _split_grid(ctrl_phases)
 
+    generator_rating, generator_current = _read_generator(
+        hass, hub_entry, voltage, ema_inputs
+    )
+
     total_export_current = export_pv.total
     total_export_power = total_export_current * voltage if voltage > 0 else 0
 
@@ -1701,6 +1740,8 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         distribution_mode=distribution_mode,
         is_off_grid=not has_grid_cts,
         gridless_phases=gridless_phases,
+        generator_rating=generator_rating,
+        generator_current=generator_current,
     )
 
     # --- Add loads ---

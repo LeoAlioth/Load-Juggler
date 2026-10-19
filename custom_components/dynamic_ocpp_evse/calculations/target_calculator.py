@@ -418,9 +418,25 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     """
     # Off-grid: there is no grid feed, so the main breaker rating must not be
     # turned into phantom headroom (consumption reads 0 without grid CTs).
-    # All power comes through the inverter pool.
+    # All power comes through the inverter pool. The exception is a generator
+    # on the grid input while it is connected (JUG-13): it is a supply capped
+    # at its own rating, and what it carries now counts as consumption from
+    # it. Our loads' draws are NOT taken off that reading (the inverter half
+    # already hands them back whole, ``_off_grid_held_supply``), so the room is
+    # what the generator has left. Nothing can be exported to it, which the
+    # off-grid gates elsewhere already say.
+    rating, consumption = site.main_breaker_rating, site.consumption
     if site.is_off_grid:
-        return PhaseConstraints.zeros()
+        if site.generator_rating <= 0 or site.generator_current is None:
+            return PhaseConstraints.zeros()
+        # Only on phases the site has: the reading cannot add one.
+        rating, consumption = site.generator_rating, PhaseValues(*(
+            g if c is not None else None
+            for g, c in zip(
+                (site.generator_current.a, site.generator_current.b, site.generator_current.c),
+                (site.consumption.a, site.consumption.b, site.consumption.c),
+            )
+        ))
 
     # Power buffer (W) is a safety margin kept unused on the grid. Spread it
     # across the phases as an extra per-phase deduction so it is honored on the
@@ -431,8 +447,8 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
 
     # Calculate per-phase limits (only for phases that physically exist)
     limits = [
-        max(0, site.main_breaker_rating - cons - buffer_per_phase) if cons is not None else 0
-        for cons in (site.consumption.a, site.consumption.b, site.consumption.c)
+        max(0, rating - cons - buffer_per_phase) if cons is not None else 0
+        for cons in (consumption.a, consumption.b, consumption.c)
     ]
     # A phase no grid CT reads has no grid feed to hand out (synthetic 0 A, not
     # a free breaker): only the inverters supply it.
@@ -456,7 +472,7 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     # Applied as a cap on combination fields (ABC, AB, AC, BC) - NOT by scaling
     # per-phase limits, which would be overly conservative for multi-phase loads.
     if site.max_grid_import_power is not None:
-        total_consumption = site.consumption.total
+        total_consumption = consumption.total
         max_import_current = site.max_grid_import_power / site.voltage
         available_for_evs = max(0, max_import_current - total_consumption)
         constraints.ABC = min(constraints.ABC, available_for_evs)
