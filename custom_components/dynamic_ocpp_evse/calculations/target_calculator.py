@@ -428,21 +428,23 @@ def _grid_basis(site: SiteContext):
     return rating, consumption
 
 
-def grid_headroom_w(site: SiteContext, mask: str) -> Optional[float]:
-    """Signed grid headroom (W) for a load on the phases in ``mask``: positive
-    is what the breaker (less the power buffer) and the max import power still
-    allow, NEGATIVE is the shortage - the household alone is over a limit, with
-    every managed load already off (``site.consumption`` has our draws taken
-    out). The same arithmetic as ``_calculate_grid_limit``, unclamped.
+def grid_headrooms_w(site: SiteContext, mask: str) -> tuple[Optional[float], Optional[float]]:
+    """``(breaker, import)`` signed grid headroom (W) for a load on the phases in
+    ``mask``: positive is what is still allowed, NEGATIVE is the shortage - the
+    household alone is over the limit, with every managed load already off
+    (``site.consumption`` has our draws taken out). The same arithmetic as
+    ``_calculate_grid_limit``, unclamped, and kept apart because the two limits
+    are different matters: the breaker (less the power buffer) is safety, the max
+    import power the tariff's 15-minute block.
 
     A load spread over n phases is limited by its tightest phase times n.
-    None when there is no grid limit to judge by (off-grid): nothing can be
-    overloaded then. Read by the SG Ready heat pump (engine/hub_calculation.
-    _apply_sg_ready) for its Block and its release.
+    ``breaker`` None when there is no grid limit to judge by (off-grid),
+    ``import`` None when no max import power is set. Read by the SG Ready heat
+    pump (engine/hub_calculation._apply_sg_ready) for its Block and its release.
     """
     basis = _grid_basis(site)
     if basis is None or site.voltage <= 0:
-        return None
+        return None, None
     rating, consumption = basis
     buffer_per_phase = 0.0
     if site.power_buffer and site.power_buffer > 0:
@@ -453,13 +455,19 @@ def grid_headroom_w(site: SiteContext, mask: str) -> Optional[float]:
         if cons is not None and letter in (mask or "")
     }
     if not phases:
-        return None
-    headroom = min(phases.values()) * len(phases) * site.voltage
-    if site.max_grid_import_power is not None:
-        headroom = min(
-            headroom, site.max_grid_import_power - consumption.total * site.voltage
-        )
-    return headroom
+        return None, None
+    breaker = min(phases.values()) * len(phases) * site.voltage
+    imported = (
+        None if site.max_grid_import_power is None
+        else site.max_grid_import_power - consumption.total * site.voltage
+    )
+    return breaker, imported
+
+
+def grid_headroom_w(site: SiteContext, mask: str) -> Optional[float]:
+    """The tighter of the two (``grid_headrooms_w``), None when neither limit applies."""
+    known = [h for h in grid_headrooms_w(site, mask) if h is not None]
+    return min(known) if known else None
 
 
 def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:

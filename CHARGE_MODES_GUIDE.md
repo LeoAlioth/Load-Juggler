@@ -1000,9 +1000,9 @@ The standard puts timing limits on the sender, and Load Juggler enforces them (s
 | Maximum block time | 120 min | one Block lasts at most this long |
 | Maximum blocks per day | 3 | counted over a rolling 24 hours, not the calendar day |
 
-A Block is released only when the grid headroom covers the pump's Normal draw (its last measured one, or the extra power setting without a sensor) plus a 300 W margin, so the pump does not come back and push the house straight over the limit again. When the allowance is used up (3 Blocks in the rolling 24 hours, or a Block at its maximum time) the pump goes to Normal and is never blocked again until the allowance returns; a warning is logged and the State sensor says so, because the overload then goes unanswered and the other loads and the site's own limits have to handle it.
+A Block is released only when the grid headroom covers the pump's Normal draw (its last measured one, or the extra power setting without a sensor) plus the hub's *Excess trigger margin* (the margin the integration keeps below a limit), so the pump does not come back and push the house straight over the limit again. When the allowance is used up (3 Blocks in the rolling 24 hours, or a Block at its maximum time) the pump goes to Normal and is never blocked again until the allowance returns; a warning is logged and the State sensor says so, because the overload then goes unanswered and the other loads and the site's own limits have to handle it.
 
-Because every state lasts at least the minimum time, an overload that arrives while the pump is in Force or Recommended waits for that time before the Block.
+The two limits act at different speeds. A **breaker overload** (the household over the breaker's rating, less the power buffer, with every managed load already off) matters within seconds: a Slovenian meter or breaker tolerates more than 110 % of its rating for only about 90 seconds. The pump is blocked after a 10-second noise filter, on top of the input smoothing, and does not wait for the minimum time of the state it interrupts (the Block itself then lasts at least that long). The **max import power** limit (the tariff's 15-minute block) blocks the pump only after the household has been over it for 2 continuous minutes, and then does wait for the state's minimum time.
 
 ---
 

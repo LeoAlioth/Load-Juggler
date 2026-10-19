@@ -11,7 +11,8 @@ potential-free contacts (relay 1, relay 2):
 The device has no operating mode: the state follows the site, first match wins
 (see ``step``):
 
-    1 overload that reached this device         -> Block
+    1 overload that reached this device         -> Block (a breaker overload at
+                                                   once, max import power after 2 min)
     2 actual excess                             -> Force
     3 an early-start verdict (predicted excess) -> Recommended
     4 battery above its target SOC              -> Recommended
@@ -50,8 +51,15 @@ STATE_OF_RELAYS = {v: k for k, v in RELAYS.items()}
 _MILDNESS = (NORMAL, RECOMMENDED, BLOCK, FORCE)
 
 DAY_S = 24 * 3600.0
-# Headroom kept on top of the pump's Normal draw before a Block is released (W).
-RELEASE_MARGIN_W = 300.0
+# Noise filter on a BREAKER overload (s): it must hold this long before Block. Far
+# under the ~90 s a Slovenian meter/breaker tolerates above 110 % of its rating. The
+# input is already smoothed by the engine's EMA (time constant EMA_TAU_S, 5.6 s by
+# default, ~13 s to 90 % of a step), so the total reaction is about 13 s + this + one
+# cycle, a quarter of what the breaker allows.
+BREAKER_HOLD_S = 10.0
+# A MAX IMPORT POWER overload (the 15-minute-block limit) must have held this long
+# (owner, 2026-10-19): a short peak inside the block costs nothing, a sustained one does.
+IMPORT_HOLD_S = 120.0
 # Open question for the owner (JUG-24 point 4): should the pump also go to
 # Recommended on the PV-clipping early start (hub option
 # forecast_clip_early_enabled)? Following it is this one flag; the default
@@ -64,7 +72,8 @@ class SgConfig:
     min_state_s: float = 600.0
     max_block_s: float = 7200.0
     max_blocks: int = 3
-    release_margin_w: float = RELEASE_MARGIN_W
+    breaker_hold_s: float = BREAKER_HOLD_S
+    import_hold_s: float = IMPORT_HOLD_S
 
 
 @dataclass
@@ -76,12 +85,20 @@ class SgMemory:
     entered_at: float | None = None
     block_starts: list = field(default_factory=list)
     allowance_noted: bool = False
+    # since when the breaker / the max import power has been over, None = not over
+    breaker_since: float | None = None
+    import_since: float | None = None
 
 
 @dataclass(frozen=True)
 class SgInputs:
-    # The shortage (W) that reached this device; 0 when none (see overloaded_devices).
-    overload_w: float = 0.0
+    # The shortage (W) that reached this device, per cause; 0 when none
+    # (see overloaded_devices). Debounced here, per cause (see ``step``).
+    breaker_over_w: float = 0.0
+    import_over_w: float = 0.0
+    # Margin kept on top of the Normal draw before a Block is released (W): the
+    # hub's Excess trigger margin, the integration's lead below a limit.
+    release_margin_w: float = 0.0
     # Signed grid headroom (W) on the device's phases with the pump as it is now;
     # None = no grid limit to judge by (off-grid): a Block is then released at once.
     headroom_w: float | None = None
@@ -178,8 +195,18 @@ def step(mem: SgMemory, inp: SgInputs, cfg: SgConfig, now: float) -> SgDecision:
             _enter(mem, NORMAL, now)
         return SgDecision(NORMAL, "relay not available", blocks_in_day(mem, now), 0.0, False, before != NORMAL)
 
+    # Overload per cause. The breaker is safety: a short noise filter, and it
+    # does not wait for the minimum time of the state it interrupts. The max
+    # import power is tariff: over for import_hold_s without a break.
+    mem.breaker_since = (mem.breaker_since if mem.breaker_since is not None else now) if inp.breaker_over_w > 0 else None
+    mem.import_since = (mem.import_since if mem.import_since is not None else now) if inp.import_over_w > 0 else None
+    urgent = mem.breaker_since is not None and now - mem.breaker_since >= cfg.breaker_hold_s
+    overloaded = urgent or (
+        mem.import_since is not None and now - mem.import_since >= cfg.import_hold_s
+    )
+
     # What the site asks for.
-    if inp.overload_w > 0:
+    if overloaded:
         if can_block(mem, cfg, now) or mem.state == BLOCK:
             want, reason = BLOCK, "overload"
         else:
@@ -205,10 +232,10 @@ def step(mem: SgMemory, inp: SgInputs, cfg: SgConfig, now: float) -> SgDecision:
         elif not long_enough:
             want, held = BLOCK, "minimum time"
         else:
-            need = inp.normal_draw_w + cfg.release_margin_w
+            need = inp.normal_draw_w + inp.release_margin_w
             if inp.headroom_w is not None and inp.headroom_w < need:
                 want, held = BLOCK, "waiting for headroom"
-    elif want != mem.state and served() < cfg.min_state_s:
+    elif want != mem.state and served() < cfg.min_state_s and not (urgent and want == BLOCK):
         want, held = mem.state, "minimum time"
 
     if want != mem.state:

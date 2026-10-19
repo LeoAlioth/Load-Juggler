@@ -19,7 +19,7 @@ from ..calculations import (
     grid_overdraw,
 )
 from ..calculations import sg_ready
-from ..calculations.target_calculator import grid_headroom_w
+from ..calculations.target_calculator import grid_headroom_w, grid_headrooms_w
 from ..calculations.catch_up import catch_up_verdict, max_power_w
 from ..calculations.forecast_excess import (
     clip_load_room_kwh,
@@ -1418,6 +1418,12 @@ def _sg_relays_ok(hass, entry, load_rt) -> bool:
     return True
 
 
+def grid_headroom_w_of(pair):
+    """The tighter of a ``grid_headrooms_w`` pair, None when neither applies."""
+    known = [h for h in pair if h is not None]
+    return min(known) if known else None
+
+
 def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
     """Decide every SG Ready heat pump's state (calculations/sg_ready.py) from
     what the cycle knows, once the allocation is final. Returns
@@ -1437,10 +1443,12 @@ def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
       with ``sg_ready.FOLLOW_CLIP_EARLY``.
     - **Recommended / battery above target** and Normal otherwise: the SOC
       against the target (never true on a battery-free site).
-    - **Block / overload**: ``grid_headroom_w`` is the household's room under the
-      breaker and the max import power with every managed load already off - a
-      negative figure is the shortage nothing else can absorb. It reaches the
-      devices in priority order (``overloaded_devices``).
+    - **Block / overload**: ``grid_headrooms_w`` is the household's room under the
+      breaker and under the max import power with every managed load already off
+      - a negative figure is the shortage nothing else can absorb. It reaches the
+      devices in priority order (``overloaded_devices``), per cause: a breaker
+      overload blocks within seconds, max import power only after 2 minutes
+      (calculations/sg_ready.py).
     """
     loads_rt = hass.data[DOMAIN]["loads"]
     devices = [c for c in site.loads if c.device_type == DEVICE_TYPE_SG_READY]
@@ -1462,8 +1470,11 @@ def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
             continue
         managed.append((load, rt, mem, _sg_settings(rt["entry"])))
 
-    headrooms = {load.load_id: grid_headroom_w(site, load.active_phases_mask) for load, *_ in managed}
-    shortage = max((-h for h in headrooms.values() if h is not None and h < 0), default=0.0)
+    pairs = {load.load_id: grid_headrooms_w(site, load.active_phases_mask) for load, *_ in managed}
+    headrooms = {i: grid_headroom_w_of(pair) for i, pair in pairs.items()}
+
+    def shortage_of(index):
+        return max((-p[index] for p in pairs.values() if p[index] is not None and p[index] < 0), default=0.0)
 
     def normal_draw(load, rt):
         entry = rt["entry"]
@@ -1471,14 +1482,15 @@ def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
             get_entry_value(entry, CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER) or 0
         )
 
-    hit = sg_ready.overloaded_devices(
-        shortage,
-        [
-            (load.load_id, load.priority, normal_draw(load, rt), mem.state,
-             sg_ready.can_block(mem, cfg, now))
-            for load, rt, mem, cfg in managed
-        ],
-    )
+    candidates = [
+        (load.load_id, load.priority, normal_draw(load, rt), mem.state,
+         sg_ready.can_block(mem, cfg, now))
+        for load, rt, mem, cfg in managed
+    ]
+    # each cause reaches the devices in priority order on its own shortage
+    hit_breaker = sg_ready.overloaded_devices(shortage_of(0), candidates)
+    hit_import = sg_ready.overloaded_devices(shortage_of(1), candidates)
+    shortage_b, shortage_i = shortage_of(0), shortage_of(1)
     full = site.battery_soc is not None and site.battery_soc_full is not None and site.battery_soc >= site.battery_soc_full
     above_target = (
         site.battery_soc is not None
@@ -1495,7 +1507,9 @@ def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
         decision = sg_ready.step(
             mem,
             sg_ready.SgInputs(
-                overload_w=shortage if load.load_id in hit else 0.0,
+                breaker_over_w=shortage_b if load.load_id in hit_breaker else 0.0,
+                import_over_w=shortage_i if load.load_id in hit_import else 0.0,
+                release_margin_w=float(site.excess_trigger_margin or 0.0),
                 headroom_w=headrooms[load.load_id],
                 normal_draw_w=normal_draw(load, rt),
                 actual_excess=load.available_current > 0 and (excess_on or full),

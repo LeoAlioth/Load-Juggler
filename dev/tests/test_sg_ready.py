@@ -5,7 +5,8 @@ from custom_components.dynamic_ocpp_evse.calculations import sg_ready as sg
 from custom_components.dynamic_ocpp_evse.calculations.models import PhaseValues, SiteContext
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import grid_headroom_w
 
-CFG = sg.SgConfig()
+CFG = sg.SgConfig(breaker_hold_s=0.0)  # the debounce has its own tests below
+MARGIN = 500.0
 MIN = CFG.min_state_s
 DAY = sg.DAY_S
 
@@ -26,7 +27,7 @@ def memory(state=sg.NORMAL, since=0.0):
 
 def test_row1_overload_blocks():
     mem = memory()
-    d = run(mem, inp(overload_w=500), MIN + 1)
+    d = run(mem, inp(breaker_over_w=500), MIN + 1)
     assert d.state == sg.BLOCK and d.blocks_24h == 1
 
 
@@ -52,7 +53,7 @@ def test_row5_otherwise_normal():
 
 
 def test_first_match_wins():
-    inputs = inp(overload_w=1, actual_excess=True, early_start=True, battery_above_target=True)
+    inputs = inp(breaker_over_w=1, actual_excess=True, early_start=True, battery_above_target=True)
     assert run(memory(), inputs, MIN + 1).state == sg.BLOCK
     inputs = inp(actual_excess=True, early_start=True, battery_above_target=True)
     assert run(memory(), inputs, MIN + 1).state == sg.FORCE
@@ -74,10 +75,16 @@ def test_state_held_for_the_minimum_time():
     assert run(mem, inp(), 100.0 + MIN).state == sg.NORMAL
 
 
-def test_overload_waits_for_the_minimum_of_the_state_it_interrupts():
+def test_a_breaker_overload_does_not_wait_for_the_minimum_of_the_state_it_interrupts():
     mem = memory(sg.RECOMMENDED, since=0.0)
-    assert run(mem, inp(overload_w=900), MIN - 1).state == sg.RECOMMENDED
-    assert run(mem, inp(overload_w=900), MIN).state == sg.BLOCK
+    assert run(mem, inp(breaker_over_w=900), 5.0).state == sg.BLOCK
+
+
+def test_a_max_import_overload_does_wait_for_it():
+    cfg = sg.SgConfig(import_hold_s=0.0)
+    mem = memory(sg.RECOMMENDED, since=0.0)
+    assert sg.step(mem, inp(import_over_w=900), cfg, MIN - 1).state == sg.RECOMMENDED
+    assert sg.step(mem, inp(import_over_w=900), cfg, MIN).state == sg.BLOCK
 
 
 def test_reentry_is_never_sooner_than_the_minimum():
@@ -93,7 +100,7 @@ def test_reentry_is_never_sooner_than_the_minimum():
 
 def test_start_up_state_counts_as_long_served():
     mem = sg.SgMemory()
-    assert run(mem, inp(overload_w=1), 5.0).state == sg.BLOCK
+    assert run(mem, inp(breaker_over_w=1), 5.0).state == sg.BLOCK
 
 
 # --- Block limits ----------------------------------------------------------
@@ -101,10 +108,10 @@ def test_start_up_state_counts_as_long_served():
 def test_block_released_only_when_headroom_covers_the_normal_draw_plus_margin():
     mem = memory(sg.BLOCK, since=0.0)
     draw = 1500.0
-    short = inp(headroom_w=draw + CFG.release_margin_w - 1, normal_draw_w=draw)
+    short = inp(headroom_w=draw + MARGIN - 1, normal_draw_w=draw, release_margin_w=MARGIN)
     d = run(mem, short, MIN + 1)
     assert d.state == sg.BLOCK and "headroom" in d.reason
-    ok = inp(headroom_w=draw + CFG.release_margin_w, normal_draw_w=draw)
+    ok = inp(headroom_w=draw + MARGIN, normal_draw_w=draw, release_margin_w=MARGIN)
     assert run(mem, ok, MIN + 2).state == sg.NORMAL
 
 
@@ -120,12 +127,12 @@ def test_block_without_a_grid_limit_is_released_at_once():
 
 def test_overload_keeps_the_block_going():
     mem = memory(sg.BLOCK, since=0.0)
-    assert run(mem, inp(overload_w=100, headroom_w=-100), MIN + 10).state == sg.BLOCK
+    assert run(mem, inp(breaker_over_w=100, headroom_w=-100), MIN + 10).state == sg.BLOCK
 
 
 def test_block_ends_at_its_maximum_time_and_is_flagged():
     mem = memory(sg.BLOCK, since=0.0)
-    d = run(mem, inp(overload_w=100, headroom_w=-100), CFG.max_block_s)
+    d = run(mem, inp(breaker_over_w=100, headroom_w=-100), CFG.max_block_s)
     assert d.state == sg.NORMAL and d.allowance_used_up
 
 
@@ -134,27 +141,27 @@ def test_three_blocks_in_a_rolling_day_then_normal_never_block():
     t = 0.0
     for _ in range(3):
         t += MIN
-        assert run(mem, inp(overload_w=1), t).state == sg.BLOCK
+        assert run(mem, inp(breaker_over_w=1), t).state == sg.BLOCK
         t += MIN
         assert run(mem, inp(headroom_w=None), t).state == sg.NORMAL
     t += MIN
-    d = run(mem, inp(overload_w=1), t)
+    d = run(mem, inp(breaker_over_w=1), t)
     assert d.state == sg.NORMAL and d.allowance_used_up and d.blocks_24h == 3
 
 
 def test_the_day_is_rolling_not_the_calendar():
     mem = sg.SgMemory(state=sg.NORMAL, entered_at=0.0, block_starts=[1000.0, 2000.0, 3000.0])
-    assert run(mem, inp(overload_w=1), 3000.0 + MIN).state == sg.NORMAL  # used up
+    assert run(mem, inp(breaker_over_w=1), 3000.0 + MIN).state == sg.NORMAL  # used up
     t = 1000.0 + DAY  # the oldest block has left the window
     assert sg.blocks_in_day(mem, t) == 2
-    assert run(mem, inp(overload_w=1), t).state == sg.BLOCK
+    assert run(mem, inp(breaker_over_w=1), t).state == sg.BLOCK
     assert mem.block_starts[-1] == t
 
 
-def test_used_up_overload_waits_for_the_current_states_minimum_then_normal():
+def test_used_up_breaker_over_waits_for_the_current_states_minimum_then_normal():
     mem = sg.SgMemory(state=sg.FORCE, entered_at=0.0, block_starts=[0.0, 1.0, 2.0])
-    assert run(mem, inp(overload_w=1), MIN - 1).state == sg.FORCE
-    assert run(mem, inp(overload_w=1), MIN).state == sg.NORMAL
+    assert run(mem, inp(breaker_over_w=1), MIN - 1).state == sg.FORCE
+    assert run(mem, inp(breaker_over_w=1), MIN).state == sg.NORMAL
 
 
 # --- relay failure, restart ------------------------------------------------
@@ -162,13 +169,13 @@ def test_used_up_overload_waits_for_the_current_states_minimum_then_normal():
 @pytest.mark.parametrize("state", [sg.BLOCK, sg.RECOMMENDED, sg.FORCE])
 def test_relay_not_available_goes_normal_at_once(state):
     mem = memory(state, since=1000.0)
-    d = run(mem, inp(relays_ok=False, overload_w=5), 1001.0)
+    d = run(mem, inp(relays_ok=False, breaker_over_w=5), 1001.0)
     assert d.state == sg.NORMAL and d.reason == "relay not available"
 
 
 def test_a_cut_short_block_still_counts_toward_the_allowance():
     mem = sg.SgMemory(state=sg.NORMAL, entered_at=0.0)
-    run(mem, inp(overload_w=1), MIN)
+    run(mem, inp(breaker_over_w=1), MIN)
     run(mem, inp(relays_ok=False), MIN + 5)
     assert sg.blocks_in_day(mem, MIN + 6) == 1
 
@@ -252,3 +259,57 @@ def test_headroom_respects_the_max_import_power():
 
 def test_off_grid_has_no_grid_limit():
     assert grid_headroom_w(_site(is_off_grid=True), "A") is None
+
+
+# --- the two overloads, two timings ---------------------------------------------
+
+def test_breaker_overload_blocks_well_inside_the_90_s_a_breaker_tolerates():
+    cfg = sg.SgConfig()  # the default noise filter
+    assert cfg.breaker_hold_s <= 15 < 90
+    mem = memory()
+    cycle, t, blocked_at = 2.0, 1000.0, None
+    for i in range(45):  # 90 s of 2 s cycles
+        d = sg.step(mem, inp(breaker_over_w=800), cfg, t + i * cycle)
+        if d.state == sg.BLOCK:
+            blocked_at = i * cycle
+            break
+    assert blocked_at is not None and blocked_at <= cfg.breaker_hold_s + cycle
+
+
+def test_a_breaker_spike_shorter_than_the_noise_filter_is_ignored():
+    cfg = sg.SgConfig()
+    mem = memory()
+    assert sg.step(mem, inp(breaker_over_w=800), cfg, 1000.0).state == sg.NORMAL
+    assert sg.step(mem, inp(breaker_over_w=800), cfg, 1000.0 + cfg.breaker_hold_s - 1).state == sg.NORMAL
+    sg.step(mem, inp(), cfg, 1000.0 + cfg.breaker_hold_s)  # back under: the filter starts over
+    assert sg.step(mem, inp(breaker_over_w=800), cfg, 1000.0 + cfg.breaker_hold_s + 1).state == sg.NORMAL
+
+
+def test_max_import_overload_blocks_only_after_two_continuous_minutes():
+    cfg = sg.SgConfig()
+    assert cfg.import_hold_s == 120
+    mem = memory()
+    t = 1000.0
+    assert sg.step(mem, inp(import_over_w=500), cfg, t).state == sg.NORMAL
+    assert sg.step(mem, inp(import_over_w=500), cfg, t + 119).state == sg.NORMAL
+    assert sg.step(mem, inp(import_over_w=500), cfg, t + 120).state == sg.BLOCK
+
+
+def test_max_import_overload_that_drops_under_starts_the_two_minutes_over():
+    cfg = sg.SgConfig()
+    mem = memory()
+    t = 1000.0
+    sg.step(mem, inp(import_over_w=500), cfg, t)
+    sg.step(mem, inp(import_over_w=500), cfg, t + 100)
+    assert sg.step(mem, inp(), cfg, t + 110).state == sg.NORMAL  # dropped under
+    assert sg.step(mem, inp(import_over_w=500), cfg, t + 115).state == sg.NORMAL
+    assert sg.step(mem, inp(import_over_w=500), cfg, t + 115 + 119).state == sg.NORMAL
+    assert sg.step(mem, inp(import_over_w=500), cfg, t + 115 + 120).state == sg.BLOCK
+
+
+def test_the_two_headrooms_are_kept_apart():
+    from custom_components.dynamic_ocpp_evse.calculations.target_calculator import grid_headrooms_w
+    site = _site(cons=(10.0, 0.0, 0.0), max_grid_import_power=2000)
+    breaker, imported = grid_headrooms_w(site, "A")
+    assert breaker == pytest.approx(15 * 230) and imported == pytest.approx(2000 - 2300)
+    assert grid_headrooms_w(_site(), "A")[1] is None
