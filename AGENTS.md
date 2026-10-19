@@ -54,7 +54,7 @@ custom_components/dynamic_ocpp_evse/
 │                                  #   dashboard suggestions (_energy_site, _inverter_suggestions,
 │                                  #   _grid_meter_suggestion, _fill_empty - create flow only)
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
-│                                  #   inverter, modes, power_station
+│                                  #   inverter, modes, power_station, sg_ready
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
 │   ├── hub_calculation.py         # Main entry point - run_hub_calculation() builds SiteContext, calls engine
 │   │                              #   Keeps the core cycle: _apply_feedback_loop(), the SOC/Excess latches,
@@ -90,6 +90,11 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   back from the clipping window - published into hub_runtime["_clip_early"] by
 │   │                              #   engine/hub_result._compute_forecast_advice, read the NEXT cycle; per-load energy:
 │   │                              #   ``clip_load_room_kwh``
+│   ├── sg_ready.py                # SG Ready heat pump state machine (JUG-24): Block / Normal / Recommended / Force, the
+│   │                              #   10-minute rule, Block limits (rolling 24 h), release rule; engine/hub_calculation.
+│   │                              #   _apply_sg_ready feeds it (grant + Excess latch -> Force, early-start source,
+│   │                              #   SOC, target_calculator.grid_headroom_w -> Block). FOLLOW_CLIP_EARLY is the one flag
+│   │                              #   for following the PV-clipping early start
 │   ├── outage_window.py           # Expected grid loss window (JUG-23): ``precharge_window`` reads a calendar /
 │   │                              #   binary_sensor state + attributes (lead time, hold after, memory returned for
 │   │                              #   hub_runtime["_outage_hold"]); on, the engine (hub_calculation._apply_outage_
@@ -113,6 +118,8 @@ custom_components/dynamic_ocpp_evse/
 │   ├── plug.py                    # Smart plug switching
 │   ├── power_station.py           # Power station control
 │   ├── hot_water_tank.py          # Tank climate control
+│   ├── sg_ready.py                # SG Ready heat pump: the two relays, one per call through the mildest state, verified
+│   │                              #   against the relay states (a mismatch -> fault -> Normal)
 │   ├── smoothing.py               # Output smoothing (EMA / Schmitt trigger / ramp limits)
 │   └── status.py                  # Charging status determination
 ├── entities/                      # Entity classes shared by the platform files (ALL push-driven - nothing polls)

@@ -3073,3 +3073,179 @@ def test_the_input_strings_exist_in_both_languages():
                 "input_grid_and_sensors", "input_grid_taken", "input_without_output"
             ):
                 assert data[section]["error"][error], (name, section, error)
+
+
+# ── SG Ready heat pump (JUG-24) ────────────────────────────────────────
+
+
+async def test_sg_ready_creation_flow(hass: HomeAssistant, mock_hub_entry, mock_setup):
+    """user -> sg_ready -> (auto-selected hub) -> sg_ready_config creates a load entry:
+    the two relays in the static data half, the settings (with their defaults) in options."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SG_MAX_BLOCK_TIME,
+        CONF_SG_MAX_BLOCKS_PER_DAY,
+        CONF_SG_MIN_STATE_TIME,
+        CONF_SG_NOMINAL_POWER,
+        CONF_SG_POWER_ENTITY_ID,
+        CONF_SG_RELAY_1_ENTITY_ID,
+        CONF_SG_RELAY_2_ENTITY_ID,
+        DEVICE_TYPE_SG_READY,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.hp_relay_1", "off")
+    hass.states.async_set("switch.hp_relay_2", "off")
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    options = result["data_schema"].schema["setup_type"].config["options"]
+    assert "sg_ready" in {o["value"] for o in options}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "sg_ready"}
+    )
+    assert result["step_id"] == "sg_ready_config"
+    schema = {str(k): k for k in result["data_schema"].schema}
+    # the timing limits come with their defaults; no mode or slider anywhere
+    assert schema[CONF_SG_MIN_STATE_TIME].default() == 10
+    assert schema[CONF_SG_MAX_BLOCK_TIME].default() == 120
+    assert schema[CONF_SG_MAX_BLOCKS_PER_DAY].default() == 3
+    assert "operating_mode" not in schema
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "Heat Pump",
+            CONF_ENTITY_ID: "lj_heat_pump",
+            CONF_SG_RELAY_1_ENTITY_ID: "switch.hp_relay_1",
+            CONF_SG_RELAY_2_ENTITY_ID: "switch.hp_relay_2",
+            CONF_SG_NOMINAL_POWER: 2500,
+            "connected_to_phase": "ABC",
+            CONF_LOAD_PRIORITY: 2,
+            CONF_SG_MIN_STATE_TIME: 10,
+            CONF_SG_MAX_BLOCK_TIME: 90,
+            CONF_SG_MAX_BLOCKS_PER_DAY: 2,
+            "manual_override_timeout": 30,
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    entry = result["result"]
+    assert entry.data[CONF_DEVICE_TYPE] == DEVICE_TYPE_SG_READY
+    assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
+    assert entry.data[CONF_HUB_ENTRY_ID] == mock_hub_entry.entry_id
+    assert entry.data[CONF_SG_RELAY_1_ENTITY_ID] == "switch.hp_relay_1"
+    assert entry.data[CONF_SG_RELAY_2_ENTITY_ID] == "switch.hp_relay_2"
+    assert entry.options[CONF_SG_NOMINAL_POWER] == 2500
+    assert entry.options[CONF_SG_MAX_BLOCK_TIME] == 90
+    assert entry.options[CONF_SG_MAX_BLOCKS_PER_DAY] == 2
+    assert entry.options.get(CONF_SG_POWER_ENTITY_ID) is None
+    assert CONF_SG_RELAY_1_ENTITY_ID not in entry.options
+
+
+async def test_sg_ready_options_flow_saves_and_clears_the_power_sensor(
+    hass: HomeAssistant, mock_hub_entry, mock_setup
+):
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SG_MAX_BLOCKS_PER_DAY,
+        CONF_SG_POWER_ENTITY_ID,
+        CONF_SG_RELAY_1_ENTITY_ID,
+        CONF_SG_RELAY_2_ENTITY_ID,
+        DEVICE_TYPE_SG_READY,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=10,
+        title="Heat Pump",
+        data={
+            CONF_NAME: "Heat Pump",
+            CONF_ENTITY_ID: "heat_pump",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_SG_READY,
+            CONF_HUB_ENTRY_ID: mock_hub_entry.entry_id,
+            CONF_SG_RELAY_1_ENTITY_ID: "switch.r1",
+            CONF_SG_RELAY_2_ENTITY_ID: "switch.r2",
+        },
+        options={CONF_LOAD_PRIORITY: 1, CONF_SG_POWER_ENTITY_ID: "sensor.hp_power"},
+    )
+    entry.add_to_hass(hass)
+    result = await _open_options(hass, entry.entry_id)
+    assert result["step_id"] == "sg_ready"
+    user_input = {
+        str(k): k.default()
+        for k in result["data_schema"].schema
+        if k.default is not vol.UNDEFINED
+    }
+    user_input[CONF_SG_MAX_BLOCKS_PER_DAY] = 4
+    hass.states.async_set("switch.r1", "off")
+    hass.states.async_set("switch.r2", "off")
+    user_input[CONF_SG_RELAY_1_ENTITY_ID] = "switch.r1"
+    user_input[CONF_SG_RELAY_2_ENTITY_ID] = "switch.r2"
+    user_input.pop(CONF_SG_POWER_ENTITY_ID, None)  # cleared in the form
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=user_input
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_SG_MAX_BLOCKS_PER_DAY] == 4
+    assert entry.options[CONF_SG_POWER_ENTITY_ID] is None
+
+
+async def test_sg_ready_entry_sets_up_with_a_state_sensor_and_no_mode(
+    hass: HomeAssistant, mock_hub_entry
+):
+    """Through the real setup path: a state sensor, the dynamic-control switch, and no
+    operating-mode select or sliders. Unloading leaves the relays in Normal."""
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SG_RELAY_1_ENTITY_ID,
+        CONF_SG_RELAY_2_ENTITY_ID,
+        DEVICE_TYPE_SG_READY,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.r1", "on")
+    hass.states.async_set("switch.r2", "off")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=10,
+        title="Heat Pump",
+        data={
+            CONF_NAME: "Heat Pump",
+            CONF_ENTITY_ID: "heat_pump",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_SG_READY,
+            CONF_HUB_ENTRY_ID: mock_hub_entry.entry_id,
+            CONF_SG_RELAY_1_ENTITY_ID: "switch.r1",
+            CONF_SG_RELAY_2_ENTITY_ID: "switch.r2",
+        },
+        options={CONF_LOAD_PRIORITY: 1},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+
+    registry = er.async_get(hass)
+    entities = er.async_entries_for_config_entry(registry, entry.entry_id)
+    domains = {e.domain for e in entities}
+    assert "select" not in domains and "number" not in domains, [(e.domain, e.unique_id) for e in entities]
+    assert any(e.unique_id.endswith("_sg_ready_state") for e in entities)
+    assert any(e.unique_id.endswith("_dynamic_control") for e in entities)
+
+    calls = []
+
+    async def record(call):
+        calls.append((call.service, call.data["entity_id"]))
+        hass.states.async_set(call.data["entity_id"], "on" if call.service == "turn_on" else "off")
+
+    hass.services.async_register("switch", "turn_off", record)
+    hass.services.async_register("switch", "turn_on", record)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert calls == [("turn_off", "switch.r1")]  # Block -> Normal
