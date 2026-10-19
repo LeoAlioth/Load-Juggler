@@ -239,7 +239,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 {"value": "station", "label": "Add Portable Power Station"}
             )
             options.append(
-                {"value": "sg_ready", "label": "Add Heat Pump (SG Ready)"}
+                {"value": "sg_ready", "label": "Add SG Ready Device (Heat Pump)"}
             )
             options.append(
                 {"value": "inverter", "label": "Add Inverter / Home Battery"}

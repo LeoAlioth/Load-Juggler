@@ -188,7 +188,9 @@ def test_battery_above_target_recommends_and_a_battery_free_site_never_does():
 def test_overload_blocks_and_it_is_published_for_the_actuator():
     hass = Hass()
     load, rt = device(hass)
-    out = decide(hass, site(consumption=(27.0, 0.0, 0.0)), [load], excess_on=True)
+    over = site(consumption=(27.0, 0.0, 0.0))
+    assert state_of(decide(hass, over, [load], excess_on=True), load) == sg.FORCE  # noise filter
+    out = decide(hass, over, [load], excess_on=True, now=MIN + 1 + sg.BREAKER_HOLD_S)
     assert state_of(out, load) == sg.BLOCK
     assert rt[SG_RT_STATUS]["state"] == sg.BLOCK and rt[SG_RT_STATUS]["blocks_24h"] == 1
 
@@ -200,8 +202,39 @@ def test_overload_reaches_the_lowest_priority_device_first():
     for load in (a, b):
         hass.data[DOMAIN]["loads"][load.load_id]["entry"].options[CONF_SG_NOMINAL_POWER] = 2300
     # 1.5 A over the breaker (345 W): the second device's 2300 W Normal draw covers it
-    out = decide(hass, site(consumption=(26.5, 0.0, 0.0)), [a, b])
+    over = site(consumption=(26.5, 0.0, 0.0))
+    decide(hass, over, [a, b])
+    out = decide(hass, over, [a, b], now=MIN + 1 + sg.BREAKER_HOLD_S)
     assert state_of(out, b) == sg.BLOCK and state_of(out, a) == sg.NORMAL
+
+
+def test_max_import_overload_blocks_only_after_two_minutes_and_resets_when_it_drops():
+    hass = Hass()
+    load, _ = device(hass)
+    over = site(consumption=(10.0, 0.0, 0.0))
+    over.max_grid_import_power = 2000  # 2300 W drawn: 300 W over, the breaker is fine
+    ok = site(consumption=(5.0, 0.0, 0.0))
+    ok.max_grid_import_power = 2000
+    t = MIN + 1
+    assert state_of(decide(hass, over, [load], now=t), load) == sg.NORMAL
+    assert state_of(decide(hass, over, [load], now=t + 119), load) == sg.NORMAL
+    decide(hass, ok, [load], now=t + 120)  # under again: starts over
+    assert state_of(decide(hass, over, [load], now=t + 121), load) == sg.NORMAL
+    assert state_of(decide(hass, over, [load], now=t + 121 + 119), load) == sg.NORMAL
+    assert state_of(decide(hass, over, [load], now=t + 121 + 120), load) == sg.BLOCK
+
+
+def test_block_is_released_with_the_hubs_excess_trigger_margin_on_top_of_the_normal_draw():
+    hass = Hass()
+    load, rt = device(hass)
+    rt[SG_RT_MEMORY] = sg.SgMemory(state=sg.BLOCK, entered_at=0.0)
+    rt[SG_RT_NORMAL_DRAW] = 1000.0
+    s = site(consumption=(25.0 - 6.0, 0.0, 0.0))  # 6 A = 1380 W of headroom
+    s.excess_trigger_margin = 500.0               # needs 1000 + 500
+    assert state_of(decide(hass, s, [load]), load) == sg.BLOCK
+    s2 = site(consumption=(25.0 - 7.0, 0.0, 0.0))  # 1610 W
+    s2.excess_trigger_margin = 500.0
+    assert state_of(decide(hass, s2, [load]), load) == sg.NORMAL
 
 
 def test_no_block_off_grid_and_the_release_has_no_headroom_to_wait_for():
