@@ -40,6 +40,7 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
     DOMAIN,
     EVSE_MODE_EXCESS,
     EVSE_MODE_SOLAR_ONLY,
@@ -62,6 +63,7 @@ from ..control.ocpp import send_ocpp_command
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
+from ..control.sg_ready import send_sg_ready_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -716,6 +718,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self.hass.data[DOMAIN]["load_phase_masks"][
             self.config_entry.entry_id
         ] = load_phase_masks.get(self.config_entry.entry_id, "")
+
+        if device_type == DEVICE_TYPE_SG_READY:
+            # The state machine (engine/hub_calculation._apply_sg_ready) owns the
+            # timing - minimum time per state, Block limits - so none of the
+            # permit pipeline below (grace, pause, minimum off time) applies.
+            status = hub_data.get("sg_ready", {}).get(self.config_entry.entry_id)
+            if status is not None:
+                await send_sg_ready_command(self, status, time.monotonic())
+            return
 
         # Kept on every cycle, command or not, so the pause below can ask
         # whether the shortage it sees was there on the cycle before too.

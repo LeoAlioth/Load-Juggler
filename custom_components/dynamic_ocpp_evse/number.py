@@ -36,6 +36,7 @@ from .const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_NORMAL_RESERVE,
@@ -153,6 +154,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
                 (TankTemperatureSlider, "Boost Temperature", "tank_boost_temperature", "tank_boost_temperature", low, high, 1, conf(CONF_TANK_BOOST_TEMPERATURE, boost_d), "°C", icon),
                 (LoadPowerSlider, "Element Power", "device_power", "device_power", 10, max(power, 30000), 10, power, "W", "mdi:flash"),
             ]
+        elif device_type == DEVICE_TYPE_SG_READY:
+            rows = []  # no sliders: nothing to pick, the state follows the site
         elif device_type == DEVICE_TYPE_POWER_STATION:
             # The charge-power bounds hold what the engine may allocate,
             # deliberately configured rather than read from the device - a

@@ -9,7 +9,7 @@ from . import consume_plug_mode_migration
 from .const import (
     behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
     ENTRY_TYPE, ENTRY_TYPE_HUB, ENTRY_TYPE_LOAD, CONF_NAME, CONF_ENTITY_ID,
-    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_HOT_WATER_TANK,
+    CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE, DEVICE_TYPE_HOT_WATER_TANK, DEVICE_TYPE_SG_READY,
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
     DEFAULT_DISTRIBUTION_MODE, DISTRIBUTION_MODES,
@@ -36,6 +36,9 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         return
 
     # Load entries get per-load operating mode selector
+    if entry_type == ENTRY_TYPE_LOAD and config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_SG_READY:
+        return  # no operating mode: the state follows the site
+
     if entry_type == ENTRY_TYPE_LOAD:
         name = config_entry.data.get(CONF_NAME, "Load")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "load")

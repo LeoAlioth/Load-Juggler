@@ -498,6 +498,41 @@
                     "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it.",
                     "tank_prioritize_below_normal": "When on, a Solar Priority tank that has dropped below its Normal temperature is promoted to the Normal urgency tier, so it wins contention against other Solar Priority loads. It does not change where the power comes from - the tank still never uses the grid and still stops at the battery's minimum SOC."
                 }
+            },
+            "sg_ready_config": {
+                "title": "SG Ready Heat Pump Configuration",
+                "description": "Configure a heat pump with SG Ready inputs, switched by two relays (a Shelly with two relays does it). The pump has no operating mode: Load Juggler puts it in Block on the overload that reaches it, Force on excess, Recommended on a predicted excess or with the battery above its target, otherwise Normal. With both relays open the pump is in Normal, so a relay that loses power or Home Assistant falls back to Normal.",
+                "data": {
+                    "name": "Name for this device",
+                    "entity_id": "Entity ID prefix",
+                    "connected_to_phase": "Connected to phase",
+                    "load_priority": "Priority (1 = highest)",
+                    "early_room_entity_id": "Room to absorb today (optional)",
+                    "early_rate_entity_id": "Absorption rate (optional)",
+                    "manual_override_timeout": "Manual override timeout",
+                    "sg_relay_1_entity_id": "Relay 1 switch (closed alone: Block)",
+                    "sg_relay_2_entity_id": "Relay 2 switch (closed alone: Recommended)",
+                    "sg_nominal_power": "Extra power above Normal",
+                    "sg_power_entity_id": "Power sensor (optional)",
+                    "sg_min_state_time": "Minimum time per state",
+                    "sg_max_block_time": "Maximum block time",
+                    "sg_max_blocks_per_day": "Maximum blocks per day"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.[prefix]_power).",
+                    "connected_to_phase": "Which electrical phase(s) the pump is wired to. Its Block and release are judged on these phases.",
+                    "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "early_room_entity_id": "Optional kWh sensor saying how much more this load can take today - Load Insights' \"Room to absorb today\". Early start counts only the loads that still have room; without it the load is assumed able to take what is planned.",
+                    "early_rate_entity_id": "Optional power sensor (W or kW) saying what this load really pulls when it runs - Load Insights' \"Absorption rate\". The early-start group counts this instead of the load's minimum power, so a load that pulls less than its rating starts in time. Without it the minimum power is used.",
+                    "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                    "sg_relay_1_entity_id": "Switch of the first relay. Closed alone it is state 1, Block (the pump is locked out); closed together with relay 2 it is state 4, Force.",
+                    "sg_relay_2_entity_id": "Switch of the second relay. Closed alone it is state 3, Recommended; closed together with relay 1 it is state 4, Force. Both open is state 2, Normal.",
+                    "sg_nominal_power": "The extra power the pump is assumed to draw above Normal in Recommended and Force. It is what the early start and the Excess pool count for this device. The pump's draw in Normal is part of the household.",
+                    "sg_power_entity_id": "Optional sensor (W or kW) with the pump's total power. While the pump is in Normal its reading is taken as its Normal draw; in Recommended and Force the draw above that counts as managed. Used to release a Block only when the headroom covers the Normal draw. Without it the extra power above is used for both.",
+                    "sg_min_state_time": "Every state lasts at least this long (the standard's 10-minute rule, applied to all four states).",
+                    "sg_max_block_time": "One Block lasts at most this long. After it the pump goes to Normal and the overload is left to the other loads and the site's own limits.",
+                    "sg_max_blocks_per_day": "At most this many Blocks start in any rolling 24 hours. When used up the pump goes to Normal instead and a warning is logged."
+                }
             }
         },
         "error": {
@@ -1039,6 +1074,41 @@
                 "menu_options": {
                     "change_type_confirm": "Yes, change it",
                     "init": "← Back to menu"
+                }
+            },
+            "sg_ready": {
+                "title": "Update SG Ready Heat Pump Settings",
+                "description": "Configure a heat pump with SG Ready inputs, switched by two relays (a Shelly with two relays does it). The pump has no operating mode: Load Juggler puts it in Block on the overload that reaches it, Force on excess, Recommended on a predicted excess or with the battery above its target, otherwise Normal. With both relays open the pump is in Normal, so a relay that loses power or Home Assistant falls back to Normal.",
+                "data": {
+                    "name": "Name for this device",
+                    "entity_id": "Entity ID prefix",
+                    "connected_to_phase": "Connected to phase",
+                    "load_priority": "Priority (1 = highest)",
+                    "early_room_entity_id": "Room to absorb today (optional)",
+                    "early_rate_entity_id": "Absorption rate (optional)",
+                    "manual_override_timeout": "Manual override timeout",
+                    "sg_relay_1_entity_id": "Relay 1 switch (closed alone: Block)",
+                    "sg_relay_2_entity_id": "Relay 2 switch (closed alone: Recommended)",
+                    "sg_nominal_power": "Extra power above Normal",
+                    "sg_power_entity_id": "Power sensor (optional)",
+                    "sg_min_state_time": "Minimum time per state",
+                    "sg_max_block_time": "Maximum block time",
+                    "sg_max_blocks_per_day": "Maximum blocks per day"
+                },
+                "data_description": {
+                    "entity_id": "Used as a prefix for sensors created by this integration (e.g., sensor.[prefix]_power).",
+                    "connected_to_phase": "Which electrical phase(s) the pump is wired to. Its Block and release are judged on these phases.",
+                    "load_priority": "Lower number = higher priority. Only affects distribution in Priority and Sequential modes.",
+                    "early_room_entity_id": "Optional kWh sensor saying how much more this load can take today - Load Insights' \"Room to absorb today\". Early start counts only the loads that still have room; without it the load is assumed able to take what is planned.",
+                    "early_rate_entity_id": "Optional power sensor (W or kW) saying what this load really pulls when it runs - Load Insights' \"Absorption rate\". The early-start group counts this instead of the load's minimum power, so a load that pulls less than its rating starts in time. Without it the minimum power is used.",
+                    "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                    "sg_relay_1_entity_id": "Switch of the first relay. Closed alone it is state 1, Block (the pump is locked out); closed together with relay 2 it is state 4, Force.",
+                    "sg_relay_2_entity_id": "Switch of the second relay. Closed alone it is state 3, Recommended; closed together with relay 1 it is state 4, Force. Both open is state 2, Normal.",
+                    "sg_nominal_power": "The extra power the pump is assumed to draw above Normal in Recommended and Force. It is what the early start and the Excess pool count for this device. The pump's draw in Normal is part of the household.",
+                    "sg_power_entity_id": "Optional sensor (W or kW) with the pump's total power. While the pump is in Normal its reading is taken as its Normal draw; in Recommended and Force the draw above that counts as managed. Used to release a Block only when the headroom covers the Normal draw. Without it the extra power above is used for both.",
+                    "sg_min_state_time": "Every state lasts at least this long (the standard's 10-minute rule, applied to all four states).",
+                    "sg_max_block_time": "One Block lasts at most this long. After it the pump goes to Normal and the overload is left to the other loads and the site's own limits.",
+                    "sg_max_blocks_per_day": "At most this many Blocks start in any rolling 24 hours. When used up the pump goes to Normal instead and a warning is logged."
                 }
             }
         }

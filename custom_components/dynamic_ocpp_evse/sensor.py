@@ -23,6 +23,7 @@ from .const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -47,6 +48,7 @@ from .entities.load_sensors import (
     LoadJugglerEffectivePrioritySensor,
     LoadJugglerPhaseMaskSensor,
     LoadJugglerPlugStatusSensor,
+    LoadJugglerSgReadyStatusSensor,
     LoadJugglerStationStatusSensor,
     LoadJugglerTankStatusSensor,
 )
@@ -364,6 +366,10 @@ async def async_setup_entry(
         )
     elif device_type == DEVICE_TYPE_PLUG:
         status_sensor = LoadJugglerPlugStatusSensor(
+            hass, config_entry, hub_entry, name, entity_id
+        )
+    elif device_type == DEVICE_TYPE_SG_READY:
+        status_sensor = LoadJugglerSgReadyStatusSensor(
             hass, config_entry, hub_entry, name, entity_id
         )
     elif device_type == DEVICE_TYPE_POWER_STATION:

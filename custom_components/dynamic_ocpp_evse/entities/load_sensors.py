@@ -29,6 +29,7 @@ from ..const import (
     DEFAULT_LOAD_PRIORITY,
     EVSE_RT_READOUT_WATCH,
     LOAD_RT_SUN_PROBE,
+    SG_RT_STATUS,
 )
 from ..control.status import hands_off_status, with_early_start
 from ..helpers import get_entry_value, stored_legs
@@ -307,6 +308,51 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor, RestoreEntity):
             and load_rt.get("dynamic_control", True)
         ):
             self._attr_native_value = note
+
+
+class LoadJugglerSgReadyStatusSensor(LoadJugglerLoadSensor):
+    """State sensor of an SG Ready heat pump: Block / Normal / Recommended /
+    Force, with the reason in brackets ("Recommended (predicted excess)") and the
+    block counters as attributes. No select or number: the state follows the
+    site (calculations/sg_ready.py)."""
+
+    _ICONS = {
+        "Block": "mdi:cancel",
+        "Normal": "mdi:heat-pump-outline",
+        "Recommended": "mdi:heat-pump",
+        "Force": "mdi:fire",
+    }
+    _LABELS = {"block": "Block", "normal": "Normal", "recommended": "Recommended", "force": "Force"}
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        super().__init__(
+            hass, config_entry, hub_entry, f"{name} State", f"{entity_id}_sg_ready_state"
+        )
+        self._attr_native_value = "Unknown"
+        self._attr_icon = "mdi:heat-pump-outline"
+        self._attrs = {}
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+    def _read_site_data(self):
+        status = self._runtime().get(SG_RT_STATUS)
+        if not status:
+            self._attr_native_value = "Unknown"
+            self._attrs = {}
+            return
+        label = self._LABELS[status["state"]]
+        reason = status["reason"]
+        self._attr_native_value = f"{label} ({reason})"
+        self._attr_icon = self._ICONS[label]
+        self._attrs = {
+            "state": status["state"],
+            "reason": reason,
+            "blocks_in_last_24h": status["blocks_24h"],
+            "minutes_left_in_state": round(status["min_left_s"] / 60, 1),
+            "block_allowance_used_up": status["allowance_used_up"],
+        }
 
 
 class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):

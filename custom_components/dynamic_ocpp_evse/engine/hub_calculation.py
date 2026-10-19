@@ -18,6 +18,8 @@ from ..calculations import (
     excess_margin,
     grid_overdraw,
 )
+from ..calculations import sg_ready
+from ..calculations.target_calculator import grid_headroom_w
 from ..calculations.catch_up import catch_up_verdict, max_power_w
 from ..calculations.forecast_excess import (
     clip_load_room_kwh,
@@ -98,6 +100,20 @@ from ..const import (
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
+    DEVICE_TYPE_SG_READY,
+    CONF_SG_MAX_BLOCK_TIME,
+    CONF_SG_MAX_BLOCKS_PER_DAY,
+    CONF_SG_MIN_STATE_TIME,
+    CONF_SG_NOMINAL_POWER,
+    CONF_SG_RELAY_1_ENTITY_ID,
+    CONF_SG_RELAY_2_ENTITY_ID,
+    DEFAULT_SG_MAX_BLOCK_TIME,
+    DEFAULT_SG_MAX_BLOCKS_PER_DAY,
+    DEFAULT_SG_MIN_STATE_TIME,
+    DEFAULT_SG_NOMINAL_POWER,
+    SG_RT_MEMORY,
+    SG_RT_NORMAL_DRAW,
+    SG_RT_STATUS,
     DOMAIN,
     GRID_STALE_TIMEOUT,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
@@ -832,6 +848,9 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     on_clip = clip_on and (
         not takers or any(clip_due and load in group for load in takers)
     )
+    # which source says it, for the SG Ready heat pump (_apply_sg_ready)
+    hub_runtime["_early_planned_on"] = on_planned
+    hub_runtime["_early_clip_on"] = on_clip
     on = on_planned or on_clip
     site.forecast_excess = on
     site.forecast_excess_pace_w = max(
@@ -1334,6 +1353,7 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
         (
             load for load in site.loads
             if load.dynamic_control
+            and load.device_type != DEVICE_TYPE_SG_READY
             and load.active_phases_mask
             and not load.unmetered
             and (
@@ -1376,6 +1396,131 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
         "Sun probe: offering %.1f A more (for %s) on %.1f A held",
         step + band, load.entity_id, held,
     )
+
+
+def _sg_settings(entry):
+    """The SG Ready device's timing limits (SgConfig), minutes -> seconds."""
+    return sg_ready.SgConfig(
+        min_state_s=60.0 * float(get_entry_value(entry, CONF_SG_MIN_STATE_TIME, DEFAULT_SG_MIN_STATE_TIME)),
+        max_block_s=60.0 * float(get_entry_value(entry, CONF_SG_MAX_BLOCK_TIME, DEFAULT_SG_MAX_BLOCK_TIME)),
+        max_blocks=int(get_entry_value(entry, CONF_SG_MAX_BLOCKS_PER_DAY, DEFAULT_SG_MAX_BLOCKS_PER_DAY)),
+    )
+
+
+def _sg_relays_ok(hass, entry, load_rt) -> bool:
+    """Both relay entities read, and the last command is obeyed (control/sg_ready)."""
+    if load_rt.get("sg_relay_fault"):
+        return False
+    for key in (CONF_SG_RELAY_1_ENTITY_ID, CONF_SG_RELAY_2_ENTITY_ID):
+        entity = get_entry_value(entry, key, None)
+        if not entity or units.is_unavailable(hass.states.get(entity)):
+            return False
+    return True
+
+
+def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
+    """Decide every SG Ready heat pump's state (calculations/sg_ready.py) from
+    what the cycle knows, once the allocation is final. Returns
+    ``{load_id: published decision}``; each also lands in the load's runtime
+    (``SG_RT_STATUS``, read by the status sensor and the actuator).
+
+    The mapping onto the existing allocation (JUG-24):
+
+    - **Force / actual excess**: the device is a binary Excess load, so its
+      grant (``available_current`` > 0 - after the Excess verdict, the phase
+      guard, circuit groups) with the site's Excess latch (or a full battery,
+      which the Excess behaviour treats the same way) on. A grant that rests on
+      the forecast alone is not actual excess.
+    - **Recommended / early start**: the forecast-excess early-start verdict for
+      the planned energy (``_early_planned_on``, which already needs the hub
+      option on and this load in the group); the PV-clipping early start joins
+      with ``sg_ready.FOLLOW_CLIP_EARLY``.
+    - **Recommended / battery above target** and Normal otherwise: the SOC
+      against the target (never true on a battery-free site).
+    - **Block / overload**: ``grid_headroom_w`` is the household's room under the
+      breaker and the max import power with every managed load already off - a
+      negative figure is the shortage nothing else can absorb. It reaches the
+      devices in priority order (``overloaded_devices``).
+    """
+    loads_rt = hass.data[DOMAIN]["loads"]
+    devices = [c for c in site.loads if c.device_type == DEVICE_TYPE_SG_READY]
+    if not devices:
+        return {}
+    managed, out = [], {}
+    for load in devices:
+        rt = loads_rt.get(load.load_id)
+        if rt is None or "entry" not in rt:
+            continue
+        mem = rt.setdefault(SG_RT_MEMORY, sg_ready.SgMemory())
+        if not load.dynamic_control:
+            # hands off: the actuator drops the relays to Normal once
+            rt[SG_RT_MEMORY] = sg_ready.SgMemory()
+            out[load.load_id] = rt[SG_RT_STATUS] = {
+                "state": sg_ready.NORMAL, "reason": "Dynamic Control off", "hands_off": True,
+                "blocks_24h": 0, "min_left_s": 0.0, "allowance_used_up": False,
+            }
+            continue
+        managed.append((load, rt, mem, _sg_settings(rt["entry"])))
+
+    headrooms = {load.load_id: grid_headroom_w(site, load.active_phases_mask) for load, *_ in managed}
+    shortage = max((-h for h in headrooms.values() if h is not None and h < 0), default=0.0)
+
+    def normal_draw(load, rt):
+        entry = rt["entry"]
+        return rt.get(SG_RT_NORMAL_DRAW) or float(
+            get_entry_value(entry, CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER) or 0
+        )
+
+    hit = sg_ready.overloaded_devices(
+        shortage,
+        [
+            (load.load_id, load.priority, normal_draw(load, rt), mem.state,
+             sg_ready.can_block(mem, cfg, now))
+            for load, rt, mem, cfg in managed
+        ],
+    )
+    full = site.battery_soc is not None and site.battery_soc_full is not None and site.battery_soc >= site.battery_soc_full
+    above_target = (
+        site.battery_soc is not None
+        and site.battery_soc_target is not None
+        and site.battery_soc > site.battery_soc_target
+    )
+    for load, rt, mem, cfg in managed:
+        grouped = early_blocker(load) is None
+        early = grouped and (
+            hub_runtime.get("_early_planned_on", False)
+            or (sg_ready.FOLLOW_CLIP_EARLY and hub_runtime.get("_early_clip_on", False))
+        )
+        noted = mem.allowance_noted
+        decision = sg_ready.step(
+            mem,
+            sg_ready.SgInputs(
+                overload_w=shortage if load.load_id in hit else 0.0,
+                headroom_w=headrooms[load.load_id],
+                normal_draw_w=normal_draw(load, rt),
+                actual_excess=load.available_current > 0 and (excess_on or full),
+                early_start=early,
+                battery_above_target=above_target,
+                relays_ok=_sg_relays_ok(hass, rt["entry"], rt),
+            ),
+            cfg,
+            now,
+        )
+        if decision.allowance_used_up and not noted:
+            _LOGGER.warning(
+                "SG Ready %s: %s - the overload goes unanswered, the other loads and"
+                " the site's own limits have to handle it", load.entity_id, decision.reason,
+            )
+        out[load.load_id] = rt[SG_RT_STATUS] = {
+            "state": decision.state,
+            "reason": decision.reason,
+            "blocks_24h": decision.blocks_24h,
+            "min_left_s": round(decision.min_left_s),
+            "allowance_used_up": decision.allowance_used_up,
+            "hands_off": False,
+        }
+        _LOGGER.debug("  SG Ready %s -> %s (%s)", load.entity_id, decision.state, decision.reason)
+    return out
 
 
 def _apply_grid_stale_fallback(site, grid_stale_duration):
@@ -1973,6 +2118,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     # --- Calculate targets ---
     calculate_all_load_targets(site)
+    sg_states = _apply_sg_ready(hass, hub_runtime, site, excess_on, time.monotonic())
 
     grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)
 
@@ -2055,4 +2201,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     )
     # Read by the SOC write-control: lift the ceiling to full while True (JUG-23).
     result["outage_precharge"] = outage_window is not None
+    # SG Ready heat pumps: the state each relay pair is to be in (control/sg_ready.py)
+    result["sg_ready"] = sg_states
     return result

@@ -72,6 +72,7 @@ from .const import (
     DEFAULT_UPDATE_FREQUENCY,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
+    DEVICE_TYPE_SG_READY,
     DISTRIBUTION_MODES,
     DOMAIN,
     ENTRY_TYPE,
@@ -95,6 +96,7 @@ from .helpers import (
     strip_unfeatured_inverter_options,
 )
 from . import units
+from .control.sg_ready import release_relays
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
 from .registry import follow_renames, own_entity_id
 
@@ -1002,6 +1004,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         domain_data["hubs"].pop(entry.entry_id, None)
 
     elif entry_type == ENTRY_TYPE_LOAD:
+        if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_SG_READY:
+            # leave the heat pump in Normal
+            await release_relays(hass, entry, domain_data["loads"].get(entry.entry_id))
         # Remove load from hub's list
         hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
         if hub_entry_id in domain_data["hubs"]:

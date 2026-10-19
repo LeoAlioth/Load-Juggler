@@ -22,6 +22,7 @@ from .const import (
     DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK,
     CONF_PLUG_SWITCH_ENTITY_ID, CONF_CLIMATE_ENTITY_ID,
     CONF_STATION_CHARGE_SPEED_ENTITY_ID, CONF_STATION_RESERVE_ENTITY_ID,
+    CONF_SG_RELAY_1_ENTITY_ID, CONF_SG_RELAY_2_ENTITY_ID, DEVICE_TYPE_SG_READY,
     CONF_MANUAL_OVERRIDE_TIMEOUT, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
     MIN_MANUAL_OVERRIDE_TIMEOUT,
 )
@@ -187,6 +188,10 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
         watched = {
             DEVICE_TYPE_PLUG: [get_entry_value(entry, CONF_PLUG_SWITCH_ENTITY_ID, None)],
             DEVICE_TYPE_HOT_WATER_TANK: [entry.data.get(CONF_CLIMATE_ENTITY_ID)],
+            DEVICE_TYPE_SG_READY: [
+                get_entry_value(entry, CONF_SG_RELAY_1_ENTITY_ID, None),
+                get_entry_value(entry, CONF_SG_RELAY_2_ENTITY_ID, None),
+            ],
             DEVICE_TYPE_POWER_STATION: [
                 entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID),
                 entry.data.get(CONF_STATION_RESERVE_ENTITY_ID),
