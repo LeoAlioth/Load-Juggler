@@ -50,7 +50,9 @@ custom_components/dynamic_ocpp_evse/
 │   ├── pages.py                   # Overview / "How it decides" read-only page text builders
 │   └── helpers.py                 # Everything both handlers share: unit validation, the optional-entity
 │                                  #   key groups and their normalizers, entity auto-detection, priority
-│                                  #   ordering, the OCPP capability probes, phase count
+│                                  #   ordering, the OCPP capability probes, phase count, and the Energy
+│                                  #   dashboard suggestions (_energy_site, _inverter_suggestions,
+│                                  #   _grid_meter_suggestion, _fill_empty - create flow only)
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
 │                                  #   inverter, modes, power_station
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
@@ -113,6 +115,13 @@ custom_components/dynamic_ocpp_evse/
 │                                  #   copy: canonical in Load Insights (insights/phases.py), synced by hand -
 │                                  #   never edit it here; LI's tests/test_phases.py checks this copy
 │                                  #   byte-for-byte when both repos sit side by side
+├── energy_prefs.py                # Pure, stdlib only: HA's Energy dashboard preferences as a SiteModel
+│                                  #   (PowerSpec, Device, SiteModel.from_prefs); read by config_flow/helpers.py
+│                                  #   to pre-fill the INITIAL setup forms only (never an options page; the prefs
+│                                  #   are read, never written). A VERBATIM copy: canonical in Load Insights
+│                                  #   (insights/model.py), synced by hand - never edit it here; LI's
+│                                  #   tests/test_model.py checks this copy byte-for-byte when both repos sit
+│                                  #   side by side
 ├── helpers.py                     # get_entry_value() and misc helpers
 ├── ocpp_discovery.py              # The ONE OCPP registry derivation, at the package root so BOTH the
 │                                  #   flows and engine/ can reach it (engine must not import config_flow).
@@ -371,6 +380,7 @@ pytest run as everything else. The one local way to run it is the uv venv in `de
 - `test_init.py` - Setup, teardown, migration (v1->v2, v2.0->v2.1)
 - `test_config_flow.py` - Config flow step navigation and validation
 - `test_config_flow_e2e.py` - Full hub/load creation flows, options flow, discovery, entry migration
+- `test_energy_prefill.py` - The Energy dashboard suggestions on the setup forms (hub grid, the first inverter), never on Configure pages, never written
 - `test_ocpp_discovery.py` - The OCPP charger scan against a mocked device+entity registry, the OCPP
   device pickers on both edit paths (create wizard and options charger page), and the runtime
   connector-status resolution

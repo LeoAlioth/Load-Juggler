@@ -19,7 +19,11 @@ other's handler class.
 import logging
 import re
 import voluptuous as vol
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+from homeassistant.components.energy.data import async_get_manager
+from homeassistant.helpers.device_registry import (
+    async_entries_for_config_entry as dr_async_entries_for_config_entry,
+    async_get as async_get_device_registry,
+)
 from homeassistant.helpers.entity_registry import (
     async_entries_for_device as er_async_entries_for_device,
     async_get as async_get_entity_registry,
@@ -27,6 +31,7 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.selector import selector
 from .. import units
 from ..const import (
+    CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
@@ -39,6 +44,7 @@ from ..const import (
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_HUB_ENTRY_ID,
+    CONF_INVERT_PHASES,
     CONF_INVERTER_INPUT_IS_GRID,
     CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
@@ -82,8 +88,10 @@ from ..const import (
     CONF_INVERTER_FEATURES,
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
+    INVERTER_FEATURE_SOLAR,
 )
 from ..detection_patterns import PHASE_PATTERNS
+from ..energy_prefs import SiteModel
 from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
 from ..phases import beside, match_meter_entities
 from ..registry import get_inverters_for_hub
@@ -414,6 +422,27 @@ def _power_beside(hass, triple: dict[str, str | None]) -> dict[str, str | None]:
     return watts if all(watts.values()) else triple
 
 
+def _count(triple: dict) -> int:
+    return sum(1 for eid in triple.values() if eid)
+
+
+def _meter_triple(hass, device_id: str) -> tuple[str, dict[str, str | None]]:
+    """A device's per-phase readings as a grid connection's
+    (phases.match_meter_entities, role "grid" - only that device's rows):
+    ``("power" | "current", {phase_a, phase_b, phase_c})``, the kind that
+    covers more phases, power on a tie."""
+    meter = match_meter_entities(
+        _device_rows(hass, async_get_entity_registry(hass), device_id), "grid"
+    )
+    return max(
+        (
+            (kind, {slot: meter.get(f"{kind}_{slot[-1]}") for slot in _PHASE_SLOTS})
+            for kind in ("power", "current")
+        ),
+        key=lambda kt: _count(kt[1]),
+    )
+
+
 def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> dict[str, str | None]:
     """No pattern set matched all three phases, or the one that did was on a
     device its test turns down (_device_rejects): the first complete set left
@@ -444,14 +473,124 @@ def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> 
     entry = entity_registry.async_get(next(eid for eid in found.values() if eid))
     if entry is None or entry.device_id is None:
         return found
-    meter = match_meter_entities(_device_rows(hass, entity_registry, entry.device_id), "grid")
+    _, best = _meter_triple(hass, entry.device_id)
+    return best if _count(best) >= _count(found) else found
 
-    def count(triple):
-        return sum(1 for eid in triple.values() if eid)
 
-    best = max(({slot: meter.get(f"{kind}_{slot[-1]}") for slot in _PHASE_SLOTS}
-                for kind in ("power", "current")), key=count)  # power on a tie
-    return best if count(best) >= count(found) else found
+# --- Suggestions from the Energy dashboard (the initial setup forms only) ---
+#
+# The dashboard is READ, never written: its preferences name the site's PV,
+# battery and grid meter, and a create form opens with them in its empty
+# fields. A value already in the form always wins (_fill_empty), and the
+# options pages never call any of this - a field cleared there is cleared on
+# purpose. The dashboard's sign convention is Load Juggler's (positive =
+# import / discharge), so a sensor is offered as it is, never flipped.
+
+_FORECAST_DOMAIN = "open_meteo_solar_forecast"
+
+
+async def _energy_site(hass) -> SiteModel:
+    """The Energy dashboard as a SiteModel; an empty one when it cannot be
+    read (store not loaded, odd shape) - setup is never blocked by it."""
+    try:
+        return SiteModel.from_prefs((await async_get_manager(hass)).data)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Energy dashboard preferences not readable: %s", err)
+        return SiteModel()
+
+
+def _forecast_devices(hass, entry_ids) -> list[str]:
+    """The Open-Meteo Solar Forecast devices of the dashboard's forecast
+    config entries (its ``config_entry_solar_forecast`` holds entry ids, the
+    form takes device ids). Other providers have no ``watts`` series."""
+    device_registry = async_get_device_registry(hass)
+    devices: list[str] = []
+    for entry_id in entry_ids:
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.domain != _FORECAST_DOMAIN:
+            continue
+        for device in dr_async_entries_for_config_entry(device_registry, entry_id):
+            if device.id not in devices:
+                devices.append(device.id)
+    return devices
+
+
+def _inverter_suggestions(hass, site: SiteModel, first: bool) -> dict:
+    """What the dashboard offers a NEW inverter entry. Only the hub's first
+    inverter gets any: on a fleet the dashboard's single battery or array
+    cannot be attributed to one inverter. A sensor with no state is not offered."""
+    if not first:
+        return {}
+
+    def known(entity_id):
+        return entity_id if entity_id and hass.states.get(entity_id) is not None else None
+
+    out: dict = {}
+    features = [
+        feature
+        for feature, present in (
+            (INVERTER_FEATURE_SOLAR, site.solar),
+            (INVERTER_FEATURE_BATTERY, site.battery_out),
+        )
+        if present
+    ]
+    if features:
+        out[CONF_INVERTER_FEATURES] = features
+    # One total sensor only: several arrays would need a summing helper.
+    if len(site.solar) == 1 and len(site.solar_power) == 1:
+        out[CONF_SOLAR_PRODUCTION_ENTITY_ID] = known(site.solar_power[0])
+    if devices := _forecast_devices(hass, site.solar_forecast_entries):
+        out[CONF_SOLAR_FORECAST_DEVICE_IDS] = devices
+    # The capacity sum and the SOC are per battery: exactly one.
+    if len(site.battery_out) == 1:
+        if len(site.battery_power) == 1:
+            out[CONF_BATTERY_POWER_ENTITY_ID] = known(site.battery_power[0].rate)
+        if len(site.battery_soc) == 1:
+            out[CONF_BATTERY_SOC_ENTITY_ID] = known(site.battery_soc[0])
+        if site.battery_capacity_kwh:
+            out[CONF_BATTERY_CAPACITY_KWH] = site.battery_capacity_kwh
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _grid_meter_suggestion(hass, site: SiteModel) -> dict:
+    """The hub's grid CTs from the dashboard's grid meter: the per-phase
+    readings of the DEVICE of its raw power sensor, and ``invert_phases``
+    when the dashboard declares that meter inverted and the readings are its
+    watts (a meter's per-phase amps are import-positive whatever its watts
+    do). ``{}`` unless there is exactly one grid power source with a device
+    that yields at least one phase."""
+    try:
+        if len(site.grid_power) != 1:
+            return {}
+        spec = site.grid_power[0]
+        registry = async_get_entity_registry(hass)
+        # Never ``stat_rate`` itself when a raw sensor exists: it is HA's own
+        # or a template's derived sensor, without a device.
+        for entity_id in (spec.rate_inverted, spec.rate_from, spec.rate):
+            entry = registry.async_get(entity_id) if entity_id else None
+            if entry is None or entry.device_id is None:
+                continue
+            kind, triple = _meter_triple(hass, entry.device_id)
+            if not _count(triple):
+                return {}
+            return {
+                CONF_PHASE_A_CURRENT_ENTITY_ID: triple["phase_a"],
+                CONF_PHASE_B_CURRENT_ENTITY_ID: triple["phase_b"],
+                CONF_PHASE_C_CURRENT_ENTITY_ID: triple["phase_c"],
+                CONF_INVERT_PHASES: kind == "power" and entity_id == spec.rate_inverted,
+            }
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Grid meter suggestion failed: %s", err)
+    return {}
+
+
+def _fill_empty(defaults: dict, suggestions: dict) -> dict:
+    """``defaults`` with each suggestion that fills a key that is missing,
+    None, "" or [] - a value already there always wins."""
+    return {
+        **defaults,
+        **{k: v for k, v in suggestions.items() if defaults.get(k) in (None, "", [])},
+    }
 
 
 def _auto_detect_entity(

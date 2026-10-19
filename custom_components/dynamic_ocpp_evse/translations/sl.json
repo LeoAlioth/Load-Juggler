@@ -69,7 +69,7 @@
             },
             "hub_grid": {
                 "title": "Nastavitve merilnega mesta",
-                "description": "Priključek na omrežje in politika lokacije, ki velja za vse dodane razsmernike in baterije. Razsmerniki, baterije in njihova PV polja se nastavijo ločeno - po ustvaritvi merilnega mesta dodajte Razsmernik / Domačo baterijo.",
+                "description": "Priključek na omrežje in politika lokacije, ki velja za vse dodane razsmernike in baterije. Razsmerniki, baterije in njihova PV polja se nastavijo ločeno - po ustvaritvi merilnega mesta dodajte Razsmernik / Domačo baterijo. Prazna polja so lahko vnaprej izpolnjena iz nadzorne plošče Energija - preverite jih, preden nadaljujete.",
                 "data": {
                     "phase_a_current_entity_id": "Senzor, ki meri tok omrežja za fazo A (neobvezno - nastavite na 'None' za izvenomrežne nastavitve)",
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno - nastavite na 'None' za enofazno)",
@@ -126,14 +126,14 @@
             },
             "inverter_features": {
                 "title": "Funkcije razsmernika",
-                "description": "Katere funkcije razsmernik podpira oz. ima omogočene.",
+                "description": "Katere funkcije razsmernik podpira oz. ima omogočene. Prazna polja so lahko vnaprej izpolnjena iz nadzorne plošče Energija - preverite jih, preden nadaljujete.",
                 "data": {
                     "inverter_features": "Ta razsmernik ima"
                 }
             },
             "inverter_config": {
                 "title": "Razsmernik",
-                "description": "Dodajte razsmernik kot vir energije na tem merilnem mestu. Lokacija jih ima lahko več (npr. starejši AC-sklopljeni razsmernik in nov hibridni) - merilno mesto sešteje celotno floto.",
+                "description": "Dodajte razsmernik kot vir energije na tem merilnem mestu. Lokacija jih ima lahko več (npr. starejši AC-sklopljeni razsmernik in nov hibridni) - merilno mesto sešteje celotno floto. Prazna polja so lahko vnaprej izpolnjena iz nadzorne plošče Energija - preverite jih, preden nadaljujete.",
                 "data": {
                     "name": "Ime tega razsmernika",
                     "entity_id": "Predpona ID entitete",
@@ -165,7 +165,7 @@
             },
             "inverter_battery": {
                 "title": "Baterija razsmernika",
-                "description": "Baterija za tem razsmernikom. AC-sklopljeno baterijo z lastnim razsmernikom dodajte kot samostojen razsmernik.",
+                "description": "Baterija za tem razsmernikom. AC-sklopljeno baterijo z lastnim razsmernikom dodajte kot samostojen razsmernik. Prazna polja so lahko vnaprej izpolnjena iz nadzorne plošče Energija - preverite jih, preden nadaljujete.",
                 "data": {
                     "battery_soc_entity_id": "Senzor napolnjenosti baterije (SOC)",
                     "battery_power_entity_id": "Senzor moči baterije",
