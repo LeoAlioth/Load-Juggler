@@ -82,7 +82,7 @@
                     "max_import_power_entity_id": "Senzor za največjo odjemno moč (neobvezno - nadomesti drsnik)",
                     "phase_voltage": "Napetost na fazo",
                     "grid_export_limit": "Omejitev izvoza v omrežje",
-                    "grid_export_limit_per_phase": "Omejitev izvoza v omrežje na fazo (neobvezno)",
+                    "grid_export_limit_per_phase": "Omejitev po posamezni fazi (neobvezno)",
                     "excess_trigger_margin": "Odmik sprožilca Excess",
                     "excess_hysteresis": "Histereza načina Excess",
                     "site_update_frequency": "Pogostost osveževanja senzorjev lokacije",
@@ -95,11 +95,11 @@
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
                     "pacing_energy_entity_id": "Višek energije (neobvezno)",
                     "pacing_horizon_entity_id": "Sončni zahod (neobvezno)",
-                    "forecast_excess_full_entity_id": "Naslednja polna baterija (neobvezno)",
-                    "forecast_excess_enabled": "Predčasni začetek glede na viške",
-                    "forecast_clip_early_enabled": "Predčasni začetek glede na rezanje PV",
-                    "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
-                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek",
+                    "forecast_excess_full_entity_id": "Baterija polna ob (neobvezno)",
+                    "forecast_excess_enabled": "Vnaprejšnja poraba viška",
+                    "forecast_clip_early_enabled": "Vnaprejšnja poraba ob rezanju PV",
+                    "forecast_excess_soc_source": "Najmanjši SOC za vnaprejšnjo porabo viška",
+                    "forecast_excess_soc": "Fiksni SOC za vnaprejšnjo porabo viška",
                     "outage_entity_id": "Koledar ali senzor načrtovane prekinitve (neobvezno)",
                     "outage_precharge_lead_hours": "Predpolnjenje: čas vnaprej",
                     "outage_hold_hours": "Zadrževanje po koncu prekinitve"
@@ -113,7 +113,7 @@
                     "max_import_power_entity_id": "Napredno - uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
                     "phase_voltage": "Običajno 230 V v Evropi, 120 V v Severni Ameriki.",
                     "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
-                    "grid_export_limit_per_phase": "Neobvezno. Omejitev, koliko sme izvoziti ena faza, poleg skupne zgoraj - za asimetrični razsmernik, ki lahko ne preseže skupne meje, medtem ko ena faza presega svojo. Vati na fazo; 0 = brez. Napovedi le sporoči, da razsmernik omejuje proizvodnjo (skupni izvoz na meji ali katera koli faza na tej); ne vklopi napovedi in ne premakne sprožilca Excess.",
+                    "grid_export_limit_per_phase": "Neobvezno. Omejitev izvoza za posamezno fazo, poleg skupne omejitve zgoraj - za asimetrični razsmernik, ki lahko ostane znotraj skupne omejitve, čeprav ena faza preseže svojo. Vati na fazo; 0 = brez. Napovedi le sporoči, da razsmernik omejuje proizvodnjo (skupni izvoz na meji ali katera koli faza na tej); ne vklopi napovedi in ne premakne sprožilca Excess.",
                     "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess - brez omrežja koliko pod največjo močjo polnjenja baterije. Razsmerniki in BMS baterije se ustavijo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
                     "excess_hysteresis": "Koliko sme presežek pasti pod sprožilec, preden se vklopljeni porabnik izklopi. Odmik sprožilca določa, kje se način Excess vklopi; ta nastavitev pa širino pasu, v katerem ostane vklopljen, da porabnik ne utripa, ko presežek niha okoli sprožilca.",
                     "site_update_frequency": "Kako pogosto se berejo vrednosti senzorjev omrežja. Ne vpliva na pogostost pošiljanja ukazov polnjenja porabnikom.",
@@ -127,11 +127,11 @@
                     "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do sončnega zahoda - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s senzorjem sončnega zahoda spodaj.",
                     "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba ta višek energije porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
                     "forecast_excess_full_entity_id": "Senzor časovnega žiga, kdaj bo baterija po napovedi spet polna - npr. Load Insights Naslednja polna baterija. Z njim se vsaka naprava zgodaj zažene šele, ko ji preostali čas omogoča, da z minimalno močjo porabi višek energije do takrat (višek energije, deljen z minimalno močjo naprave, je število potrebnih ur). Ni nastavljeno: uporabi se senzor sončnega zahoda zgoraj.",
-                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
-                    "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot predčasni začetek zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za predčasni začetek in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od predčasnega začetka zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
-                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
+                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za vnaprejšnjo porabo viška (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Vnaprej se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot vnaprejšnja poraba viška zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za vnaprejšnjo porabo viška in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od vnaprejšnje porabe viška zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
+                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti vnaprej: najnižja, ciljna ali fiksna vrednost spodaj.",
                     "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost.",
-                    "outage_entity_id": "Koledar ali binarni senzor, ki pove, kdaj bo omrežje izpadlo - npr. koledar integracije za izklope ali njen senzor Planned outage active. Medtem ko okno teče ali se začne v spodaj nastavljenem času vnaprej, objekt z omrežjem baterijo napolni do konca: zgornja meja napolnjenosti se dvigne na polno, omejitev hitrosti polnjenja se sprosti in predčasni začetki počakajo, porabniki Solar Only in Solar Priority pa čakajo na baterijo (porabniki Standard se ne spremenijo). Koledar sporoči začetek vnaprej; binarni senzor le tekoče okno, razen če ima atribut next_start. Objekti brez omrežja tega ne upoštevajo. Ni na voljo ali neznano: ni okna. Ni nastavljeno: brez sprememb.",
+                    "outage_entity_id": "Koledar ali binarni senzor, ki pove, kdaj bo omrežje izpadlo - npr. koledar integracije za izklope ali njen senzor Planned outage active. Medtem ko okno teče ali se začne v spodaj nastavljenem času vnaprej, objekt z omrežjem baterijo napolni do konca: zgornja meja napolnjenosti se dvigne na polno, omejitev hitrosti polnjenja se sprosti in vnaprejšnja poraba viška počaka, porabniki Solar Only in Solar Priority pa čakajo na baterijo (porabniki Standard se ne spremenijo). Koledar sporoči začetek vnaprej; binarni senzor le tekoče okno, razen če ima atribut next_start. Objekti brez omrežja tega ne upoštevajo. Ni na voljo ali neznano: ni okna. Ni nastavljeno: brez sprememb.",
                     "outage_precharge_lead_hours": "Koliko ur pred začetkom okna v koledarju (ali pred atributom next_start senzorja) se začne polnjenje baterije.",
                     "outage_hold_hours": "Koliko ur po koncu okna se vse vrne v običajno stanje."
                 }
@@ -168,7 +168,7 @@
                     "inverter_max_power_entity_id": "Napredno - bere se v vsakem ciklu namesto zgornje stalne zmogljivosti, tako da jo lahko avtomatizacija zniža proti 0 ob alarmu za pregretje razsmernika. Vati ali kilovati. Ko senzor ni na voljo, se obdrži zadnji odčitek; če ga še ni bilo, velja stalna zmogljivost.",
                     "inverter_max_power_per_phase": "Običajno skupna moč, deljena s številom faz. 0 = brez omejitve na fazo.",
                     "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
-                    "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Nizni (PV) razsmernik ga nima: pustite prazno in šteje se ves njegov izhod. Hibrid, skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
+                    "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Navaden PV razsmernik (brez baterije) ga nima: pustite prazno in šteje se ves njegov izhod. Hibridni PV razsmernik (z baterijo), skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
                     "inverter_input_is_grid": "Za hibrid, skozi katerega teče omrežje, kadar med omrežnim števcem in razsmernikom ni ničesar - ne drugih porabnikov ne drugega razsmernika. Njegov vhod je tedaj enak odčitku omrežnega števca, zato ne potrebuje senzorjev vhoda. To ima lahko le en razsmernik.",
                     "solar_production_entity_id": "Neobvezno - če pustite prazno, se proizvodnja izračuna iz izvoza omrežja + porabe gospodinjstva. Nastavite le, če vaš razsmernik zagotavlja neposredno branje solarne moči.",
                     "solar_forecast_device_ids": "Naprave iz integracije Open-Meteo Solar Forecast - ta ustvari po eno napravo za vsako PV polje, zato izberite napravo vsakega polja. Skupaj z omejitvijo izvoza in kapaciteto baterije omogoči svetovalne senzorje, ki priporočajo, kako polna sme biti baterija pred opoldanskim vrhom proizvodnje.",
@@ -250,7 +250,7 @@
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
                     "plug_restart_on_no_draw": "Ponovni zagon, če preneha porabljati",
                     "plug_restart_after": "Ponovni zagon po",
                     "plug_finish_below_w": "Dokonča cikel: izklop pod",
@@ -268,8 +268,8 @@
                     "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, zmogljivost katere faze se uporabi v izračunih.",
                     "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
                     "plug_restart_on_no_draw": "Potrebuje senzor spremljanja moči. Ko Load Juggler želi, da porabnik deluje, in je njegovo stikalo vklopljeno, se porabnik, ki toliko časa, kot je nastavljeno spodaj, porablja manj kot 10 W, za 30 s izklopi in spet vklopi - za napravo za vtičnico, ki se izklopi sama (polnilnica električnega vozila ob pregretju) in ostane izklopljena, čeprav je rele še vklopljen, vklop že vklopljenega stikala pa ne naredi ničesar. Največ en ponovni zagon na 30 minut; po 3 zaporednih brez porabe preneha, dokler porabnik spet ne porablja 5 minut ali ga Load Juggler izklopi in znova vklopi. Senzor stanja pove, kdaj je bil ponovno zagnan, in nosi število ponovnih zagonov. Privzeto izklopljeno.",
                     "plug_restart_after": "Kako dolgo mora porabnik porabljati manj kot 10 W, medtem ko ga Load Juggler želi vklopljenega in je njegovo stikalo vklopljeno, preden se vtičnica ponovno zažene. Uporablja se le z možnostjo Ponovni zagon, če preneha porabljati.",
                     "plug_finish_below_w": "Potrebuje senzor spremljanja moči. Ko bi Load Juggler ta porabnik izklopil, medtem ko deluje, ostane vklopljen, dokler njegova moč ne ostane pod to vrednostjo toliko časa, kot je nastavljeno spodaj - tako pralni ali pomivalni stroj dokonča cikel, namesto da bi ga prekinil sredi pranja. Nastavite nad porabo stroja v pripravljenosti in pod porabo sredi cikla (pralni stroj: približno 5 W). Senzor stanja medtem kaže Finishing its cycle. 0 = izklopljeno (privzeto).",
@@ -277,9 +277,9 @@
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
-                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za vnaprejšnjo porabo viška na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je vnaprejšnja poraba viška izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "power_station_config": {
@@ -295,7 +295,7 @@
                     "station_ac_input_entity_id": "Senzor vhodne AC moči (neobvezno)",
                     "station_ac_output_entity_id": "Senzor izhodne AC moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
                     "station_min_charge_power": "Minimalna moč polnjenja",
                     "station_max_charge_power": "Maksimalna moč polnjenja",
                     "station_normal_reserve": "Običajna rezerva",
@@ -316,8 +316,8 @@
                     "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
                     "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje - kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega porabnika.",
                     "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Vhodna AC moč minus ta vrednost je moč polnjenja.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
                     "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoje porabnike in se iz omrežja ne polni višje. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
@@ -328,24 +328,24 @@
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
                     "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za vnaprejšnjo porabo viška na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je vnaprejšnja poraba viška izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "hot_water_tank_config": {
-                "title": "Konfiguracija grelnika vode",
-                "description": "Nastavite grelnik vode, krmiljen prek entitete climate (npr. Generic Thermostat).",
+                "title": "Konfiguracija bojlerja",
+                "description": "Nastavite bojler, krmiljen prek entitete climate (npr. Generic Thermostat).",
                 "data": {
                     "name": "Ime te naprave",
                     "entity_id": "Predpona ID entitete",
                     "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                     "heating_element_power": "Moč grelnega elementa",
-                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sonca, ko je pod normalno temperaturo",
+                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sončne energije, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
-                    "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
+                    "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
@@ -353,19 +353,19 @@
                 },
                 "data_description": {
                     "entity_id": "Uporabljeno kot predpona za entitete, ki jih ustvari ta integracija.",
-                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava bojler. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da bojler porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
-                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
-                    "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
-                    "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
-                    "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
+                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja bojler) - uporabljen namesto fiksne moči, kadar je prisoten.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                    "update_frequency": "Kako pogosto se bojler ponovno ovrednoti.",
+                    "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
-                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
-                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije."
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
+                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sončne energije, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije."
                 }
             },
             "discover_chargers": {
@@ -436,7 +436,7 @@
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
                     "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za vnaprejšnjo porabo viška na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je vnaprejšnja poraba viška izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "group_config": {
@@ -470,12 +470,12 @@
                     "entity_id": "Predpona ID entitete",
                     "climate_entity_id": "Termostat (entiteta climate)",
                     "heating_element_power": "Moč grelnega elementa",
-                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sonca, ko je pod normalno temperaturo",
+                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sončne energije, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
                     "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
@@ -489,14 +489,14 @@
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
                     "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
-                    "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
+                    "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
-                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
-                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije."
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
+                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sončne energije, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije."
                 }
             }
         },
@@ -624,13 +624,13 @@
                 "description": "Omejitev izvoza, tolerance.",
                 "data": {
                     "grid_export_limit": "Omejitev izvoza v omrežje",
-                    "grid_export_limit_per_phase": "Omejitev izvoza v omrežje na fazo (neobvezno)",
+                    "grid_export_limit_per_phase": "Omejitev po posamezni fazi (neobvezno)",
                     "excess_trigger_margin": "Odmik sprožilca Excess",
                     "excess_hysteresis": "Histereza načina Excess"
                 },
                 "data_description": {
                     "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
-                    "grid_export_limit_per_phase": "Neobvezno. Omejitev, koliko sme izvoziti ena faza, poleg skupne zgoraj - za asimetrični razsmernik, ki lahko ne preseže skupne meje, medtem ko ena faza presega svojo. Vati na fazo; 0 = brez. Napovedi le sporoči, da razsmernik omejuje proizvodnjo (skupni izvoz na meji ali katera koli faza na tej); ne vklopi napovedi in ne premakne sprožilca Excess.",
+                    "grid_export_limit_per_phase": "Neobvezno. Omejitev izvoza za posamezno fazo, poleg skupne omejitve zgoraj - za asimetrični razsmernik, ki lahko ostane znotraj skupne omejitve, čeprav ena faza preseže svojo. Vati na fazo; 0 = brez. Napovedi le sporoči, da razsmernik omejuje proizvodnjo (skupni izvoz na meji ali katera koli faza na tej); ne vklopi napovedi in ne premakne sprožilca Excess.",
                     "excess_trigger_margin": "Koliko pod omejitvijo izvoza se sproži način Excess - brez omrežja koliko pod največjo močjo polnjenja baterije. Razsmerniki in BMS baterije se ustavijo tik pod omejitvijo, zato se sprožilec točno na njej ne bi nikoli sprožil.",
                     "excess_hysteresis": "Koliko sme presežek pasti pod sprožilec, preden se vklopljeni porabnik izklopi. Odmik sprožilca določa, kje se način Excess vklopi; ta nastavitev pa širino pasu, v katerem ostane vklopljen, da porabnik ne utripa, ko presežek niha okoli sprožilca."
                 }
@@ -646,11 +646,11 @@
                     "forecast_soc_floor": "Spodnja meja priporočene napolnjenosti",
                     "pacing_energy_entity_id": "Višek energije (neobvezno)",
                     "pacing_horizon_entity_id": "Sončni zahod (neobvezno)",
-                    "forecast_excess_full_entity_id": "Naslednja polna baterija (neobvezno)",
-                    "forecast_excess_enabled": "Predčasni začetek glede na viške",
-                    "forecast_clip_early_enabled": "Predčasni začetek glede na rezanje PV",
-                    "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
-                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek",
+                    "forecast_excess_full_entity_id": "Baterija polna ob (neobvezno)",
+                    "forecast_excess_enabled": "Vnaprejšnja poraba viška",
+                    "forecast_clip_early_enabled": "Vnaprejšnja poraba ob rezanju PV",
+                    "forecast_excess_soc_source": "Najmanjši SOC za vnaprejšnjo porabo viška",
+                    "forecast_excess_soc": "Fiksni SOC za vnaprejšnjo porabo viška",
                     "outage_entity_id": "Koledar ali senzor načrtovane prekinitve (neobvezno)",
                     "outage_precharge_lead_hours": "Predpolnjenje: čas vnaprej",
                     "outage_hold_hours": "Zadrževanje po koncu prekinitve"
@@ -664,11 +664,11 @@
                     "pacing_energy_entity_id": "kWh, ki jih smejo razporejeni porabniki še porabiti do sončnega zahoda - npr. načrtovalni senzor Load Insights. Wh ali kWh; negativna vrednost šteje kot 0. Uporabijo jo le porabniki z vklopljenim razporejanjem porabe, in to le skupaj s senzorjem sončnega zahoda spodaj.",
                     "pacing_horizon_entity_id": "Senzor časovnega žiga, do kdaj je treba ta višek energije porabiti - npr. konec dnevne sončne proizvodnje. Manj kot 1 ura do konca šteje kot 1 ura.",
                     "forecast_excess_full_entity_id": "Senzor časovnega žiga, kdaj bo baterija po napovedi spet polna - npr. Load Insights Naslednja polna baterija. Z njim se vsaka naprava zgodaj zažene šele, ko ji preostali čas omogoča, da z minimalno močjo porabi višek energije do takrat (višek energije, deljen z minimalno močjo naprave, je število potrebnih ur). Ni nastavljeno: uporabi se senzor sončnega zahoda zgoraj.",
-                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
-                    "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot predčasni začetek zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za predčasni začetek in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od predčasnega začetka zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
-                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
+                    "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za vnaprejšnjo porabo viška (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Vnaprej se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
+                    "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot vnaprejšnja poraba viška zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za vnaprejšnjo porabo viška in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od vnaprejšnje porabe viška zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
+                    "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti vnaprej: najnižja, ciljna ali fiksna vrednost spodaj.",
                     "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost.",
-                    "outage_entity_id": "Koledar ali binarni senzor, ki pove, kdaj bo omrežje izpadlo - npr. koledar integracije za izklope ali njen senzor Planned outage active. Medtem ko okno teče ali se začne v spodaj nastavljenem času vnaprej, objekt z omrežjem baterijo napolni do konca: zgornja meja napolnjenosti se dvigne na polno, omejitev hitrosti polnjenja se sprosti in predčasni začetki počakajo, porabniki Solar Only in Solar Priority pa čakajo na baterijo (porabniki Standard se ne spremenijo). Koledar sporoči začetek vnaprej; binarni senzor le tekoče okno, razen če ima atribut next_start. Objekti brez omrežja tega ne upoštevajo. Ni na voljo ali neznano: ni okna. Ni nastavljeno: brez sprememb.",
+                    "outage_entity_id": "Koledar ali binarni senzor, ki pove, kdaj bo omrežje izpadlo - npr. koledar integracije za izklope ali njen senzor Planned outage active. Medtem ko okno teče ali se začne v spodaj nastavljenem času vnaprej, objekt z omrežjem baterijo napolni do konca: zgornja meja napolnjenosti se dvigne na polno, omejitev hitrosti polnjenja se sprosti in vnaprejšnja poraba viška počaka, porabniki Solar Only in Solar Priority pa čakajo na baterijo (porabniki Standard se ne spremenijo). Koledar sporoči začetek vnaprej; binarni senzor le tekoče okno, razen če ima atribut next_start. Objekti brez omrežja tega ne upoštevajo. Ni na voljo ali neznano: ni okna. Ni nastavljeno: brez sprememb.",
                     "outage_precharge_lead_hours": "Koliko ur pred začetkom okna v koledarju (ali pred atributom next_start senzorja) se začne polnjenje baterije.",
                     "outage_hold_hours": "Koliko ur po koncu okna se vse vrne v običajno stanje."
                 }
@@ -739,7 +739,7 @@
                     "inverter_max_power_entity_id": "Napredno - bere se v vsakem ciklu namesto zgornje stalne zmogljivosti, tako da jo lahko avtomatizacija zniža proti 0 ob alarmu za pregretje razsmernika. Vati ali kilovati. Ko senzor ni na voljo, se obdrži zadnji odčitek; če ga še ni bilo, velja stalna zmogljivost.",
                     "inverter_max_power_per_phase": "Običajno skupna moč, deljena s številom faz. 0 = brez omejitve na fazo.",
                     "inverter_supports_asymmetric": "Večina hibridnih razsmernikov (Deye, Victron, Huawei) podpira asimetrični izhod. SolarEdge in Fronius sta običajno simetrična.",
-                    "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Nizni (PV) razsmernik ga nima: pustite prazno in šteje se ves njegov izhod. Hibrid, skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
+                    "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Navaden PV razsmernik (brez baterije) ga nima: pustite prazno in šteje se ves njegov izhod. Hibridni PV razsmernik (z baterijo), skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
                     "inverter_input_is_grid": "Za hibrid, skozi katerega teče omrežje, kadar med omrežnim števcem in razsmernikom ni ničesar - ne drugih porabnikov ne drugega razsmernika. Njegov vhod je tedaj enak odčitku omrežnega števca, zato ne potrebuje senzorjev vhoda. To ima lahko le en razsmernik."
                 }
             },
@@ -818,7 +818,7 @@
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "plug_power_monitor_entity_id": "Senzor spremljanja moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
                     "plug_restart_on_no_draw": "Ponovni zagon, če preneha porabljati",
                     "plug_restart_after": "Ponovni zagon po",
                     "plug_finish_below_w": "Dokonča cikel: izklop pod",
@@ -835,8 +835,8 @@
                     "connected_to_phase": "Na katero električno fazo je naprava priključena. Določa, zmogljivost katere faze se uporabi v izračunih.",
                     "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "plug_power_monitor_entity_id": "Ko je nastavljen, se namesto fiksne nazivne moči uporabi dejanska izmerjena moč za natančnejše dodeljevanje.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
                     "plug_restart_on_no_draw": "Potrebuje senzor spremljanja moči. Ko Load Juggler želi, da porabnik deluje, in je njegovo stikalo vklopljeno, se porabnik, ki toliko časa, kot je nastavljeno spodaj, porablja manj kot 10 W, za 30 s izklopi in spet vklopi - za napravo za vtičnico, ki se izklopi sama (polnilnica električnega vozila ob pregretju) in ostane izklopljena, čeprav je rele še vklopljen, vklop že vklopljenega stikala pa ne naredi ničesar. Največ en ponovni zagon na 30 minut; po 3 zaporednih brez porabe preneha, dokler porabnik spet ne porablja 5 minut ali ga Load Juggler izklopi in znova vklopi. Senzor stanja pove, kdaj je bil ponovno zagnan, in nosi število ponovnih zagonov. Privzeto izklopljeno.",
                     "plug_restart_after": "Kako dolgo mora porabnik porabljati manj kot 10 W, medtem ko ga Load Juggler želi vklopljenega in je njegovo stikalo vklopljeno, preden se vtičnica ponovno zažene. Uporablja se le z možnostjo Ponovni zagon, če preneha porabljati.",
                     "plug_finish_below_w": "Potrebuje senzor spremljanja moči. Ko bi Load Juggler ta porabnik izklopil, medtem ko deluje, ostane vklopljen, dokler njegova moč ne ostane pod to vrednostjo toliko časa, kot je nastavljeno spodaj - tako pralni ali pomivalni stroj dokonča cikel, namesto da bi ga prekinil sredi pranja. Nastavite nad porabo stroja v pripravljenosti in pod porabo sredi cikla (pralni stroj: približno 5 W). Senzor stanja medtem kaže Finishing its cycle. 0 = izklopljeno (privzeto).",
@@ -844,9 +844,9 @@
                     "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
-                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "plug_switch_entity_id": "Stikalo, ki ga ta integracija vklaplja in izklaplja. Vse, kar je priključeno za njim, se upravlja kot en vklop/izklop porabnik.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za vnaprejšnjo porabo viška na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je vnaprejšnja poraba viška izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "power_station": {
@@ -860,7 +860,7 @@
                     "station_ac_input_entity_id": "Senzor vhodne AC moči (neobvezno)",
                     "station_ac_output_entity_id": "Senzor izhodne AC moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
                     "station_min_charge_power": "Minimalna moč polnjenja",
                     "station_max_charge_power": "Maksimalna moč polnjenja",
                     "station_normal_reserve": "Običajna rezerva",
@@ -880,8 +880,8 @@
                     "station_charge_limit_entity_id": "Lastna zgornja meja polnjenja postaje. Rezerva se nikoli ne dvigne nad njo, zato je vaša omejitev za zdravje baterije upoštevana. Privzeto 90 %.",
                     "station_ac_input_entity_id": "Skupna moč, vzeta iz omrežja. Skupaj s senzorjem izhodne moči izlušči le del za polnjenje - kar je priklopljeno na postajo, je poraba gospodinjstva, ne tega porabnika.",
                     "station_ac_output_entity_id": "Moč, ki jo postaja oddaja na svoje izhode. Vhodna AC moč minus ta vrednost je moč polnjenja.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
                     "station_min_charge_power": "Najnižja hitrost, ki jo postaja sprejme (200 W pri modelih EcoFlow Delta). Pod tem se ne more polniti, zato se namesto tega spusti rezerva. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "station_max_charge_power": "Največ, kar sme postaja vzeti. Nastavite pod strojno mejo za dodatno omejitev. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                     "station_normal_reserve": "Vzdrževana vsak dan. Postaja se prazni do te ravni za svoje porabnike in se iz omrežja ne polni višje. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
@@ -892,41 +892,41 @@
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva samo na razdeljevanje v načinih Prioriteta in Zaporedno.",
                     "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
                     "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za vnaprejšnjo porabo viška na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je vnaprejšnja poraba viška izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "hot_water_tank": {
-                "title": "Posodobi nastavitve grelnika vode",
-                "description": "Posodobite nastavitve grelnika vode",
+                "title": "Posodobi nastavitve bojlerja",
+                "description": "Posodobite nastavitve bojlerja",
                 "data": {
                     "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                     "heating_element_power": "Moč grelnega elementa",
-                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sonca, ko je pod normalno temperaturo",
+                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sončne energije, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
-                    "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
+                    "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
                     "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
                     "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
-                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava bojler. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da bojler porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
-                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije.",
+                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sončne energije, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
-                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
-                    "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
-                    "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
-                    "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
+                    "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja bojler) - uporabljen namesto fiksne moči, kadar je prisoten.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                    "update_frequency": "Kako pogosto se bojler ponovno ovrednoti.",
+                    "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
-                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                 }
             },
             "charger": {
@@ -984,7 +984,7 @@
                     "stack_level": "Parameter OCPP protokola. Spremenite le, če polnilna postaja ignorira profile polnjenja na privzetem nivoju.",
                     "solar_grace_period": "V načinih Solar in Excess, koliko časa naj polnjenje teče na minimalnem toku, ko pogoji niso več izpolnjeni, preden se ustavi. Nastavite na 0 za takojšnjo ustavitev.",
                     "pace_over_horizon": "Samo način Excess. Višek energije na merilnem mestu razporedi po času do sončnega zahoda namesto porabe čim hitreje: porabnik teče z največ toliko moči, kot jo da ta energija, deljena s preostalimi urami. Pod minimumom porabnik ne more delovati, zato je izklopljen, dokler je ta moč pod minimumom, in se spet vklopi, ko je 20 % nad njim. Potrebna sta oba senzorja na strani Baterije in napovedi merilnega mesta; brez njiju ali izklopljeno se nič ne spremeni.",
-                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za predčasni začetek na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je predčasni začetek izklopljen). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
+                    "catch_up_enabled": "Samo načina Solar Only in Solar Priority. Porabniku dovoli začeti pod ciljno napolnjenostjo baterije, kadar sicer ne bi mogel slediti: višek energije, razporejen po preostalih urah do sončnega zahoda, je vsaj enak največji moči porabnika, zato bi čakanje baterijo prepolnilo. Vzame samo sonce, ki ga baterija sprejema, ne pa njene energije, in nikoli pod napolnjenostjo, izbrano za vnaprejšnjo porabo viška na strani Baterije in napovedi merilnega mesta (najnižja napolnjenost, če je vnaprejšnja poraba viška izklopljena). Potrebna sta oba senzorja na tej strani; brez njiju ali izklopljeno se nič ne spremeni."
                 }
             },
             "group": {
@@ -1005,12 +1005,12 @@
                 "data": {
                     "climate_entity_id": "Termostat (entiteta climate)",
                     "heating_element_power": "Moč grelnega elementa",
-                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sonca, ko je pod normalno temperaturo",
+                    "tank_prioritize_below_normal": "Prednost pred drugimi porabniki v načinu Prednost sončne energije, ko je pod normalno temperaturo",
                     "connected_to_phase": "Priključeno na fazo",
                     "load_priority": "Prioriteta (1 = najvišja)",
                     "tank_power_entity_id": "Senzor moči (neobvezno)",
                     "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
-                    "early_rate_entity_id": "Hitrost sprejema (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
                     "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
                     "update_frequency": "Pogostost posodabljanja",
                     "solar_grace_period": "Odlog za način Solar/Excess",
@@ -1018,19 +1018,19 @@
                     "binary_min_off_time": "Najkrajši čas izklopa"
                 },
                 "data_description": {
-                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Grelnik vode nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
+                    "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                     "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
-                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sonca, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije.",
+                    "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sončne energije, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije.",
                     "connected_to_phase": "Na katere faze je priključen grelni element.",
                     "load_priority": "Nižja številka = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
                     "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Zgodnji zagon šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
-                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Hitrost sprejema\". Skupina zgodnjega zagona šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
                     "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
                     "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
-                    "solar_grace_period": "V načinu Prednost sonca, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
+                    "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
                     "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
-                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - električnemu vozilu, ki mu prekinemo med pogajanjem, se lahko polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
+                    "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                 }
             },
             "change_type": {
@@ -1130,7 +1130,7 @@
     "issues": {
         "tank_target_not_kept": {
             "title": "Load Juggler - {tank}: naprava drži {kept} °C, ne {asked} °C",
-            "description": "Load Juggler je napravi {device} nastavil {asked} °C ({setting}), a naprava drži svojo, nižjo ciljno temperaturo: po vsakem vpisu se je vrnila na {kept} °C. Load Juggler je zato grelniku znižal {lowered} na {value} °C in ne vpisuje več cilja, ki ga naprava ne obdrži.\n\nČe ima naprava svojo omejitev - na primer najvišjo temperaturo tople vode - jo najprej zvišajte tam, nato znova zvišajte {setting}, da se višja temperatura vrne."
+            "description": "Load Juggler je napravi {device} nastavil {asked} °C ({setting}), a naprava drži svojo, nižjo ciljno temperaturo: po vsakem vpisu se je vrnila na {kept} °C. Load Juggler je zato bojlerju znižal {lowered} na {value} °C in ne vpisuje več cilja, ki ga naprava ne obdrži.\n\nČe ima naprava svojo omejitev - na primer najvišjo temperaturo tople vode - jo najprej zvišajte tam, nato znova zvišajte {setting}, da se višja temperatura vrne."
         }
     }
 }
