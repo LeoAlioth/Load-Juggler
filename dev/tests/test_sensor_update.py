@@ -7355,3 +7355,68 @@ async def test_the_settle_dial_reaches_the_evse_builder(
 
     assert _build_evse_load(hass, mock_charger_entry, 230, "wallbox_1", 1, settle_seconds=5.0).draw_settled
     assert not _build_evse_load(hass, mock_charger_entry, 230, "wallbox_1", 1, settle_seconds=60.0).draw_settled
+
+
+async def _clip_run(hass, slug, saved_series_slice=None, with_gain=True):
+    """One off-grid clipping cycle (one hour at 7000 W over a 250 W house),
+    optionally with a restored gain series first. Returns ``(result, inverter,
+    seen)``; ``seen`` is the series ``first_production_at`` was handed."""
+    from datetime import date
+    from freezegun import freeze_time
+    from unittest.mock import patch
+    from custom_components.dynamic_ocpp_evse.engine import hub_result
+    from custom_components.dynamic_ocpp_evse.engine.forecast_observers import (
+        restore_gain_state,
+    )
+    from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+        run_hub_calculation,
+    )
+
+    hub, inverter = _off_grid_rig(hass, slug)
+    if with_gain:
+        saved = _gain_saved_state("2026-08-14")
+        if saved_series_slice is not None:
+            saved["series"] = saved["series"][:saved_series_slice]
+        restore_gain_state(
+            hass.data[DOMAIN]["hubs"][hub.entry_id], inverter.entry_id, saved,
+            date(2026, 8, 14),
+        )
+    seen = []
+    real = hub_result.first_production_at
+
+    def spy(series, *args, **kwargs):
+        seen.append(dict(series))
+        return real(series, *args, **kwargs)
+
+    with patch.object(hub_result, "first_production_at", spy), freeze_time(
+        "2026-08-14 08:00:00+00:00"
+    ):
+        result = run_hub_calculation(hass, hub)
+    return result, inverter, seen
+
+
+async def test_the_measured_gain_biases_the_clip_integral_but_not_first_production(
+    hass: HomeAssistant,
+):
+    """The array reads 0.9 of its forecast over 7 days: the clip integral runs on
+    6300 W (6.05 kWh over the 250 W house, not 6.75), while
+    ``first_production_at`` is handed the series as published."""
+    result, inverter, seen = await _clip_run(hass, "gainapply")
+    assert result["forecast_clipped_kwh"] == pytest.approx(6.05, abs=0.01)
+    own = result["inverters"][inverter.entry_id]
+    assert own["forecast_gain_applied"] == pytest.approx(0.9)
+    assert sorted(seen[0].values(), reverse=True)[0] == 7000.0
+
+
+async def test_without_a_measured_gain_the_clip_integral_is_unchanged(
+    hass: HomeAssistant,
+):
+    """No observer state, and a series spanning under GAIN_APPLY_MIN_DAYS days:
+    both read exactly as before (6.75 kWh) with an applied gain of 1.0."""
+    for slug, kwargs in (
+        ("nogain", {"with_gain": False}),
+        ("fewdays", {"saved_series_slice": 6}),
+    ):
+        result, inverter, _seen = await _clip_run(hass, slug, **kwargs)
+        assert result["forecast_clipped_kwh"] == pytest.approx(6.75, abs=0.01), slug
+        assert result["inverters"][inverter.entry_id]["forecast_gain_applied"] == 1.0

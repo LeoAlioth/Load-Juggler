@@ -103,7 +103,8 @@ custom_components/dynamic_ocpp_evse/
 │                                  #   latched per load); the engine sets LoadContext.catch_up_active
 │   ├── forecast.py                # Forecast-based charging advice (+ ``clip_window_span`` and ``unavoidable_clip_kwh``,
 │   │                              #   what the early start on forecast clipping reads, JUG-18)
-│   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
+│   ├── calibration.py             # Forecast calibration (level-bias gain - ``applied_gain`` / ``scale_series`` bias each array's
+│                                  #   series for the clip integral in hub_result, never first_production_at - and peakiness, observe-only)
 │   └── utils.py                   # Utility functions (is_number, household_per_phase)
 ├── control/                       # Actuation layer (imports only const/helpers/units - never entities or engine)
 │   ├── ocpp.py                    # OCPP charging-profile service calls

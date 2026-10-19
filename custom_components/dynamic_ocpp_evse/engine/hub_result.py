@@ -15,6 +15,7 @@ import logging
 import time
 
 from .forecast_observers import (
+    gain_to_apply,
     observe_clipped,
     observe_gain,
     observe_peakiness,
@@ -23,6 +24,7 @@ from ..calculations.calibration import (
     battery_is_saturated,
     block_power_at,
     export_is_clamped,
+    scale_series,
 )
 from ..calculations import (
     discharge_headroom_unknown,
@@ -298,7 +300,29 @@ def _compute_forecast_advice(
     # reads nothing (see read_forecast_series).
     held = hub_runtime.get("_forecast_held", ())
     entity_ids = configured_forecast_sensors(hass, device_ids, held)
-    series, by_entity = read_forecast_series(hass, entity_ids, hub_runtime)
+    raw_series, by_entity = read_forecast_series(hass, entity_ids, hub_runtime)
+    # Each ARRAY's measured level gain biases its own series before the merge,
+    # and only for the clip integral below. ``raw_series`` stays the forecast as
+    # published: ``first_production_at`` (it carries its own early margin - two
+    # margins on one number only move the overnight drop earlier) and the
+    # observers (which must compare against the unbiased forecast, or the gain
+    # would learn from its own correction) read that. Every gain is exactly 1.0
+    # without data, which leaves ``series`` the very same object.
+    gains_applied = {
+        m.entry_id: gain_to_apply(hub_runtime, m.entry_id)
+        for m in members
+        if m.forecast_device_ids
+    }
+    entity_gain = {}
+    for m in members:
+        if gains_applied.get(m.entry_id, 1.0) != 1.0:
+            for e in configured_forecast_sensors(hass, list(m.forecast_device_ids), held):
+                entity_gain.setdefault(e, gains_applied[m.entry_id])
+    series = raw_series
+    if entity_gain:
+        series = merge_forecast_series(
+            [scale_series(s, entity_gain.get(e, 1.0)) for e, s in by_entity.items()]
+        )
     # The NEXT clipping window, not the rest of the calendar day: the remainder
     # of today while today still has clip left, tomorrow once it does not (see
     # ``select_clipping_window``). ``window`` is 0 exactly in the first case.
@@ -335,7 +359,7 @@ def _compute_forecast_advice(
     # the only thing carried is the latch that keeps a drop dropped. See
     # ``reservation_is_due``.
     production_at = first_production_at(
-        series, base_consumption, windows[0][0], windows[-1][1], power_cap_w=power_cap
+        raw_series, base_consumption, windows[0][0], windows[-1][1], power_cap_w=power_cap
     )
     due, due_latched = reservation_is_due(
         windows[0][0],
@@ -578,6 +602,7 @@ def _compute_forecast_advice(
             constrained,
             now_local=now_local,
         )
+        observed["forecast_gain_applied"] = gains_applied.get(m.entry_id, 1.0)
         per_inverter.setdefault(m.entry_id, {}).update(observed)
 
     peakiness = observe_peakiness(
@@ -596,7 +621,7 @@ def _compute_forecast_advice(
     clipped = observe_clipped(
         hub_runtime,
         local_day,
-        block_power_at(series, now_local),
+        block_power_at(raw_series, now_local),
         production_w,
         constrained,
         dt_hours,

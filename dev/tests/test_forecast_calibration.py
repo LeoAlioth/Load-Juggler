@@ -426,3 +426,40 @@ def test_export_is_clamped_when_any_phase_sits_on_its_own_cap():
     ) is False
     # Unreadable export with only a per-phase cap configured: safe side.
     assert export_is_clamped(None, 0, phase_limit_w=4500.0) is True
+
+
+# --- Applying the gain to the clip integral ------------------------------------
+
+from custom_components.dynamic_ocpp_evse.calculations.calibration import (  # noqa: E402
+    GAIN_APPLY_MIN_DAYS,
+    applied_gain,
+    scale_series,
+)
+
+
+def test_no_gain_or_too_few_days_applies_exactly_one():
+    assert applied_gain(None, 9) == 1.0
+    assert applied_gain(0.8, None) == 1.0
+    assert applied_gain(0.8, GAIN_APPLY_MIN_DAYS - 1) == 1.0
+    assert applied_gain(1.0, 0) == 1.0
+
+
+def test_a_measured_gain_applies_within_its_clamp():
+    assert applied_gain(0.9, GAIN_APPLY_MIN_DAYS) == 0.9
+    assert applied_gain(1.1, 14) == 1.1
+    # Whatever is stored, the correction never leaves the clamp.
+    assert applied_gain(0.1, 14) == GAIN_CLAMP_LOW
+    assert applied_gain(9.0, 14) == 1.25
+
+
+def test_scaling_a_series_multiplies_every_block_and_leaves_the_input_alone():
+    series = _series(1000.0, 2000.0)
+    scaled = scale_series(series, 0.9)
+    assert list(scaled.values()) == [900.0, 1800.0]
+    assert list(series.values()) == [1000.0, 2000.0]
+
+
+def test_a_unit_gain_returns_the_very_same_series():
+    series = _series(1000.0)
+    assert scale_series(series, 1.0) is series
+    assert scale_series({}, 0.8) == {}
