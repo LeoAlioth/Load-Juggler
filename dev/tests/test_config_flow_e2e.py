@@ -45,6 +45,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BASE_CONSUMPTION,
+    CONF_FORECAST_CLIP_EARLY_ENABLED,
     CONF_FORECAST_EXCESS_ENABLED,
     CONF_FORECAST_EXCESS_SOC,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
@@ -703,6 +704,7 @@ async def test_options_flow_hub_saves_changes(
     assert _schema_has(result["data_schema"], CONF_PACING_HORIZON_ENTITY_ID)
     for key in (
         CONF_FORECAST_EXCESS_ENABLED,
+        CONF_FORECAST_CLIP_EARLY_ENABLED,
         CONF_FORECAST_EXCESS_SOC_SOURCE,
         CONF_FORECAST_EXCESS_SOC,
     ):
@@ -716,12 +718,14 @@ async def test_options_flow_hub_saves_changes(
             CONF_PACING_ENERGY_ENTITY_ID: "sensor.energy_to_use",
             CONF_PACING_HORIZON_ENTITY_ID: "sensor.horizon_end",
             CONF_FORECAST_EXCESS_ENABLED: True,
+            CONF_FORECAST_CLIP_EARLY_ENABLED: True,
             CONF_FORECAST_EXCESS_SOC_SOURCE: "minimum",
             CONF_FORECAST_EXCESS_SOC: 70,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_ENABLED) is True
+    assert mock_hub_entry.options.get(CONF_FORECAST_CLIP_EARLY_ENABLED) is True  # additive key, no migration
     assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_SOC_SOURCE) == "minimum"
     assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_SOC) == 70
     assert mock_hub_entry.options.get(CONF_PACING_ENERGY_ENTITY_ID) == "sensor.energy_to_use"

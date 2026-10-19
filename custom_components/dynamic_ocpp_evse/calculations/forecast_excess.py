@@ -103,6 +103,18 @@ def early_group(takers_w, rooms_kwh, planned_kwh, hours_left, cap_w=None, was_on
     return starts_early(usable, hours_left, group_w, was_on), group_w, usable
 
 
+def clip_load_room_kwh(room_kwh, load_max_w, span_hours):
+    """What one load can absorb of the forecast clip, kWh: its own *Room to
+    absorb today* where it has the sensor (``room_kwh``, None when not set),
+    else the most it could take over the clip - its power times the length of
+    the clipping span. Either way ``early_group`` holds the group's sum to the
+    clipped surplus.
+    """
+    if room_kwh is not None:
+        return room_kwh
+    return max(0.0, load_max_w) * max(0.0, span_hours) / 1000.0
+
+
 def forecast_excess_gate(source, soc_min, soc_target, fixed):
     """``(gate_soc, band_pct)``: the SOC the verdict needs, and how far below it
     the latch holds.

@@ -1,0 +1,223 @@
+# Test scenarios: Excess loads start early on the forecast PV clipping (JUG-18).
+#
+# The clipping advice says how much energy the site will fail to place at the
+# next peak and how much of it the battery can still take; what is left
+# (clipped - what the battery takes) is curtailment no headroom can save. With
+# the hub option on, the Excess loads start ahead of the clipping window so that
+# surplus goes into them: the early-start group rule (shared blockers, latch)
+# counted back from the window's opening instead of the next full charge -
+# due when the clip x 1000 reaches the group's minimum power x the hours until
+# the window opens. The Excess pool is topped up with the charge the battery is
+# absorbing, at most the clip over the hours to the window's end.
+#
+# `forecast_clip: {kwh, start_hours, span_hours}` is what the advice publishes
+# (the real engine function runs on it). Site (1 phase): 8050 W of sun, 2 A of
+# house, the battery 85 % (target 80 %) charging at its 3450 W limit: the
+# surplus verdict is off, so without the forecast an Excess EVSE gets nothing.
+
+scenarios:
+
+  - name: "forecast-clip-early-evse-starts-before-the-window"
+    description: "8 kWh of clip the battery cannot take, window opens in 2 h and lasts 3: 8000 Wh >= 1380 W x 2 h, so the Excess EVSE starts now on the paced charge (8 kWh over 5 h = 1600 W)"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_clip: {kwh: 8, start_hours: 2, span_hours: 3}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 7.0
+
+  - name: "forecast-clip-early-evse-waits-for-its-lead-time"
+    description: "Same clip, window 8 h away: 8000 Wh < 1380 W x 8 h - the EVSE is not due yet"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_clip: {kwh: 8, start_hours: 8, span_hours: 3}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-clip-early-nothing-when-the-battery-can-absorb-it"
+    description: "No clip the battery cannot take (kwh 0): the advice publishes nothing and the EVSE gets nothing"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_clip: {kwh: 0, start_hours: 2, span_hours: 3}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-clip-early-off-without-the-option"
+    description: "The same clip with the hub option off: no change, the EVSE gets nothing"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_clip: {enabled: false, kwh: 8, start_hours: 2, span_hours: 3}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-clip-early-needs-a-car"
+    description: "The group's blocker: no car plugged in, so the EVSE does not join and nothing starts"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_clip: {kwh: 8, start_hours: 2, span_hours: 3}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        connector_status: "Available"
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-clip-early-battery-under-the-gate"
+    description: "Battery 70 % is under the target SOC the early start needs: nothing starts"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 70
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_clip: {kwh: 8, start_hours: 2, span_hours: 3}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0.0
+
+  - name: "forecast-clip-early-room-sensor-limits-the-energy"
+    description: "The load's own Room to absorb today is 1 kWh: the energy it can use (1000 Wh) is under 1380 W x 2 h, not due"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 8050
+      phase_a_consumption: 2.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 3450
+      battery_max_discharge_power: 5000
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      forecast_clip: {kwh: 8, start_hours: 2, span_hours: 3}
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        early_room_kwh: 1.0
+    expected:
+      load_1:
+        allocated: 0.0

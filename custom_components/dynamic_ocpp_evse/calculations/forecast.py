@@ -307,6 +307,50 @@ def first_production_at(series, threshold_w, start, until, power_cap_w=None):
     return None
 
 
+def clip_window_span(series, threshold_w, start, until, power_cap_w=None):
+    """``(begins, ends)`` of the clipping in ``[start, until)``: the start of the
+    first forecast block above ``threshold_w`` and the end of the last, each
+    cut to the window. ``begins`` is ``start`` itself while the clip is already
+    under way. None when nothing in the window clips.
+
+    The one thing the early start on forecast clipping needs besides the energy
+    (``unavoidable_clip_kwh``): how long until the curtailment begins, and how
+    long it lasts (what a load could absorb during it). Blocks between the two
+    that sit under the threshold are inside the span - a multi-hump day is one
+    window here, as in ``clipping_forecast``.
+
+    Pure function - unit-testable.
+    """
+    if not series or until <= start:
+        return None
+    begins = ends = None
+    for block_start, width, power in _blocks(series, cap=power_cap_w):
+        block_end = block_start + timedelta(hours=width)
+        if block_end <= start:
+            continue
+        if block_start >= until:
+            break
+        if power > threshold_w:
+            if begins is None:
+                begins = max(block_start, start)
+            ends = min(block_end, until)
+    return None if begins is None else (begins, ends)
+
+
+def unavoidable_clip_kwh(clipped_kwh, room_needed_kwh, deficit_kwh=0.0):
+    """The forecast clip no battery headroom can save, kWh: what clips, less
+    what the battery can take of it. ``room_needed_kwh`` is the clip's
+    absorbable energy at the battery's charge RATE clamped to its capacity
+    (published as ``forecast_room_needed_kwh``); ``deficit_kwh`` the part of that
+    the battery already holds too much to make room for (today's window only -
+    a clip a night away is made room for by the overnight discharge). With a
+    roomy pack and a rate that binds this is ``clipped - absorbable``.
+
+    Pure function - unit-testable.
+    """
+    return max(0.0, clipped_kwh - (room_needed_kwh - deficit_kwh))
+
+
 def hours_to_shed(battery_soc, reserved_soc, capacity_kwh, base_consumption_w):
     """Hours of passive house discharge to bring the pack down to the reserve.
 

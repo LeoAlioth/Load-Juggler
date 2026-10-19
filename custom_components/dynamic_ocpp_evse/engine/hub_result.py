@@ -53,6 +53,7 @@ from ..const import (
     FORECAST_SOC_HYSTERESIS,
     LEG_DRAWING_CURRENT,
 )
+from ..calculations.forecast import clip_window_span, unavoidable_clip_kwh
 from ..calculations.target_calculator import _sort_loads
 from ..calculations.utils import managed_phase_draws
 from ..helpers import get_entry_value
@@ -65,6 +66,14 @@ from .forecast_reader import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# What the early start on forecast clipping reads next cycle (published by
+# _compute_forecast_advice, consumed by engine/hub_calculation.
+# _apply_forecast_excess): ``{"kwh", "start_h", "span_h"}`` - the clip the
+# battery cannot take, the hours until it begins (0 while under way) and how
+# long it lasts. Gone whenever the advice is off, which is what keeps the
+# early start inert there.
+_CLIP_EARLY_KEY = "_clip_early"
 
 # The forecast advice's carried state in hub_runtime (see
 # _compute_forecast_advice), dropped together whenever the advice is off.
@@ -230,7 +239,9 @@ def _compute_forecast_advice(
         or capacity_kwh <= 0
         or not device_ids
     ):
-        for key in (*_FORECAST_LATCHES, "_forecast_parse_memo", "_forecast_held"):
+        for key in (
+            *_FORECAST_LATCHES, "_forecast_parse_memo", "_forecast_held", _CLIP_EARLY_KEY
+        ):
             hub_runtime.pop(key, None)
         return None, {}
 
@@ -375,6 +386,25 @@ def _compute_forecast_advice(
     # Room needed carries information at both ends: below capacity it says the
     # charge RATE binds, at capacity it says the pack size does.
     room_needed = min(max(0.0, fc.absorbable_kwh), capacity_kwh)
+    # The clip no headroom can save, and when it opens and how long it lasts:
+    # the early start on forecast clipping (hub option) starts Excess loads
+    # ahead of it so the surplus goes into them. One cycle behind by design -
+    # the calculation reads last cycle's, a figure that moves with the forecast.
+    span = clip_window_span(
+        series, clip_threshold, windows[window][0], until, power_cap_w=power_cap
+    )
+    unavoidable = unavoidable_clip_kwh(
+        fc.clipped_kwh, room_needed, deficit if window == 0 else 0.0
+    )
+    if span and unavoidable > 0:
+        now_local = windows[0][0]
+        hub_runtime[_CLIP_EARLY_KEY] = {
+            "kwh": unavoidable,
+            "start_h": max(0.0, (span[0] - now_local).total_seconds() / 3600.0),
+            "span_h": (span[1] - span[0]).total_seconds() / 3600.0,
+        }
+    else:
+        hub_runtime.pop(_CLIP_EARLY_KEY, None)
     # The two live plant figures the engaged advice is computed from, read once
     # - from the CHARGE-CONTROL VIEW of the site when the engine supplies one:
     # the same loads, allowance and feedback subtraction, but grid phases and

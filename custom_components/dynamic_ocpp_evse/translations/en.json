@@ -97,6 +97,7 @@
                     "pacing_horizon_entity_id": "Sunset (optional)",
                     "forecast_excess_full_entity_id": "Next full charge (optional)",
                     "forecast_excess_enabled": "Early start on forecast excess",
+                    "forecast_clip_early_enabled": "Start Excess early on forecast clipping",
                     "forecast_excess_soc_source": "Minimum SOC for early start",
                     "forecast_excess_soc": "Fixed SOC for early start"
                 },
@@ -124,6 +125,7 @@
                     "pacing_horizon_entity_id": "Timestamp sensor for when that excess energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour.",
                     "forecast_excess_full_entity_id": "Timestamp sensor for when the battery is next full by the forecast - for example Load Insights' Next full charge. With it, each load starts early only once the time left lets its minimum power use the excess energy before then (the excess energy divided by the load's minimum power is how many hours it needs). Not set: the sunset sensor above is used.",
                     "forecast_excess_enabled": "Starts Excess before the battery is full while the excess energy (above) is over 0 and the battery SOC is at or above the minimum SOC for early start (below) - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the excess energy divided by the hours left until sunset. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
+                    "forecast_clip_early_enabled": "Starts Excess loads (tank boost, Excess loads and plugs) before the forecast clipping window opens when the battery cannot take all the clipped energy, so that surplus goes into them instead of being curtailed. Needs the PV clipping forecast (an export limit or off-grid, a battery capacity and a solar forecast). Each load starts as many hours before the window as its minimum power needs to use that energy - like the early start above, with the same checks, the same minimum SOC for early start and each load's Room to absorb today where set (otherwise its power times the length of the clipping). Independent of the early start above and of its sensors. Off: no change.",
                     "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
                     "forecast_excess_soc": "Used when the SOC source above is the fixed value."
                 }
@@ -640,6 +642,7 @@
                     "pacing_horizon_entity_id": "Sunset (optional)",
                     "forecast_excess_full_entity_id": "Next full charge (optional)",
                     "forecast_excess_enabled": "Early start on forecast excess",
+                    "forecast_clip_early_enabled": "Start Excess early on forecast clipping",
                     "forecast_excess_soc_source": "Minimum SOC for early start",
                     "forecast_excess_soc": "Fixed SOC for early start"
                 },
@@ -653,6 +656,7 @@
                     "pacing_horizon_entity_id": "Timestamp sensor for when that excess energy has to be used by - for example the end of the day's solar production. Less than 1 hour left counts as 1 hour.",
                     "forecast_excess_full_entity_id": "Timestamp sensor for when the battery is next full by the forecast - for example Load Insights' Next full charge. With it, each load starts early only once the time left lets its minimum power use the excess energy before then (the excess energy divided by the load's minimum power is how many hours it needs). Not set: the sunset sensor above is used.",
                     "forecast_excess_enabled": "Starts Excess before the battery is full while the excess energy (above) is over 0 and the battery SOC is at or above the minimum SOC for early start (below) - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the excess energy divided by the hours left until sunset. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
+                    "forecast_clip_early_enabled": "Starts Excess loads (tank boost, Excess loads and plugs) before the forecast clipping window opens when the battery cannot take all the clipped energy, so that surplus goes into them instead of being curtailed. Needs the PV clipping forecast (an export limit or off-grid, a battery capacity and a solar forecast). Each load starts as many hours before the window as its minimum power needs to use that energy - like the early start above, with the same checks, the same minimum SOC for early start and each load's Room to absorb today where set (otherwise its power times the length of the clipping). Independent of the early start above and of its sensors. Off: no change.",
                     "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
                     "forecast_excess_soc": "Used when the SOC source above is the fixed value."
                 }

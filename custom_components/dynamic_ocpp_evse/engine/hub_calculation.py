@@ -20,6 +20,7 @@ from ..calculations import (
 )
 from ..calculations.catch_up import catch_up_verdict, max_power_w
 from ..calculations.forecast_excess import (
+    clip_load_room_kwh,
     early_blocker,
     early_group,
     forecast_excess_gate,
@@ -40,6 +41,7 @@ from ..const import (
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_EXCESS_HYSTERESIS,
     CONF_EXCESS_TRIGGER_MARGIN,
+    CONF_FORECAST_CLIP_EARLY_ENABLED,
     CONF_FORECAST_EXCESS_ENABLED,
     CONF_FORECAST_EXCESS_SOC,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
@@ -69,6 +71,7 @@ from ..const import (
     DEFAULT_DISTRIBUTION_MODE,
     DEFAULT_EXCESS_HYSTERESIS,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
+    DEFAULT_FORECAST_CLIP_EARLY_ENABLED,
     DEFAULT_FORECAST_EXCESS_ENABLED,
     DEFAULT_FORECAST_EXCESS_SOC,
     DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
@@ -103,7 +106,7 @@ from ..registry import get_inverters_for_hub
 from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
-from .hub_result import _build_hub_result, _compute_forecast_advice
+from .hub_result import _CLIP_EARLY_KEY, _build_hub_result, _compute_forecast_advice
 from .load_builders import (
     _add_loads_to_site,
     _build_circuit_groups,
@@ -739,18 +742,83 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
         hub_runtime.get("_early_group_on", False),
     )
     hub_runtime["_early_group_on"] = due
-    for load in site.loads:
-        load.early_start_ok = due and load in group if load in takers else True
     hub_runtime["_excess_by_forecast_on"] = on
-    on = on and (not takers or any(load.early_start_ok for load in takers))
+    # The same rule counted back from the PV clipping window instead of the next
+    # full charge (JUG-18): the clip the battery cannot take is the energy, the
+    # hours until the window opens the time left. Its own latches; inert (and
+    # latch-free) unless the hub option is on and the clipping advice has a clip.
+    clip = _clip_source(hub_runtime, hub_entry)
+    clip_on = clip_due = False
+    clip_pace = 0.0
+    if clip is not None:
+        kwh, start_h, span_h = clip
+        clip_on = forecast_excess_verdict(
+            True, site.battery_soc, gate, band, kwh,
+            hub_runtime.get("_excess_by_clip_on", False),
+        )
+        clip_due, _, _ = early_group(
+            [_load_watts(load, site) for load in group],
+            [
+                clip_load_room_kwh(
+                    load.early_room_kwh, _load_max_watts(load, site), span_h
+                )
+                for load in group
+            ],
+            kwh,
+            start_h,
+            site.battery_max_charge_power,
+            hub_runtime.get("_early_group_clip_on", False),
+        )
+        clip_pace = pace_watts(kwh, start_h + span_h)
+    for key, value in (("_early_group_clip_on", clip_due), ("_excess_by_clip_on", clip_on)):
+        if clip is None:
+            hub_runtime.pop(key, None)
+        else:
+            hub_runtime[key] = value
+    hub_runtime["_clip_active"] = clip if clip_on else None
+    for load in site.loads:
+        load.early_start_ok = (
+            (due or (clip_on and clip_due)) and load in group if load in takers else True
+        )
+    # Each source's verdict stands only while one of its own loads is due.
+    on_planned = on and (not takers or any(due and load in group for load in takers))
+    on_clip = clip_on and (
+        not takers or any(clip_due and load in group for load in takers)
+    )
+    on = on_planned or on_clip
     site.forecast_excess = on
-    site.forecast_excess_pace_w = pace_watts(planned, hours_left) if on else 0.0
+    site.forecast_excess_pace_w = max(
+        pace_watts(planned, hours_left) if on_planned else 0.0,
+        clip_pace if on_clip else 0.0,
+    )
     if on:
         _LOGGER.debug(
-            "Forecast Excess ON (SOC %.0f%% >= %s, planned %.2f kWh, paced %.0fW)",
-            site.battery_soc, gate, planned, site.forecast_excess_pace_w,
+            "Forecast Excess ON (SOC %.0f%% >= %s, planned %s kWh%s, paced %.0fW)",
+            site.battery_soc, gate, _fv(planned),
+            " + clipping forecast" if on_clip else "", site.forecast_excess_pace_w,
         )
     return on
+
+
+def _clip_source(hub_runtime, hub_entry):
+    """``(kwh, hours_to_start, span_hours)`` of the forecast clip the early start
+    on clipping works from, or None: the hub option off, or the clipping advice
+    has no clip the battery cannot take (``hub_result._compute_forecast_advice``
+    publishes it into ``hub_runtime`` each cycle)."""
+    if not get_entry_value(
+        hub_entry, CONF_FORECAST_CLIP_EARLY_ENABLED, DEFAULT_FORECAST_CLIP_EARLY_ENABLED
+    ):
+        return None
+    clip = hub_runtime.get(_CLIP_EARLY_KEY)
+    return (clip["kwh"], clip["start_h"], clip["span_h"]) if clip else None
+
+
+def _load_max_watts(load, site):
+    """The most a load could absorb per hour: what it really pulls when its
+    absorption-rate sensor says, else its maximum power."""
+    if load.early_rate_w:
+        return load.early_rate_w
+    return load.max_current * site.voltage * max(len(load.active_phases_mask or "A"), 1)
 
 
 def _load_watts(load, site):
@@ -766,8 +834,10 @@ def _publish_early_start(hass, hub_runtime, site, planned, hours_left, excess_on
     (``early_start_note`` in its runtime, read by the status sensors): while the
     group waits, when it will start and at what power (the sum of the loads in it);
     for a load that sits out, why. None while the verdict is off or the load is
-    already running early."""
+    already running early. With both sources on (the planned energy and the
+    forecast clip) the earlier start is the one told, the clip's marked as such."""
     on = hub_runtime.get("_excess_by_forecast_on", False)
+    clip = hub_runtime.get("_clip_active")
     takers = [load for load in site.loads if _takes_early_verdict(load)]
     group = [load for load in takers if early_blocker(load) is None]
     group_w = sum(_load_watts(load, site) for load in group)
@@ -777,20 +847,31 @@ def _publish_early_start(hass, hub_runtime, site, planned, hours_left, excess_on
         load.early_room_kwh for load in group
     )
     usable = planned if planned is None or room is None else min(planned, room)
+    # (hours until the group starts, what to add to the note) per source on
+    waits = []
+    if on and hours_left is not None and group_w > 0 and usable is not None:
+        waits.append((hours_left - usable * 1000.0 / group_w, ""))
+    if clip is not None and group_w > 0:
+        kwh, start_h, span_h = clip
+        clip_usable = min(kwh, sum(
+            clip_load_room_kwh(load.early_room_kwh, _load_max_watts(load, site), span_h)
+            for load in group
+        ))
+        waits.append((start_h - clip_usable * 1000.0 / group_w, " for forecast clipping"))
     for load in site.loads:
         load_rt = hass.data[DOMAIN]["loads"].get(load.load_id)
         if load_rt is None:
             continue
         note = None
-        if on and hours_left is not None and load in takers:
+        if (on and hours_left is not None or clip is not None) and load in takers:
             blocker = early_blocker(load)
             if blocker:
                 note = f"No early start: {blocker}"
-            elif not load.early_start_ok and group_w > 0 and usable is not None:
-                wait_h = hours_left - usable * 1000.0 / group_w
+            elif not load.early_start_ok and waits:
+                wait_h, suffix = min(waits, key=lambda w: w[0])
                 at = dt_util.as_local(dt_util.utcnow() + timedelta(hours=max(wait_h, 0.0)))
                 together = " (all loads)" if len(group) > 1 else ""
-                note = f"Early start {at:%H:%M} at {group_w / 1000:.1f} kW{together}"
+                note = f"Early start {at:%H:%M} at {group_w / 1000:.1f} kW{together}{suffix}"
         load_rt["early_start_note"] = note
         # what a tank's setpoint reads (control/hot_water_tank.py): the surplus
         # verdict is everyone's, the forecast one only once this load is due
