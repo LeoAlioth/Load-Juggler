@@ -6,9 +6,6 @@ from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import (
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_CHARGER_L1_PHASE,
-    CONF_CHARGER_L2_PHASE,
-    CONF_CHARGER_L3_PHASE,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_DEVICE_TYPE,
     CONF_ENTITY_ID,
@@ -35,6 +32,7 @@ from .const import (
 )
 from .const.common import behaviour_type
 from .helpers import (
+    stored_legs,
     fleet_has_battery_capacity,
     has_battery_capacity,
     fleet_has_forecast_sources,
@@ -380,10 +378,7 @@ async def async_setup_entry(
 
     # Phase mask sensor - only for 3-phase EVSEs (L1/L2/L3 mapped to 3 distinct
     # site phases). For 1-/2-phase loads the mask is trivial, so it is omitted.
-    l1 = get_entry_value(config_entry, CONF_CHARGER_L1_PHASE, "A")
-    l2 = get_entry_value(config_entry, CONF_CHARGER_L2_PHASE, "B")
-    l3 = get_entry_value(config_entry, CONF_CHARGER_L3_PHASE, "C")
-    if device_type == DEVICE_TYPE_EVSE and len({l1, l2, l3}) == 3:
+    if device_type == DEVICE_TYPE_EVSE and len(stored_legs(config_entry)) == 3:
         entities.append(
             LoadJugglerPhaseMaskSensor(hass, config_entry, hub_entry, name, entity_id)
         )

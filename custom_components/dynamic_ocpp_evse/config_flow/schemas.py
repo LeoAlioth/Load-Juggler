@@ -954,6 +954,18 @@ def _charger_current_schema(
         (CONF_CHARGER_L2_PHASE, "B"),
         (CONF_CHARGER_L3_PHASE, "C"),
     )
+
+    def _leg_field(key, phase):
+        # L1 is the charger's first leg and always set. L2/L3 are optional:
+        # blank means the leg is unused (a 1-/2-phase charger). A suggested
+        # value, not a default - a default would come back after the user
+        # clears the field.
+        if key == CONF_CHARGER_L1_PHASE:
+            return vol.Required(key, default=defaults.get(key, phase))
+        return vol.Optional(
+            key, description={"suggested_value": defaults.get(key, phase)}
+        )
+
     return vol.Schema(
         dict(
             [
@@ -966,7 +978,7 @@ def _charger_current_schema(
                     6, 80, 1, "A", required=True,
                 ),
                 *(
-                    (vol.Required(key, default=defaults.get(key, phase)), leg_phase)
+                    (_leg_field(key, phase), leg_phase)
                     for key, phase in legs[: max(hub_phases, 1)]
                 ),
             ]

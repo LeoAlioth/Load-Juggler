@@ -23,9 +23,6 @@ from ..calculations.pacing import pace_cap_current
 from ..calculations.utils import managed_phase_draws
 from ..const import (
     thermostat_defaults, behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
-    CONF_CHARGER_L1_PHASE,
-    CONF_CHARGER_L2_PHASE,
-    CONF_CHARGER_L3_PHASE,
     CONF_LOAD_PRIORITY,
     CONF_CIRCUIT_GROUP_CURRENT_LIMIT,
     CONF_CIRCUIT_GROUP_MEMBERS,
@@ -108,7 +105,7 @@ from ..const import (
     TANK_MODE_FREEZE_PROTECTION,
     TANK_MODE_NORMAL,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, stored_legs
 from ..ocpp_discovery import ocpp_connector_status_entity
 from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
@@ -503,7 +500,10 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         )
         min_current = max_current
 
-    phases = int(get_entry_value(entry, CONF_PHASES, 3) or 3)
+    # The charger's phase count is its SET legs: L1 only is a 1-phase load,
+    # L1+L2 a 2-phase one. An explicit phases value (service/YAML) still wins.
+    legs = stored_legs(entry)
+    phases = int(get_entry_value(entry, CONF_PHASES, None) or len(legs) or 1)
 
     # Read connector status from the charger's own status sensor - resolved
     # from the registries by metric classification (and cached per entry setup),
@@ -515,10 +515,11 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         connector_status_state.state if connector_status_state else "Unknown"
     )
 
-    # Read L1/L2/L3 → site phase mapping
-    l1_phase = get_entry_value(entry, CONF_CHARGER_L1_PHASE, "A")
-    l2_phase = get_entry_value(entry, CONF_CHARGER_L2_PHASE, "B")
-    l3_phase = get_entry_value(entry, CONF_CHARGER_L3_PHASE, "C")
+    # Read L1/L2/L3 → site phase mapping. An unused leg keeps L1's phase, so a
+    # stray reading on it is still booked on a phase the charger really uses.
+    l1_phase = legs[0] if legs else "A"
+    l2_phase = legs[1] if len(legs) > 1 else l1_phase
+    l3_phase = legs[2] if len(legs) > 2 else l1_phase
 
     # Resolve the per-load operating mode from runtime data.
     mode = resolve_operating_mode(DEVICE_TYPE_EVSE, load_rt.get("operating_mode"))

@@ -9,6 +9,10 @@ from homeassistant.config_entries import ConfigEntry
 from .const import (
     CHARGE_RATE_UNIT_AMPS,
     CHARGE_RATE_UNIT_WATTS,
+    CONF_CHARGER_ID,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
@@ -189,6 +193,63 @@ async def detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
     )
     return None
 
+_LEG_KEYS = (CONF_CHARGER_L1_PHASE, CONF_CHARGER_L2_PHASE, CONF_CHARGER_L3_PHASE)
+_LEG_DEFAULTS = ("A", "B", "C")
+
+
+def set_legs(l1, l2, l3) -> list[str]:
+    """The site phases of a charger's SET legs, L1 first. A leg left None is
+    unused, so the count is the charger's phase count. The legs are contiguous:
+    nothing after the first unset one counts."""
+    legs = []
+    for phase in (l1, l2, l3):
+        if not phase:
+            break
+        legs.append(phase)
+    return legs
+
+
+def stored_legs(entry: ConfigEntry) -> list[str]:
+    """``set_legs`` of a stored charger entry. A key never stored means the
+    legacy default (A/B/C); a stored None means the leg is unused."""
+    return set_legs(
+        *(get_entry_value(entry, k, d) for k, d in zip(_LEG_KEYS, _LEG_DEFAULTS))
+    )
+
+
+def unuse_repeated_legs(data: dict, options: dict) -> bool:
+    """Migration 2.10: a charger leg that repeats an earlier leg's phase was the
+    old way to say "this leg is unused" (a 1-phase charger stored L1=L2=L3, a
+    2-phase site stored L3=L1). Turn each into None, in place, in whichever
+    store holds the leg - the SAME phase mask results, so nothing changes at
+    runtime. Reads the effective values the way get_entry_value does (a key
+    never stored means the legacy default). Idempotent. An entry whose
+    repeats would leave a gap (L2 repeated, L3 distinct) is left alone: that
+    mapping is refused by the form and rewritten by the user, not guessed
+    here. Returns True when something changed."""
+    keys_present = [k for k in _LEG_KEYS if k in data or k in options]
+    if not keys_present and CONF_CHARGER_ID not in data:
+        return False
+
+    def effective(key, default):
+        store = options if key in options else data
+        return normalize_optional_entity(store.get(key, default))
+
+    legs = [effective(k, d) for k, d in zip(_LEG_KEYS, _LEG_DEFAULTS)]
+    if legs[0] is None:
+        return False
+    seen, new = set(), []
+    for phase in legs:
+        new.append(None if phase is None or phase in seen else phase)
+        seen.add(phase)
+    if new == legs or (new[1] is None and new[2] is not None):
+        return False
+    for key, before, after in zip(_LEG_KEYS, legs, new):
+        if before != after:
+            (options if key in options else data)[key] = after
+    return True
+
+
 def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> None:
     """
     Validate charger settings.
@@ -207,6 +268,22 @@ def validate_charger_settings(data: dict[str, any], errors: dict[str, str]) -> N
             errors["base"] = "invalid_current"
         elif min_current > max_current:
             errors["base"] = "min_exceeds_max"
+
+    # The phase mapping: legs are contiguous, and no two legs of one charger
+    # share a site phase (that would book the full per-leg current on a phase
+    # once per leg). A 1-phase charger is L1 only, 2-phase L1+L2.
+    l1, l2, l3 = (data.get(key) or None for key in _LEG_KEYS)
+    if l3 and not l2:
+        errors[CONF_CHARGER_L3_PHASE] = "charger_phase_gap"
+        return
+    seen = []
+    for key, phase in zip(_LEG_KEYS, (l1, l2, l3)):
+        if not phase:
+            break
+        if phase in seen:
+            errors[key] = "charger_phase_duplicate"
+            return
+        seen.append(phase)
 
 
 def validate_offgrid_battery_requirement(

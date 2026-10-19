@@ -20,7 +20,7 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 
 **Versioning** - `manifest.json` carries the version being worked on, not the last one released: the first change after a release opens its `RELEASE_NOTES.md` section and bumps the manifest to match in the same commit, so every pre-release built from `dev` is named after the release it leads to (`2.1.4-dev.<timestamp>`, never `2.1.3-dev` after 2.1.3 shipped). A merge to `main` then releases that version (2026-09-25).
 
-**Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 9); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
+**Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 10); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 

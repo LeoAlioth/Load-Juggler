@@ -388,15 +388,15 @@
                     "evse_minimum_charge_current": "Minimum charge current",
                     "evse_maximum_charge_current": "Maximum charge current",
                     "charger_l1_phase": "Charger L1 → site phase",
-                    "charger_l2_phase": "Charger L2 → site phase",
-                    "charger_l3_phase": "Charger L3 → site phase"
+                    "charger_l2_phase": "Charger L2 → site phase (optional)",
+                    "charger_l3_phase": "Charger L3 → site phase (optional)"
                 },
                 "data_description": {
                     "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual - most chargers support 6A. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
                     "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
                     "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
-                    "charger_l2_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
-                    "charger_l3_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits."
+                    "charger_l2_phase": "Leave empty if the charger has no L2 (a 1-phase charger uses L1 only).",
+                    "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger)."
                 }
             },
             "charger_timing": {
@@ -499,6 +499,8 @@
             "no_loads_available": "No loads available on this hub. Add chargers or smart loads first.",
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
+            "charger_phase_duplicate": "Two legs of one charger cannot be on the same site phase. Leave an unused leg empty (a 1-phase charger uses L1 only, a 2-phase charger L1 and L2).",
+            "charger_phase_gap": "L3 needs L2. A 2-phase charger uses L1 and L2; leave L3 empty.",
             "entity_id_in_use": "This entity ID is already used by another Load Juggler device - choose a unique one.",
             "invalid_unit": "Sensor unit mismatch - check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
             "unknown": "An unknown error occurred",
@@ -519,6 +521,8 @@
             "no_members_selected": "Please select at least one load for this circuit group.",
             "invalid_current": "Charge current values must be greater than zero.",
             "min_exceeds_max": "Minimum charge current cannot exceed maximum charge current.",
+            "charger_phase_duplicate": "Two legs of one charger cannot be on the same site phase. Leave an unused leg empty (a 1-phase charger uses L1 only, a 2-phase charger L1 and L2).",
+            "charger_phase_gap": "L3 needs L2. A 2-phase charger uses L1 and L2; leave L3 empty.",
             "battery_required_no_cts": "This hub has no grid CT sensors, so it runs off-grid. One of its inverters needs both a battery SOC entity and a battery power entity.",
             "ocpp_device_not_usable": "That device has no usable OCPP charger sensors. Pick the device the OCPP integration created for the charger - it needs a current import sensor plus a current offered or power offered sensor.",
             "invalid_unit": "Sensor unit mismatch - check that you selected the correct entity (current sensors: A, power sensors: W/kW, battery SOC: %, battery voltage: V).",
@@ -920,15 +924,15 @@
                     "evse_minimum_charge_current": "Minimum charge current",
                     "evse_maximum_charge_current": "Maximum charge current",
                     "charger_l1_phase": "Charger L1 → site phase",
-                    "charger_l2_phase": "Charger L2 → site phase",
-                    "charger_l3_phase": "Charger L3 → site phase"
+                    "charger_l2_phase": "Charger L2 → site phase (optional)",
+                    "charger_l3_phase": "Charger L3 → site phase (optional)"
                 },
                 "data_description": {
                     "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual - most chargers support 6A. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
                     "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
                     "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
-                    "charger_l2_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
-                    "charger_l3_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits."
+                    "charger_l2_phase": "Leave empty if the charger has no L2 (a 1-phase charger uses L1 only).",
+                    "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger)."
                 }
             },
             "charger_timing": {

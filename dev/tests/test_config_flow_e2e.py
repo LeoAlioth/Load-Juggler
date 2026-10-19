@@ -1579,7 +1579,7 @@ async def test_migration_seeds_grid_export_limit_in_one_pass(hass: HomeAssistant
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert entry.options[CONF_GRID_EXPORT_LIMIT] == 13000 + DEFAULT_EXCESS_TRIGGER_MARGIN
     assert entry.options[CONF_EXCESS_TRIGGER_MARGIN] == DEFAULT_EXCESS_TRIGGER_MARGIN
     # ...and the legacy key it was derived FROM is pruned in the same pass.
@@ -1612,7 +1612,7 @@ async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert not entry.options.get(CONF_GRID_EXPORT_LIMIT)
 
 
@@ -1650,7 +1650,7 @@ async def test_migration_renames_stored_charger_strings(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD == "load"
     # Both stores are renamed, and the legacy spelling is gone from each.
     assert entry.data[CONF_LOAD_PRIORITY] == 2
@@ -1684,7 +1684,7 @@ async def test_migration_of_stored_charger_strings_is_idempotent(
     assert await async_migrate_entry(hass, entry)
     assert dict(entry.data) == migrated_data
     assert dict(entry.options) == migrated_options
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
 
 
 async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
@@ -1708,7 +1708,7 @@ async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert dict(entry.data) == data_before
     assert dict(entry.options) == options_before
 
@@ -1732,7 +1732,7 @@ async def test_migrated_load_entry_sets_up(hass: HomeAssistant, mock_hub_entry):
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.minor_version == 9
+    assert entry.minor_version == 10
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
     assert entry.entry_id in hass.data[DOMAIN]["loads"]
     assert entry.entry_id in hass.data[DOMAIN]["load_allocations"]
@@ -2327,7 +2327,7 @@ async def test_migration_infers_features_and_drops_the_phantom_battery(
     for entry in (hub, pv_only, hybrid):
         entry.add_to_hass(hass)
         assert await async_migrate_entry(hass, entry)
-        assert entry.minor_version == 9
+        assert entry.minor_version == 10
 
     assert CONF_INVERTER_FEATURES not in hub.options
     assert pv_only.options[CONF_INVERTER_FEATURES] == ["solar"]
@@ -2817,7 +2817,7 @@ async def test_migration_turns_series_into_the_grid_tick(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, hybrid)
 
-    assert hybrid.minor_version == 9
+    assert hybrid.minor_version == 10
     assert hybrid.options[CONF_INVERTER_INPUT_IS_GRID] is True
     assert "wiring_topology" not in hybrid.options
     assert "wiring_topology" not in hybrid.data
@@ -2836,7 +2836,7 @@ async def test_migration_gives_parallel_no_input(hass: HomeAssistant, topology):
 
     assert await async_migrate_entry(hass, pv)
 
-    assert pv.minor_version == 9
+    assert pv.minor_version == 10
     assert "wiring_topology" not in pv.options
     assert not pv.options.get(CONF_INVERTER_INPUT_IS_GRID)
     assert CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID not in pv.options
@@ -2862,7 +2862,7 @@ async def test_migration_gives_the_tick_to_the_lowest_series_entry(
     assert not entries["inv_b"].options.get(CONF_INVERTER_INPUT_IS_GRID)
     for entry in entries.values():
         assert "wiring_topology" not in entry.options
-        assert entry.minor_version == 9
+        assert entry.minor_version == 10
 
     before = {k: dict(e.options) for k, e in entries.items()}
     for entry in entries.values():
@@ -2910,7 +2910,7 @@ async def test_migration_leaves_a_hubs_legacy_topology_for_the_import(
 
     assert await async_migrate_entry(hass, hub)
 
-    assert hub.minor_version == 9
+    assert hub.minor_version == 10
     assert hub.options["wiring_topology"] == "series"
     assert CONF_INVERTER_INPUT_IS_GRID not in hub.options
 
