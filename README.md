@@ -216,7 +216,7 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
    - Optionally configure battery sensors and inverter settings
 3. **Add a Load** (the integration auto-discovers OCPP chargers):
    - Confirm the detected EVSE or manually select entities
-   - For EVSE: set min/max current, phase count, and phase mapping
+   - For EVSE: set min/max current and the phase mapping (the legs you set are the charger's phases)
    - For smart plugs: select the plug switch entity and optional power sensor
 4. **Press the Reset OCPP EVSE button** on EVSE devices to clear any existing profiles
 5. Set each load's operating mode and you're ready to go
@@ -279,9 +279,8 @@ One entry per inverter - everything physically attached to it, including its PV 
 | EVSE current offered entity | OCPP current offered sensor | - |
 | OCPP device ID | Device ID for OCPP service calls | - |
 | Min/Max charge current | Charger operating range (A) | 6A / 16A |
-| Phases | Number of phases (1 or 3) | 3 |
 | Priority | Distribution priority (1=highest) | 1 |
-| L1/L2/L3 phase mapping | Which site phase each charger leg uses | A/B/C |
+| L1/L2/L3 phase mapping | Which site phase each charger leg uses. L1 is required; leave L2/L3 empty for a 1- or 2-phase charger. Two legs cannot share a phase | A/B/C |
 | Charge rate unit | Amps or Watts (auto-detected) | Auto |
 | Profile validity mode | Absolute (timestamp) or Relative (duration) | Absolute |
 | OCPP profile timeout | Profile validity duration (seconds) | 120 |

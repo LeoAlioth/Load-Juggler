@@ -388,15 +388,15 @@
                     "evse_minimum_charge_current": "Minimalni tok polnjenja",
                     "evse_maximum_charge_current": "Maksimalni tok polnjenja",
                     "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
-                    "charger_l2_phase": "L2 polnilne postaje → faza lokacije",
-                    "charger_l3_phase": "L3 polnilne postaje → faza lokacije"
+                    "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
+                    "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)"
                 },
                 "data_description": {
                     "evse_minimum_charge_current": "Najnižji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik - večina polnilnih postaj podpira 6 A. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
                     "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
                     "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
-                    "charger_l2_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
-                    "charger_l3_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah."
+                    "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
+                    "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna)."
                 }
             },
             "charger_timing": {
@@ -499,6 +499,8 @@
             "no_loads_available": "Na tem merilnem mestu ni na voljo nobenih porabnikov. Najprej dodajte polnilne postaje ali pametne porabnike.",
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
+            "charger_phase_duplicate": "Dve fazi iste polnilne postaje ne moreta biti na isti fazi lokacije. Neuporabljeno fazo pustite prazno (enofazna polnilna postaja uporablja samo L1, dvofazna L1 in L2).",
+            "charger_phase_gap": "L3 potrebuje L2. Dvofazna polnilna postaja uporablja L1 in L2; L3 pustite prazno.",
             "entity_id_in_use": "Ta ID entitete že uporablja druga naprava Load Juggler - izberite enoličen ID.",
             "invalid_unit": "Neujemanje enote senzorja - preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
             "unknown": "Prišlo je do neznane napake",
@@ -519,6 +521,8 @@
             "no_members_selected": "Izberite vsaj enega porabnika za to deljeno varovalko.",
             "invalid_current": "Vrednosti toka polnjenja morajo biti večje od nič.",
             "min_exceeds_max": "Minimalni tok polnjenja ne sme presegati maksimalnega toka.",
+            "charger_phase_duplicate": "Dve fazi iste polnilne postaje ne moreta biti na isti fazi lokacije. Neuporabljeno fazo pustite prazno (enofazna polnilna postaja uporablja samo L1, dvofazna L1 in L2).",
+            "charger_phase_gap": "L3 potrebuje L2. Dvofazna polnilna postaja uporablja L1 in L2; L3 pustite prazno.",
             "battery_required_no_cts": "To merilno mesto nima senzorjev tokovnih klešč (CT), zato deluje v otočnem načinu. Eden od njegovih razsmernikov potrebuje entiteto napolnjenosti baterije in entiteto moči baterije.",
             "ocpp_device_not_usable": "Ta naprava nima uporabnih senzorjev OCPP polnilne postaje. Izberite napravo, ki jo je za polnilno postajo ustvarila integracija OCPP - potrebuje senzor uvoženega toka ter senzor ponujenega toka ali ponujene moči.",
             "invalid_unit": "Neujemanje enote senzorja - preverite, ali ste izbrali pravo entiteto (senzorji toka: A, senzorji moči: W/kW, napolnjenost baterije: %, napetost baterije: V).",
@@ -920,15 +924,15 @@
                     "evse_minimum_charge_current": "Minimalni tok polnjenja",
                     "evse_maximum_charge_current": "Maksimalni tok polnjenja",
                     "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
-                    "charger_l2_phase": "L2 polnilne postaje → faza lokacije",
-                    "charger_l3_phase": "L3 polnilne postaje → faza lokacije"
+                    "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
+                    "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)"
                 },
                 "data_description": {
                     "evse_minimum_charge_current": "Najnižji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik - večina polnilnih postaj podpira 6 A. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
                     "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
                     "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
-                    "charger_l2_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
-                    "charger_l3_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah."
+                    "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
+                    "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna)."
                 }
             },
             "charger_timing": {

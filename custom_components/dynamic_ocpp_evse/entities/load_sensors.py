@@ -19,9 +19,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from ..const import (
-    CONF_CHARGER_L1_PHASE,
-    CONF_CHARGER_L2_PHASE,
-    CONF_CHARGER_L3_PHASE,
     CONF_CLIMATE_ENTITY_ID,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_STATION_CHARGE_SPEED_ENTITY_ID,
@@ -34,7 +31,7 @@ from ..const import (
     LOAD_RT_SUN_PROBE,
 )
 from ..control.status import hands_off_status, with_early_start
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, stored_legs
 from .. import units
 from .mixins import LoadEntityMixin, SiteCycleConsumerMixin
 from .readout import (
@@ -411,10 +408,7 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
             f"{entity_id}_phase_mask",
         )
         self._attr_native_value = "Idle"
-        l1 = config_entry.data.get(CONF_CHARGER_L1_PHASE, "A")
-        l2 = config_entry.data.get(CONF_CHARGER_L2_PHASE, "B")
-        l3 = config_entry.data.get(CONF_CHARGER_L3_PHASE, "C")
-        self._wiring_mask = "".join(sorted({l1, l2, l3}))
+        self._wiring_mask = "".join(sorted(set(stored_legs(config_entry))))
 
     @property
     def extra_state_attributes(self):

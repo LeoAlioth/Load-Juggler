@@ -86,6 +86,8 @@ from .const import (
 )
 from .helpers import (
     get_entry_value,
+    stored_legs,
+    unuse_repeated_legs,
     LEGACY_WIRING_TOPOLOGY,
     infer_inverter_features,
     legacy_topology_to_input,
@@ -410,6 +412,21 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         )
         _LOGGER.info("Updated minor version to 9")
 
+    # 2.10: a charger's phase count is the number of legs that are SET - an
+    # unused leg is None. A leg that repeated an earlier leg's phase (the old
+    # way to mark it unused) becomes None; the phase mask is unchanged.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 10:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        if data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD and unuse_repeated_legs(
+            data, options
+        ):
+            _LOGGER.info("%s: repeated charger legs stored as unused", entry.title)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=10
+        )
+        _LOGGER.info("Updated minor version to 10")
+
     return True
 
 
@@ -435,16 +452,7 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
         except (TypeError, ValueError):
             _LOGGER.debug("Ignoring non-numeric %s: %r", CONF_PHASES, configured)
 
-    mapped = {
-        get_entry_value(entry, key, None)
-        for key in (
-            CONF_CHARGER_L1_PHASE,
-            CONF_CHARGER_L2_PHASE,
-            CONF_CHARGER_L3_PHASE,
-        )
-    }
-    mapped.discard(None)
-    return max(1, len(mapped))
+    return max(1, len(stored_legs(entry)))
 
 
 async def async_setup(hass: HomeAssistant, config: dict):

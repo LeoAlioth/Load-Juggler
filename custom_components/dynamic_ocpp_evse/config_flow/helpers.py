@@ -723,13 +723,12 @@ def _check_power_window(data: dict, errors: dict) -> None:
 
 
 def _fill_hidden_legs(data: dict, hub_phases: int) -> None:
-    """Map the charger legs a site with fewer phases hides onto L1's phase -
-    in place - so the stored mask matches the phases the charger can use."""
-    l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
-    if hub_phases < 2:
-        data[CONF_CHARGER_L2_PHASE] = l1
-    if hub_phases < 3:
-        data[CONF_CHARGER_L3_PHASE] = l1
+    """Store every unused charger leg as None - in place. A leg is unused when
+    the form left it blank or the site has too few phases to show it; the
+    stored None (not a missing key) is what overrides an earlier mapping."""
+    for number, key in ((2, CONF_CHARGER_L2_PHASE), (3, CONF_CHARGER_L3_PHASE)):
+        if hub_phases < number or not data.get(key):
+            data[key] = None
 
 
 def _hub_phase_count(hass, hub_entry_id: str | None) -> int:

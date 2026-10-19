@@ -19,6 +19,8 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.selector import selector
 from ..const import (
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
     DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
@@ -171,7 +173,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
     VERSION = 2
-    MINOR_VERSION = 9
+    MINOR_VERSION = 10
 
     def __init__(self):
         self._data = {}
@@ -1192,6 +1194,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         hub_phases = _hub_phase_count(self.hass, self._data.get(CONF_HUB_ENTRY_ID))
 
         if user_input is not None:
+            # A leg the form omitted is unused - not whatever an earlier
+            # (refused) submit left in the pending data.
+            self._data.update({CONF_CHARGER_L2_PHASE: None, CONF_CHARGER_L3_PHASE: None})
             self._data.update(user_input)
             _fill_hidden_legs(self._data, hub_phases)
             validate_charger_settings(self._data, errors)
