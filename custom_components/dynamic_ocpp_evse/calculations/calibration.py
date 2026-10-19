@@ -250,6 +250,35 @@ def hourly_offsets(series, overall, min_wh=GAIN_MIN_HOUR_WH,
     return offsets
 
 
+# The gain is applied only once the series spans this many distinct days: one
+# day's ratio is weather, not calibration. Below it the correction is exactly 1.0.
+GAIN_APPLY_MIN_DAYS = 3
+
+
+def applied_gain(gain, days, min_days=GAIN_APPLY_MIN_DAYS,
+                 low=GAIN_CLAMP_LOW, high=GAIN_CLAMP_HIGH):
+    """The multiplier the clip integral applies to one array's forecast.
+
+    EXACTLY 1.0 wherever the observer has nothing to say: no gain, or fewer than
+    ``min_days`` days behind it (a fresh restart, a restore that failed, an
+    off-grid site whose pack is full all day - dev/TODO.md JUG-17). Never below
+    the clamp, whatever the stored figure says.
+
+    Pure function - unit-testable.
+    """
+    if gain is None or days is None or days < min_days:
+        return 1.0
+    return min(high, max(low, float(gain)))
+
+
+def scale_series(series, gain):
+    """``series`` (``{block start: watts}``) times ``gain``; the same object when
+    the gain is 1.0, so an uncalibrated array is byte-identical to before."""
+    if not series or gain == 1.0:
+        return series
+    return {ts: w * gain for ts, w in series.items()}
+
+
 def series_days(series):
     """How many distinct dates carry comparable energy in the series."""
     return len({b.get("t", "")[:10] for b in (series or []) if float(b.get("f", 0.0)) > 0})

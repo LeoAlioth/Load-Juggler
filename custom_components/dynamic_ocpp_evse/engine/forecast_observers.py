@@ -1,17 +1,15 @@
-"""The two forecast observers - accumulate, roll over daily, publish nothing else.
+"""The two forecast observers - accumulate, roll over daily, publish.
 
-Observe-only by construction: these functions return figures for the engine to
-publish and never touch the advice. What they measure, and why each is shaped
+The gain observer's figure is applied to the clip integral by
+``engine/hub_result._compute_forecast_advice`` (``gain_to_apply``); the
+peakiness observer is observe-only. What they measure, and why each is shaped
 the way it is, lives in ``calculations/calibration.py``; this module owns only
 the per-cycle bookkeeping that a pure function cannot.
 
-STATE LIVES IN ``hub_runtime`` and is therefore lost on a restart, which is a
-deliberate limitation of the observe phase rather than an oversight. The datum
-that matters is each DAY's ratio, and that is published as the sensor's own
-state, so the recorder keeps the history whatever the process does - the running
-average is a convenience on top. Applying a learned gain later needs it to
-survive restarts, and that is where ``helpers.storage.Store`` comes in (see
-dev/TODO.md); an observer does not.
+STATE LIVES IN ``hub_runtime``. The gain's series is carried across restarts by
+the accuracy sensor's restore data (``gain_state`` / ``restore_gain_state``);
+peakiness and the clipped total start from nothing after a restart, their
+daily figures being kept by the recorder as the sensors' own states.
 """
 
 import logging
@@ -19,6 +17,7 @@ import logging
 from ..calculations.calibration import (
     GAIN_CLAMP_HIGH,
     GAIN_CLAMP_LOW,
+    applied_gain,
     block_start,
     clip_pair,
     clipped_now,
@@ -154,6 +153,16 @@ def _recompute_gain(state):
     state["gain"] = 1.0 if overall is None else overall
     state["hourly"] = hourly_offsets(state["series"], state["gain"]) if overall else {}
     state["days"] = series_days(state["series"])
+
+
+def gain_to_apply(hub_runtime, entry_id):
+    """The gain the clip integral applies to this inverter's array right now:
+    the observer's own figure (``applied_gain`` says when it counts), 1.0 with
+    no observer state."""
+    state = (hub_runtime or {}).get(_RT_GAIN, {}).get(entry_id)
+    if not state:
+        return 1.0
+    return applied_gain(state.get("gain"), state.get("days"))
 
 
 def gain_state(hub_runtime, entry_id):
