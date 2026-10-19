@@ -76,6 +76,13 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
+    CONF_SG_NOMINAL_POWER,
+    CONF_SG_POWER_ENTITY_ID,
+    DEFAULT_SG_NOMINAL_POWER,
+    EXCESS_URGENCY_TIER,
+    SG_RT_MEMORY,
+    SG_RT_NORMAL_DRAW,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -105,6 +112,7 @@ from ..const import (
     TANK_MODE_FREEZE_PROTECTION,
     TANK_MODE_NORMAL,
 )
+from ..calculations import sg_ready
 from ..helpers import get_entry_value, stored_legs
 from ..ocpp_discovery import ocpp_connector_status_entity
 from ..registry import get_loads_for_hub, get_groups_for_hub
@@ -1359,6 +1367,80 @@ def _build_hot_water_tank_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
+def _build_sg_ready_load(hass, entry, voltage, load_entity_id, priority):
+    """Build a LoadContext for an SG Ready heat pump (JUG-24).
+
+    To the allocation it is a binary EXCESS load whose rating is the nominal
+    extra draw it adds above Normal in Recommended / Force - so it joins the
+    early-start group, the Excess pool and circuit groups like any such load,
+    and "the allocation granted it" is its Force condition
+    (engine/hub_calculation._apply_sg_ready). Its Normal-state draw is part of
+    the household and is NOT a managed draw: the load's measured draw is only
+    what it pulls above Normal, and only while the state machine has it in
+    Recommended or Force.
+
+    The Normal draw is learned from the optional power sensor while the pump is
+    in Normal (held while the sensor is unavailable); without a reading it is
+    the nominal power. The state is the one the state machine is in, a cycle
+    stale - the honest reading, as for a tank's setpoint label.
+    """
+    load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
+    nominal = float(get_entry_value(entry, CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER) or 0)
+    connected_to_phase = get_entry_value(entry, CONF_CONNECTED_TO_PHASE, "A") or "A"
+    phases = len(connected_to_phase)
+    equivalent_current = max(0.1, nominal / (voltage * phases)) if voltage > 0 else 0
+
+    memory = load_rt.get(SG_RT_MEMORY)
+    state = memory.state if memory is not None else sg_ready.NORMAL
+
+    power_entity = get_entry_value(entry, CONF_SG_POWER_ENTITY_ID, None)
+    power = None
+    if power_entity:
+        raw = _read_entity(hass, power_entity, None, unit="W")
+        if raw is _UNAVAILABLE or raw is None:
+            power = load_rt.get("_sg_last_power")  # held while unavailable
+        else:
+            power = float(raw)
+            load_rt["_sg_last_power"] = power
+    if power is not None and state == sg_ready.NORMAL and power > 0:
+        load_rt[SG_RT_NORMAL_DRAW] = power
+
+    if state in (sg_ready.RECOMMENDED, sg_ready.FORCE):
+        if power is not None:
+            baseline = load_rt.get(SG_RT_NORMAL_DRAW)
+            extra_w = max(0.0, power - (baseline or 0.0)) if baseline is not None else nominal
+        else:
+            extra_w = nominal  # the fixed value until a first reading
+    else:
+        extra_w = 0.0
+
+    load = LoadContext(
+        load_id=entry.entry_id,
+        entity_id=load_entity_id,
+        min_current=equivalent_current,
+        max_current=equivalent_current,
+        phases=phases,
+        priority=priority,
+        active_phases_mask=connected_to_phase,
+        # Always active, like a plug: an idle pump must still be offered the grant.
+        connector_status="Charging",
+        dynamic_control=load_rt.get("dynamic_control", True),
+        device_type=DEVICE_TYPE_SG_READY,
+        operating_mode="SG Ready",
+        mode_behavior=BEHAVIOR_BINARY_EXCESS,
+        mode_priority=EXCESS_URGENCY_TIER,
+        rated_current=equivalent_current,
+        excess_claim_current=equivalent_current,
+        **_phase_draw(extra_w, connected_to_phase, voltage),
+    )
+    _LOGGER.debug(
+        "  SG Ready %s [%s]: +%.0fW on %s prio=%d (Normal draw %s)",
+        load_entity_id, state, extra_w, connected_to_phase, priority,
+        load_rt.get(SG_RT_NORMAL_DRAW),
+    )
+    return load
+
+
 def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
                        settle_seconds=SETTLE_DRAW_SECONDS, pacing=None):
     """Build LoadContext objects for all loads and add them to the site.
@@ -1380,6 +1462,7 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
         DEVICE_TYPE_HOT_WATER_TANK: _build_hot_water_tank_load,
         DEVICE_TYPE_ROOM_THERMOSTAT: _build_hot_water_tank_load,   # the same load; the LoadContext says tank
         DEVICE_TYPE_POWER_STATION: _build_power_station_load,
+        DEVICE_TYPE_SG_READY: _build_sg_ready_load,
     }
     # Any other type is an EVSE, the integration's original device.
     build_evse = partial(_build_evse_load, settle_seconds=settle_seconds)

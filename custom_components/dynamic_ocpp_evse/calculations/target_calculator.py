@@ -410,6 +410,58 @@ def _enforce_circuit_groups(site: SiteContext) -> None:
             _LOGGER.debug("Circuit group '%s': all members within %.0fA limit", group.name, group.current_limit)
 
 
+def _grid_basis(site: SiteContext):
+    """``(rating, consumption)`` the grid half is sized from, or None when the
+    site has no grid supply at all (off-grid without a connected generator)."""
+    rating, consumption = site.main_breaker_rating, site.consumption
+    if site.is_off_grid:
+        if site.generator_rating <= 0 or site.generator_current is None:
+            return None
+        # Only on phases the site has: the reading cannot add one.
+        rating, consumption = site.generator_rating, PhaseValues(*(
+            g if c is not None else None
+            for g, c in zip(
+                (site.generator_current.a, site.generator_current.b, site.generator_current.c),
+                (site.consumption.a, site.consumption.b, site.consumption.c),
+            )
+        ))
+    return rating, consumption
+
+
+def grid_headroom_w(site: SiteContext, mask: str) -> Optional[float]:
+    """Signed grid headroom (W) for a load on the phases in ``mask``: positive
+    is what the breaker (less the power buffer) and the max import power still
+    allow, NEGATIVE is the shortage - the household alone is over a limit, with
+    every managed load already off (``site.consumption`` has our draws taken
+    out). The same arithmetic as ``_calculate_grid_limit``, unclamped.
+
+    A load spread over n phases is limited by its tightest phase times n.
+    None when there is no grid limit to judge by (off-grid): nothing can be
+    overloaded then. Read by the SG Ready heat pump (engine/hub_calculation.
+    _apply_sg_ready) for its Block and its release.
+    """
+    basis = _grid_basis(site)
+    if basis is None or site.voltage <= 0:
+        return None
+    rating, consumption = basis
+    buffer_per_phase = 0.0
+    if site.power_buffer and site.power_buffer > 0:
+        buffer_per_phase = (site.power_buffer / site.voltage) / (site.num_phases or 1)
+    phases = {
+        letter: rating - cons - buffer_per_phase
+        for letter, cons in zip("ABC", (consumption.a, consumption.b, consumption.c))
+        if cons is not None and letter in (mask or "")
+    }
+    if not phases:
+        return None
+    headroom = min(phases.values()) * len(phases) * site.voltage
+    if site.max_grid_import_power is not None:
+        headroom = min(
+            headroom, site.max_grid_import_power - consumption.total * site.voltage
+        )
+    return headroom
+
+
 def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     """
     Calculate grid power limit based on main breaker rating and consumption.
@@ -425,18 +477,10 @@ def _calculate_grid_limit(site: SiteContext) -> PhaseConstraints:
     # already hands them back whole, ``_off_grid_held_supply``), so the room is
     # what the generator has left. Nothing can be exported to it, which the
     # off-grid gates elsewhere already say.
-    rating, consumption = site.main_breaker_rating, site.consumption
-    if site.is_off_grid:
-        if site.generator_rating <= 0 or site.generator_current is None:
-            return PhaseConstraints.zeros()
-        # Only on phases the site has: the reading cannot add one.
-        rating, consumption = site.generator_rating, PhaseValues(*(
-            g if c is not None else None
-            for g, c in zip(
-                (site.generator_current.a, site.generator_current.b, site.generator_current.c),
-                (site.consumption.a, site.consumption.b, site.consumption.c),
-            )
-        ))
+    basis = _grid_basis(site)
+    if basis is None:
+        return PhaseConstraints.zeros()
+    rating, consumption = basis
 
     # Power buffer (W) is a safety margin kept unused on the grid. Spread it
     # across the phases as an extra per-phase deduction so it is honored on the

@@ -62,6 +62,7 @@ from ..const import (
     DEVICE_TYPE_INVERTER,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -74,6 +75,7 @@ from ..const import (
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
 )
+from ..const.sg_ready import CONF_SG_RELAY_1_ENTITY_ID, CONF_SG_RELAY_2_ENTITY_ID
 from ..detection_patterns import PHASE_PATTERNS, PLUG_POWER_MONITOR
 from ..helpers import (
     HUB_INVERTER_IMPORT_FIELDS,
@@ -99,6 +101,7 @@ from .helpers import (
     _SOLAR_UNIT_MAP,
     _STATION_ENTITY_KEYS,
     _TANK_ENTITY_KEYS,
+    _SG_READY_ENTITY_KEYS,
     _auto_detect_entity,
     _compose_entry_title,
     _detect_meter_value_interval,
@@ -139,6 +142,7 @@ from .schemas import (
     _build_inverter_control_schema,
     _plug_schema,
     _power_station_schema,
+    _sg_ready_schema,
     _inverter_config_schema,
     _inverter_features_schema,
     _num,
@@ -152,6 +156,7 @@ _DEVICE_TYPE_BY_SETUP_TYPE = {
     "tank": DEVICE_TYPE_HOT_WATER_TANK,
     "room": DEVICE_TYPE_ROOM_THERMOSTAT,
     "station": DEVICE_TYPE_POWER_STATION,
+    "sg_ready": DEVICE_TYPE_SG_READY,
     "group": DEVICE_TYPE_GROUP,
     "inverter": DEVICE_TYPE_INVERTER,
 }
@@ -232,6 +237,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             options.append({"value": "room", "label": "Add Room Thermostat (heater or heat pump)"})
             options.append(
                 {"value": "station", "label": "Add Portable Power Station"}
+            )
+            options.append(
+                {"value": "sg_ready", "label": "Add Heat Pump (SG Ready)"}
             )
             options.append(
                 {"value": "inverter", "label": "Add Inverter / Home Battery"}
@@ -415,6 +423,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             DEVICE_TYPE_HOT_WATER_TANK: self.async_step_hot_water_tank_config,
             DEVICE_TYPE_ROOM_THERMOSTAT: self.async_step_room_thermostat_config,
             DEVICE_TYPE_POWER_STATION: self.async_step_power_station_config,
+            DEVICE_TYPE_SG_READY: self.async_step_sg_ready_config,
             DEVICE_TYPE_GROUP: self.async_step_group_config,
             DEVICE_TYPE_INVERTER: self.async_step_inverter_features,
         }.get(self._data.get(CONF_DEVICE_TYPE), self.async_step_discover_chargers)
@@ -573,6 +582,23 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             defaults={CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1},
             entity_keys=_TANK_ENTITY_KEYS,
             static_keys=(CONF_CLIMATE_ENTITY_ID,),
+        )
+
+    async def async_step_sg_ready_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """SG Ready heat pump configuration step."""
+        return await self._async_create_load_page(
+            user_input,
+            step_id="sg_ready_config",
+            schema=_sg_ready_schema,
+            device_type=DEVICE_TYPE_SG_READY,
+            type_label="SG Ready Heat Pump",
+            default_name="SG Ready Heat Pump",
+            default_entity_id="lj_sg_ready_heat_pump",
+            defaults={CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1},
+            entity_keys=_SG_READY_ENTITY_KEYS,
+            static_keys=(CONF_SG_RELAY_1_ENTITY_ID, CONF_SG_RELAY_2_ENTITY_ID),
         )
 
     async def async_step_power_station_config(

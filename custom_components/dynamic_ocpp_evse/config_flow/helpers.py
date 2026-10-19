@@ -91,6 +91,19 @@ from ..const import (
     INVERTER_FEATURE_BATTERY_CONTROL,
     INVERTER_FEATURE_SOLAR,
 )
+from ..const.sg_ready import (
+    CONF_SG_MAX_BLOCK_TIME,
+    CONF_SG_MAX_BLOCKS_PER_DAY,
+    CONF_SG_MIN_STATE_TIME,
+    CONF_SG_NOMINAL_POWER,
+    CONF_SG_POWER_ENTITY_ID,
+    CONF_SG_RELAY_1_ENTITY_ID,
+    CONF_SG_RELAY_2_ENTITY_ID,
+    DEFAULT_SG_MAX_BLOCK_TIME,
+    DEFAULT_SG_MAX_BLOCKS_PER_DAY,
+    DEFAULT_SG_MIN_STATE_TIME,
+    DEFAULT_SG_NOMINAL_POWER,
+)
 from ..detection_patterns import PHASE_PATTERNS
 from ..energy_prefs import SiteModel
 from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
@@ -273,6 +286,7 @@ _PACING_ENTITY_KEYS = [
 ]
 _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
 _TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
+_SG_READY_ENTITY_KEYS = [CONF_SG_POWER_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
 _STATION_ENTITY_KEYS = [
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -300,6 +314,7 @@ def _normalize_optional_inputs(
         + _PACING_ENTITY_KEYS
         + _PLUG_ENTITY_KEYS
         + _TANK_ENTITY_KEYS
+        + _SG_READY_ENTITY_KEYS
     ):
         if key in normalized:
             normalized[key] = normalize_optional_entity(normalized.get(key))

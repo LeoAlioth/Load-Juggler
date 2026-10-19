@@ -214,6 +214,19 @@ from ..const import (
     INVERTER_FEATURE_SOLAR,
     INVERTER_FEATURES,
 )
+from ..const.sg_ready import (
+    CONF_SG_MAX_BLOCK_TIME,
+    CONF_SG_MAX_BLOCKS_PER_DAY,
+    CONF_SG_MIN_STATE_TIME,
+    CONF_SG_NOMINAL_POWER,
+    CONF_SG_POWER_ENTITY_ID,
+    CONF_SG_RELAY_1_ENTITY_ID,
+    CONF_SG_RELAY_2_ENTITY_ID,
+    DEFAULT_SG_MAX_BLOCK_TIME,
+    DEFAULT_SG_MAX_BLOCKS_PER_DAY,
+    DEFAULT_SG_MIN_STATE_TIME,
+    DEFAULT_SG_NOMINAL_POWER,
+)
 from ..helpers import normalize_optional_entity
 from .helpers import (
     _CURRENT_UNITS,
@@ -1254,6 +1267,98 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                         ),
                     ),
                     bool,
+                ),
+            ]
+        )
+    )
+
+
+def _sg_ready_schema(defaults: dict | None = None) -> vol.Schema:
+    """Build schema for an SG Ready heat pump: its two relays, the extra power it
+    adds above Normal, the optional power sensor, and the timing limits."""
+    defaults = defaults or {}
+    power_selector = selector(
+        {
+            "entity": {
+                "domain": ["sensor", "input_number"],
+                "filter": [
+                    {"domain": "sensor", "device_class": "power"},
+                    {"domain": "input_number"},
+                ],
+            }
+        }
+    )
+    return vol.Schema(
+        dict(
+            [
+                (
+                    vol.Required(
+                        CONF_SG_RELAY_1_ENTITY_ID,
+                        default=defaults.get(CONF_SG_RELAY_1_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": "switch"}}),
+                ),
+                (
+                    vol.Required(
+                        CONF_SG_RELAY_2_ENTITY_ID,
+                        default=defaults.get(CONF_SG_RELAY_2_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": "switch"}}),
+                ),
+                _num(
+                    CONF_SG_NOMINAL_POWER, defaults, DEFAULT_SG_NOMINAL_POWER,
+                    100, 25000, 100, "W", required=True,
+                ),
+                (
+                    vol.Required(
+                        CONF_CONNECTED_TO_PHASE,
+                        default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+                    ),
+                    selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
+                ),
+                _num(
+                    CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY,
+                    1, 10, 1, None, required=True,
+                ),
+                (
+                    _optional_entity_field(CONF_SG_POWER_ENTITY_ID, defaults),
+                    power_selector,
+                ),
+                _num(
+                    CONF_SG_MIN_STATE_TIME, defaults, DEFAULT_SG_MIN_STATE_TIME,
+                    1, 60, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_SG_MAX_BLOCK_TIME, defaults, DEFAULT_SG_MAX_BLOCK_TIME,
+                    10, 480, 5, "min", required=True,
+                ),
+                _num(
+                    CONF_SG_MAX_BLOCKS_PER_DAY, defaults, DEFAULT_SG_MAX_BLOCKS_PER_DAY,
+                    1, 10, 1, None, required=True,
+                ),
+                (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    power_selector,
+                ),
+                _num(
+                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
                 ),
             ]
         )

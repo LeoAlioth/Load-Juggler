@@ -19,7 +19,7 @@ def stamp_command(sensor, now_mono):
     sensor._last_command_time = now_mono
 
 
-async def call_device(hass, load_rt, domain, service, data, field, value):
+async def call_device(hass, load_rt, domain, service, data, field, value, blocking=False):
     """A service call to a load's device, made under a Context of our own and
     remembered with what it asks for - ``field`` is where the device's state
     shows it ("state", or an attribute) - so manual_change can tell Load
@@ -29,7 +29,7 @@ async def call_device(hass, load_rt, domain, service, data, field, value):
     asked = load_rt.setdefault("_commanded", {}).setdefault((data["entity_id"], field), {})
     asked.pop(value, None)
     asked[value] = time.monotonic()  # the newest last: the command in force
-    await hass.services.async_call(domain, service, data, blocking=False, context=context)
+    await hass.services.async_call(domain, service, data, blocking=blocking, context=context)
 
 
 def _field(state, field):

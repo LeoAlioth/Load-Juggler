@@ -43,6 +43,7 @@ def behaviour_type(device_type):
     from it (kWh per degree of a room, not of water) differ."""
     return DEVICE_TYPE_HOT_WATER_TANK if device_type == DEVICE_TYPE_ROOM_THERMOSTAT else device_type
 DEVICE_TYPE_POWER_STATION = "power_station"
+DEVICE_TYPE_SG_READY = "sg_ready"
 DEVICE_TYPE_GROUP = "group"
 DEVICE_TYPE_INVERTER = "inverter"
 

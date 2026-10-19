@@ -498,6 +498,41 @@
                     "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči.",
                     "tank_prioritize_below_normal": "Ko je vklopljeno, se bojler v načinu Prednost sončne energije, ki je padel pod normalno temperaturo, povzpne v nujnostni razred Normalno, zato pri razdeljevanju moči premaga druge porabnike s prednostjo sonca. Vir moči se ne spremeni - bojler še vedno nikoli ne uporablja omrežja in se še vedno ustavi pri najnižjem SOC baterije."
                 }
+            },
+            "sg_ready_config": {
+                "title": "Nastavitev toplotne črpalke SG Ready",
+                "description": "Nastavite toplotno črpalko z vhodi SG Ready, ki jo preklapljata dva releja (to zmore Shelly z dvema relejema). Črpalka nima načina delovanja: Load Juggler jo da v stanje Zapora ob preobremenitvi, ki jo doseže, Vsiljeno ob presežku, Priporočeno ob napovedanem presežku ali ko je baterija nad ciljno napolnjenostjo, sicer Običajno. Z obema relejema odprtima je črpalka v stanju Običajno, zato se releja, ki izgubi napajanje ali Home Assistant, vrneta v Običajno.",
+                "data": {
+                    "name": "Ime za to napravo",
+                    "entity_id": "Predpona ID entitete",
+                    "connected_to_phase": "Priključena na fazo",
+                    "load_priority": "Prioriteta (1 = najvišja)",
+                    "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
+                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
+                    "sg_relay_1_entity_id": "Stikalo releja 1 (sklenjen sam: Zapora)",
+                    "sg_relay_2_entity_id": "Stikalo releja 2 (sklenjen sam: Priporočeno)",
+                    "sg_nominal_power": "Dodatna moč nad običajnim delovanjem",
+                    "sg_power_entity_id": "Senzor moči (neobvezno)",
+                    "sg_min_state_time": "Najkrajši čas stanja",
+                    "sg_max_block_time": "Najdaljši čas zapore",
+                    "sg_max_blocks_per_day": "Največ zapor na dan"
+                },
+                "data_description": {
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power).",
+                    "connected_to_phase": "Na katero električno fazo (faze) je črpalka priključena. Po teh fazah se presojata zapora in sprostitev.",
+                    "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                    "sg_relay_1_entity_id": "Stikalo prvega releja. Sklenjen sam pomeni stanje 1, Zapora (črpalka je izklopljena); skupaj z relejem 2 pomeni stanje 4, Vsiljeno.",
+                    "sg_relay_2_entity_id": "Stikalo drugega releja. Sklenjen sam pomeni stanje 3, Priporočeno; skupaj z relejem 1 pomeni stanje 4, Vsiljeno. Oba odprta pomenita stanje 2, Običajno.",
+                    "sg_nominal_power": "Dodatna moč, za katero se predpostavi, da jo črpalka v stanjih Priporočeno in Vsiljeno porabi nad običajno. To za to napravo štejeta vnaprejšnja poraba viška in bazen presežka. Poraba črpalke v stanju Običajno je del hiše.",
+                    "sg_power_entity_id": "Neobvezen senzor (W ali kW) s skupno močjo črpalke. Dokler je črpalka v stanju Običajno, se njegovo branje vzame kot njena običajna poraba; v stanjih Priporočeno in Vsiljeno se poraba nad tem šteje kot upravljana. Zapora se sprosti le, ko prostor pokrije običajno porabo. Brez njega se za oboje uporabi zgornja dodatna moč.",
+                    "sg_min_state_time": "Vsako stanje traja vsaj toliko (standardno 10-minutno pravilo, uporabljeno za vsa štiri stanja).",
+                    "sg_max_block_time": "Ena zapora traja največ toliko. Nato gre črpalka v Običajno, preobremenitev pa prepustimo drugim porabnikom in lastnim omejitvam sistema.",
+                    "sg_max_blocks_per_day": "V katerihkoli drsečih 24 urah se začne največ toliko zapor. Ko so porabljene, gre črpalka namesto tega v Običajno, v dnevnik pa se zapiše opozorilo."
+                }
             }
         },
         "error": {
@@ -1039,6 +1074,41 @@
                 "menu_options": {
                     "change_type_confirm": "Da, zamenjaj",
                     "init": "← Nazaj na meni"
+                }
+            },
+            "sg_ready": {
+                "title": "Posodobi nastavitve toplotne črpalke SG Ready",
+                "description": "Nastavite toplotno črpalko z vhodi SG Ready, ki jo preklapljata dva releja (to zmore Shelly z dvema relejema). Črpalka nima načina delovanja: Load Juggler jo da v stanje Zapora ob preobremenitvi, ki jo doseže, Vsiljeno ob presežku, Priporočeno ob napovedanem presežku ali ko je baterija nad ciljno napolnjenostjo, sicer Običajno. Z obema relejema odprtima je črpalka v stanju Običajno, zato se releja, ki izgubi napajanje ali Home Assistant, vrneta v Običajno.",
+                "data": {
+                    "name": "Ime za to napravo",
+                    "entity_id": "Predpona ID entitete",
+                    "connected_to_phase": "Priključena na fazo",
+                    "load_priority": "Prioriteta (1 = najvišja)",
+                    "early_room_entity_id": "Prostor za porabo danes (neobvezno)",
+                    "early_rate_entity_id": "Moč sprejema (neobvezno)",
+                    "manual_override_timeout": "Časovna omejitev ročnega upravljanja",
+                    "sg_relay_1_entity_id": "Stikalo releja 1 (sklenjen sam: Zapora)",
+                    "sg_relay_2_entity_id": "Stikalo releja 2 (sklenjen sam: Priporočeno)",
+                    "sg_nominal_power": "Dodatna moč nad običajnim delovanjem",
+                    "sg_power_entity_id": "Senzor moči (neobvezno)",
+                    "sg_min_state_time": "Najkrajši čas stanja",
+                    "sg_max_block_time": "Najdaljši čas zapore",
+                    "sg_max_blocks_per_day": "Največ zapor na dan"
+                },
+                "data_description": {
+                    "entity_id": "Uporabljena kot predpona za senzorje, ki jih ustvari ta integracija (npr. sensor.[predpona]_power).",
+                    "connected_to_phase": "Na katero električno fazo (faze) je črpalka priključena. Po teh fazah se presojata zapora in sprostitev.",
+                    "load_priority": "Nižje število = višja prioriteta. Vpliva le na porazdelitev v načinih Prioriteta in Zaporedno.",
+                    "early_room_entity_id": "Neobvezen senzor v kWh: koliko energije lahko ta porabnik danes še sprejme - Load Insights »Prostor za porabo danes«. Vnaprejšnja poraba viška šteje samo porabnike, ki imajo še prostor; brez njega se predpostavi, da lahko sprejme načrtovano.",
+                    "early_rate_entity_id": "Neobvezen senzor moči (W ali kW), ki pove, kaj ta porabnik zares vleče, ko deluje - Load Insights \"Moč sprejema\". Skupina za vnaprejšnjo porabo viška šteje to namesto najmanjše moči porabnika, tako da porabnik, ki vleče manj od nazivne moči, začne pravočasno. Brez tega velja najmanjša moč.",
+                    "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                    "sg_relay_1_entity_id": "Stikalo prvega releja. Sklenjen sam pomeni stanje 1, Zapora (črpalka je izklopljena); skupaj z relejem 2 pomeni stanje 4, Vsiljeno.",
+                    "sg_relay_2_entity_id": "Stikalo drugega releja. Sklenjen sam pomeni stanje 3, Priporočeno; skupaj z relejem 1 pomeni stanje 4, Vsiljeno. Oba odprta pomenita stanje 2, Običajno.",
+                    "sg_nominal_power": "Dodatna moč, za katero se predpostavi, da jo črpalka v stanjih Priporočeno in Vsiljeno porabi nad običajno. To za to napravo štejeta vnaprejšnja poraba viška in bazen presežka. Poraba črpalke v stanju Običajno je del hiše.",
+                    "sg_power_entity_id": "Neobvezen senzor (W ali kW) s skupno močjo črpalke. Dokler je črpalka v stanju Običajno, se njegovo branje vzame kot njena običajna poraba; v stanjih Priporočeno in Vsiljeno se poraba nad tem šteje kot upravljana. Zapora se sprosti le, ko prostor pokrije običajno porabo. Brez njega se za oboje uporabi zgornja dodatna moč.",
+                    "sg_min_state_time": "Vsako stanje traja vsaj toliko (standardno 10-minutno pravilo, uporabljeno za vsa štiri stanja).",
+                    "sg_max_block_time": "Ena zapora traja največ toliko. Nato gre črpalka v Običajno, preobremenitev pa prepustimo drugim porabnikom in lastnim omejitvam sistema.",
+                    "sg_max_blocks_per_day": "V katerihkoli drsečih 24 urah se začne največ toliko zapor. Ko so porabljene, gre črpalka namesto tega v Običajno, v dnevnik pa se zapiše opozorilo."
                 }
             }
         }

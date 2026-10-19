@@ -16,6 +16,7 @@ from .. import units
 from ..entities.readout import status_with_readout_note
 from ..entities.sun_probe import status_with_sun_probe_note
 from ..control.status import hands_off_status
+from ..const.sg_ready import CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER
 from ..const import (
     behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_BATTERY_MAX_CHARGE_POWER,
@@ -78,6 +79,7 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_GROUP,
@@ -118,6 +120,7 @@ _DEVICE_TYPE_LABELS = {
     DEVICE_TYPE_HOT_WATER_TANK: "Hot water tank",
     DEVICE_TYPE_ROOM_THERMOSTAT: "Room thermostat",
     DEVICE_TYPE_POWER_STATION: "Power station",
+    DEVICE_TYPE_SG_READY: "SG Ready heat pump",
 }
 
 
@@ -321,6 +324,8 @@ def _group_cap_for(hass, hub_entry_id: str, load_entry_id: str) -> str | None:
 def _load_mode(hass, load_entry) -> str:
     """The load's current operating mode (live if set, else its default)."""
     device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    if device_type == DEVICE_TYPE_SG_READY:
+        return "follows the site"  # no operating mode
     runtime = (_runtime(hass).get("loads") or {}).get(load_entry.entry_id) or {}
     key = runtime.get("operating_mode") or get_entry_value(
         load_entry, CONF_OPERATING_MODE, None
@@ -344,6 +349,9 @@ def _load_limits_text(hass, load_entry) -> str:
             load_entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
         )
         return f"{_fmt(element, 'W', 0)} element"
+    if device_type == DEVICE_TYPE_SG_READY:
+        nominal = get_entry_value(load_entry, CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER)
+        return f"{_fmt(nominal, 'W', 0)} above Normal"
     if device_type == DEVICE_TYPE_POWER_STATION:
         low = get_entry_value(
             load_entry, CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
@@ -397,6 +405,7 @@ _STATUS_UNIQUE_ID_SUFFIX = {
     DEVICE_TYPE_HOT_WATER_TANK: "_tank_status",
     DEVICE_TYPE_POWER_STATION: "_charging_status",
     DEVICE_TYPE_PLUG: "_charging_status",
+    DEVICE_TYPE_SG_READY: "_sg_ready_state",
 }
 
 
