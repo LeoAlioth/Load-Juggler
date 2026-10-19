@@ -99,7 +99,10 @@
                     "forecast_excess_enabled": "Early start on forecast excess",
                     "forecast_clip_early_enabled": "Start Excess early on forecast clipping",
                     "forecast_excess_soc_source": "Minimum SOC for early start",
-                    "forecast_excess_soc": "Fixed SOC for early start"
+                    "forecast_excess_soc": "Fixed SOC for early start",
+                    "outage_entity_id": "Planned outage calendar or sensor (optional)",
+                    "outage_precharge_lead_hours": "Pre-charge lead time",
+                    "outage_hold_hours": "Hold after the window"
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
@@ -127,7 +130,10 @@
                     "forecast_excess_enabled": "Starts Excess before the battery is full while the excess energy (above) is over 0 and the battery SOC is at or above the minimum SOC for early start (below) - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the excess energy divided by the hours left until sunset. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
                     "forecast_clip_early_enabled": "Starts Excess loads (tank boost, Excess loads and plugs) before the forecast clipping window opens when the battery cannot take all the clipped energy, so that surplus goes into them instead of being curtailed. Needs the PV clipping forecast (an export limit or off-grid, a battery capacity and a solar forecast). Each load starts as many hours before the window as its minimum power needs to use that energy - like the early start above, with the same checks, the same minimum SOC for early start and each load's Room to absorb today where set (otherwise its power times the length of the clipping). Independent of the early start above and of its sensors. Off: no change.",
                     "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
-                    "forecast_excess_soc": "Used when the SOC source above is the fixed value."
+                    "forecast_excess_soc": "Used when the SOC source above is the fixed value.",
+                    "outage_entity_id": "A calendar or binary sensor that says when the grid will be lost - for example an outage integration's calendar or its Planned outage active sensor. While a window is running, or about to start within the lead time below, a site on the grid pre-charges its battery to full: the SOC ceiling is lifted to full, the charge-rate cap is released and the early starts stand down, so Solar Only and Solar Priority loads wait for the battery (Standard loads are not changed). A calendar tells the start ahead; a binary sensor only the running window, unless it has a next_start attribute. Off-grid sites ignore it. Unavailable or unknown: no window. Not set: no change.",
+                    "outage_precharge_lead_hours": "Hours before a calendar window starts (or the sensor's next_start) when pre-charging begins.",
+                    "outage_hold_hours": "Hours after the window ends before everything returns to normal."
                 }
             },
             "inverter_features": {
@@ -644,7 +650,10 @@
                     "forecast_excess_enabled": "Early start on forecast excess",
                     "forecast_clip_early_enabled": "Start Excess early on forecast clipping",
                     "forecast_excess_soc_source": "Minimum SOC for early start",
-                    "forecast_excess_soc": "Fixed SOC for early start"
+                    "forecast_excess_soc": "Fixed SOC for early start",
+                    "outage_entity_id": "Planned outage calendar or sensor (optional)",
+                    "outage_precharge_lead_hours": "Pre-charge lead time",
+                    "outage_hold_hours": "Hold after the window"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Prevents rapid on/off switching near SOC thresholds. The band sits on the safe side of each setting: with 3% hysteresis and a 90% target, charging resumes at 87% and pauses at 90%; with a 20% minimum, discharging stops at 20% and resumes at 23% - the battery never runs below the floor. Full has its band above: with 2% hysteresis and full at 90%, the battery counts as full from 92% until it drops below 90%.",
@@ -658,7 +667,10 @@
                     "forecast_excess_enabled": "Starts Excess before the battery is full while the excess energy (above) is over 0 and the battery SOC is at or above the minimum SOC for early start (below) - the day's sun will overfill it anyway. Everything that follows the Excess verdict then starts early (tank boost, Excess loads and plugs), and Excess loads get the sun the battery is absorbing, at most the excess energy divided by the hours left until sunset. Needs both sensors above; Solar Priority and Solar Only loads are not changed. Off: Excess starts only with a full battery or on export.",
                     "forecast_clip_early_enabled": "Starts Excess loads (tank boost, Excess loads and plugs) before the forecast clipping window opens when the battery cannot take all the clipped energy, so that surplus goes into them instead of being curtailed. Needs the PV clipping forecast (an export limit or off-grid, a battery capacity and a solar forecast). Each load starts as many hours before the window as its minimum power needs to use that energy - like the early start above, with the same checks, the same minimum SOC for early start and each load's Room to absorb today where set (otherwise its power times the length of the clipping). Independent of the early start above and of its sensors. Off: no change.",
                     "forecast_excess_soc_source": "The SOC from which Excess may start early: the minimum SOC, the target SOC or the fixed value below.",
-                    "forecast_excess_soc": "Used when the SOC source above is the fixed value."
+                    "forecast_excess_soc": "Used when the SOC source above is the fixed value.",
+                    "outage_entity_id": "A calendar or binary sensor that says when the grid will be lost - for example an outage integration's calendar or its Planned outage active sensor. While a window is running, or about to start within the lead time below, a site on the grid pre-charges its battery to full: the SOC ceiling is lifted to full, the charge-rate cap is released and the early starts stand down, so Solar Only and Solar Priority loads wait for the battery (Standard loads are not changed). A calendar tells the start ahead; a binary sensor only the running window, unless it has a next_start attribute. Off-grid sites ignore it. Unavailable or unknown: no window. Not set: no change.",
+                    "outage_precharge_lead_hours": "Hours before a calendar window starts (or the sensor's next_start) when pre-charging begins.",
+                    "outage_hold_hours": "Hours after the window ends before everything returns to normal."
                 }
             },
             "hub_timing": {

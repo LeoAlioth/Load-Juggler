@@ -123,6 +123,9 @@ from ..const import (
     CONF_FORECAST_EXCESS_ENABLED,
     CONF_FORECAST_EXCESS_SOC,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
+    CONF_OUTAGE_ENTITY_ID,
+    CONF_OUTAGE_HOLD_HOURS,
+    CONF_OUTAGE_LEAD_HOURS,
     CONF_PACE_OVER_HORIZON,
     CONF_CATCH_UP_ENABLED,
     CONF_EARLY_ROOM_ENTITY_ID,
@@ -188,6 +191,8 @@ from ..const import (
     DEFAULT_FORECAST_EXCESS_ENABLED,
     DEFAULT_FORECAST_EXCESS_SOC,
     DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
+    DEFAULT_OUTAGE_HOLD_HOURS,
+    DEFAULT_OUTAGE_LEAD_HOURS,
     DEFAULT_PACE_OVER_HORIZON,
     DEFAULT_CATCH_UP_ENABLED,
     FORECAST_EXCESS_SOC_SOURCES,
@@ -488,6 +493,20 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
         _num(
             CONF_FORECAST_EXCESS_SOC, defaults, DEFAULT_FORECAST_EXCESS_SOC,
             0, 100, 1, "%", mode="slider",
+        ),
+        # JUG-23: a calendar or binary_sensor saying when the grid will be lost;
+        # the battery is pre-charged ahead of and through it.
+        (
+            _optional_entity_field(CONF_OUTAGE_ENTITY_ID, defaults),
+            selector({"entity": {"domain": ["calendar", "binary_sensor"]}}),
+        ),
+        _num(
+            CONF_OUTAGE_LEAD_HOURS, defaults, DEFAULT_OUTAGE_LEAD_HOURS,
+            0, 48, 0.5, "h",
+        ),
+        _num(
+            CONF_OUTAGE_HOLD_HOURS, defaults, DEFAULT_OUTAGE_HOLD_HOURS,
+            0, 24, 0.5, "h",
         ),
     ]
 
@@ -850,6 +869,9 @@ HUB_POLICY_KEYS = (
     CONF_FORECAST_CLIP_EARLY_ENABLED,
     CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_FORECAST_EXCESS_SOC,
+    CONF_OUTAGE_ENTITY_ID,
+    CONF_OUTAGE_LEAD_HOURS,
+    CONF_OUTAGE_HOLD_HOURS,
 )
 HUB_TIMING_KEYS = (
     CONF_SITE_UPDATE_FREQUENCY,

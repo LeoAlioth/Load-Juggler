@@ -399,6 +399,7 @@ _HUB_REPUBLISH_KEYS = frozenset(
     "excess_available",
     "excess_margin_power",
     "forecast_excess",
+    "outage_precharge",
     "inverters",
     # Fleet forecast advice - no hub sensor anymore (the per-battery sensors
     # live on the inverter entries) but kept in hub_data for automations.

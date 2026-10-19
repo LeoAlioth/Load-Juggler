@@ -90,6 +90,14 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   back from the clipping window - published into hub_runtime["_clip_early"] by
 │   │                              #   engine/hub_result._compute_forecast_advice, read the NEXT cycle; per-load energy:
 │   │                              #   ``clip_load_room_kwh``
+│   ├── outage_window.py           # Expected grid loss window (JUG-23): ``precharge_window`` reads a calendar /
+│   │                              #   binary_sensor state + attributes (lead time, hold after, memory returned for
+│   │                              #   hub_runtime["_outage_hold"]); on, the engine (hub_calculation._apply_outage_
+│   │                              #   precharge) raises the SOC target to full (``precharge_target``), hub_result
+│   │                              #   stands the clipping ceiling/charge cap down, the early starts and catch-up stand
+│   │                              #   down, and control/inverter.send_inverter_soc_limit(lift=True) puts the slots at
+│   │                              #   full (hub_data["outage_precharge"]). Grid-tied + battery only; never touches
+│   │                              #   a Storm Reserve switch
 │   ├── catch_up.py                # Per-load catch-up: a Solar Only / Solar Priority load may start below the target
 │                                  #   SOC when its max power can't keep up with the pacing energy (rate >= max W,
 │                                  #   latched per load); the engine sets LoadContext.catch_up_active

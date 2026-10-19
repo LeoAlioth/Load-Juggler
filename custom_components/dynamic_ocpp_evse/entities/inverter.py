@@ -508,7 +508,12 @@ class LoadJugglerInverterSocControlSensor(
         """
         advice_soc = self._inverter_section(hub_data).get("forecast_battery_max_soc")
         await send_inverter_soc_limit(
-            self.hass, self.config_entry, advice_soc, time.monotonic()
+            self.hass,
+            self.config_entry,
+            advice_soc,
+            time.monotonic(),
+            # A planned outage is near or running: slots to full (JUG-23).
+            lift=bool((hub_data or {}).get("outage_precharge")),
         )
         self._read_control_status()
 

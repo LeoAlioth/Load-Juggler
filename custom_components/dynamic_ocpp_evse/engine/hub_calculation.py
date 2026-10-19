@@ -26,6 +26,11 @@ from ..calculations.forecast_excess import (
     forecast_excess_gate,
     forecast_excess_verdict,
 )
+from ..calculations.outage_window import (
+    precharge_note,
+    precharge_target,
+    precharge_window,
+)
 from ..calculations.pacing import pace_watts
 from ..calculations.models import INACTIVE_STATUSES
 from homeassistant.util import dt as dt_util
@@ -55,6 +60,9 @@ from ..const import (
     CONF_MAIN_BREAKER_RATING,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_NAME,
+    CONF_OUTAGE_ENTITY_ID,
+    CONF_OUTAGE_HOLD_HOURS,
+    CONF_OUTAGE_LEAD_HOURS,
     CONF_PHASE_VOLTAGE,
     CONF_FILTER_CTRL_FAST_TAU_S,
     CONF_FILTER_INPUT_TAU_S,
@@ -67,6 +75,7 @@ from ..const import (
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_CHARGE_PAUSE_DURATION,
     DEFAULT_BATTERY_SOC_MIN,
+    DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_BATTERY_SOC_TARGET,
     DEFAULT_DISTRIBUTION_MODE,
     DEFAULT_EXCESS_HYSTERESIS,
@@ -78,6 +87,8 @@ from ..const import (
     DEFAULT_GENERATOR_RATING,
     DEFAULT_GRID_EXPORT_LIMIT,
     DEFAULT_MAIN_BREAKER_RATING,
+    DEFAULT_OUTAGE_HOLD_HOURS,
+    DEFAULT_OUTAGE_LEAD_HOURS,
     DEFAULT_PHASE_VOLTAGE,
     CTRL_FAST_TAU_S,
     DEFAULT_SITE_UPDATE_FREQUENCY,
@@ -106,7 +117,12 @@ from ..registry import get_inverters_for_hub
 from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
 from . import fleet
-from .hub_result import _CLIP_EARLY_KEY, _build_hub_result, _compute_forecast_advice
+from .hub_result import (
+    _CLIP_EARLY_KEY,
+    OUTAGE_PRECHARGE_KEY,
+    _build_hub_result,
+    _compute_forecast_advice,
+)
 from .load_builders import (
     _add_loads_to_site,
     _build_circuit_groups,
@@ -520,6 +536,34 @@ def _read_max_import_power(hass, hub_entry, hub_runtime):
     return hub_runtime.get("max_import_power", None)
 
 
+def _apply_outage_precharge(hass, hub_entry, hub_runtime, has_grid_cts, members):
+    """Decide, each cycle, whether the planned-outage pre-charge is on (JUG-23).
+
+    Returns the window ``(start, end)`` while it is on, else None, and records the
+    verdict in ``hub_runtime[OUTAGE_PRECHARGE_KEY]`` for the forecast advice, the
+    early starts and the SOC write-control. Grid-tied sites with a battery only -
+    off-grid there is no grid to lose. No setting, an unreadable entity, no
+    battery: no window, nothing changes. The only carried state is the hold
+    after a running window (``precharge_window``'s memory), kept in memory only.
+    """
+    entity = get_entry_value(hub_entry, CONF_OUTAGE_ENTITY_ID, None)
+    window = None
+    if entity and has_grid_cts and any(m.has_battery for m in members):
+        state = hass.states.get(entity)
+        window, hub_runtime["_outage_hold"] = precharge_window(
+            state.state if state is not None else None,
+            state.attributes if state is not None else None,
+            dt_util.now(),
+            get_entry_value(hub_entry, CONF_OUTAGE_LEAD_HOURS, DEFAULT_OUTAGE_LEAD_HOURS),
+            get_entry_value(hub_entry, CONF_OUTAGE_HOLD_HOURS, DEFAULT_OUTAGE_HOLD_HOURS),
+            hub_runtime.get("_outage_hold"),
+        )
+    else:
+        hub_runtime.pop("_outage_hold", None)
+    hub_runtime[OUTAGE_PRECHARGE_KEY] = window is not None
+    return window
+
+
 def _apply_soc_hysteresis(
     hub_runtime,
     battery_soc,
@@ -716,6 +760,9 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     while at least one load may, so the pool is not topped up for nobody.
     """
     planned = pacing[0] if pacing is not None else None
+    # No early start while the battery is pre-charging for a planned outage.
+    if hub_runtime.get(OUTAGE_PRECHARGE_KEY):
+        planned = None
     hours_left = full_hours
     gate, band = _forecast_gate(hub_entry, site)
     on = forecast_excess_verdict(
@@ -747,7 +794,7 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     # full charge (JUG-18): the clip the battery cannot take is the energy, the
     # hours until the window opens the time left. Its own latches; inert (and
     # latch-free) unless the hub option is on and the clipping advice has a clip.
-    clip = _clip_source(hub_runtime, hub_entry)
+    clip = None if hub_runtime.get(OUTAGE_PRECHARGE_KEY) else _clip_source(hub_runtime, hub_entry)
     clip_on = clip_due = False
     clip_pace = 0.0
     if clip is not None:
@@ -896,6 +943,8 @@ def _apply_catch_up(hub_runtime, hub_entry, site, pacing, hours_left):
     """
     latch = hub_runtime.setdefault("_catch_up_on", {})
     planned = pacing[0] if pacing is not None else None
+    if hub_runtime.get(OUTAGE_PRECHARGE_KEY):  # the battery comes first before an outage
+        planned = None
     if get_entry_value(
         hub_entry, CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
     ):
@@ -1693,6 +1742,18 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     # fleet.charge_power_total(), and a fleet-SOC gate would be wrong.
     battery_soc_full = fleet.soc_full_scalar(members)
 
+    # Planned outage ahead (or running): the battery's target is "full", so the
+    # allocation treats it as below target until it is - Solar and Solar Priority
+    # loads wait for it, its discharge is not surplus. Standard loads as ever.
+    outage_window = _apply_outage_precharge(
+        hass, hub_entry, hub_runtime, has_grid_cts, members
+    )
+    if outage_window is not None:
+        battery_soc_target = precharge_target(
+            battery_soc_target,
+            hub_runtime.get("battery_soc_full") or DEFAULT_BATTERY_SOC_FULL,
+        )
+
     (
         battery_soc_target,
         battery_soc_min,
@@ -1939,6 +2000,9 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         grid_stale,
         grid_stale_duration,
     )
+    # The pre-charge note stands in for "OK" only: a real fault stays the status.
+    if outage_window is not None and hub_status == "OK":
+        hub_status = precharge_note(outage_window, dt_util.now())
 
     # --- Per-inverter data for the inverter-entry sensors ---
     inverters_data = {
@@ -1970,7 +2034,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
             inverters_data[inv_id].update(advice)
 
     # --- Build result ---
-    return _build_hub_result(
+    result = _build_hub_result(
         site,
         auto_notifications,
         group_data,
@@ -1989,3 +2053,6 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
         forecast_advice=forecast_advice,
         inverters_data=inverters_data,
     )
+    # Read by the SOC write-control: lift the ceiling to full while True (JUG-23).
+    result["outage_precharge"] = outage_window is not None
+    return result

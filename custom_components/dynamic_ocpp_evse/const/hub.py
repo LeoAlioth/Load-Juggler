@@ -159,6 +159,15 @@ FORECAST_EXCESS_SOC_SOURCES = [
 # capacity, solar forecast); shares the early-start SOC gate above. Off by default.
 CONF_FORECAST_CLIP_EARLY_ENABLED = "forecast_clip_early_enabled"
 DEFAULT_FORECAST_CLIP_EARLY_ENABLED = False
+# Expected grid loss window (JUG-23, DSO-agnostic): a calendar or binary_sensor
+# naming when the grid is about to be lost (a planned outage). While a window is
+# within the lead time, running, or inside the hold after it, a grid-tied site's
+# battery is pre-charged: see calculations/outage_window.py. Unset: nothing changes.
+CONF_OUTAGE_ENTITY_ID = "outage_entity_id"
+CONF_OUTAGE_LEAD_HOURS = "outage_precharge_lead_hours"
+CONF_OUTAGE_HOLD_HOURS = "outage_hold_hours"
+DEFAULT_OUTAGE_LEAD_HOURS = 6
+DEFAULT_OUTAGE_HOLD_HOURS = 1
 DEFAULT_FORECAST_EXCESS_ENABLED = False
 DEFAULT_FORECAST_EXCESS_SOC_SOURCE = FORECAST_EXCESS_SOURCE_TARGET
 DEFAULT_FORECAST_EXCESS_SOC = 80
