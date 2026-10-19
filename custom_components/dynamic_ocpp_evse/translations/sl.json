@@ -99,7 +99,10 @@
                     "forecast_excess_enabled": "Predčasni začetek glede na viške",
                     "forecast_clip_early_enabled": "Predčasni začetek glede na rezanje PV",
                     "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
-                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek"
+                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek",
+                    "outage_entity_id": "Koledar ali senzor načrtovane prekinitve (neobvezno)",
+                    "outage_precharge_lead_hours": "Predpolnjenje: čas vnaprej",
+                    "outage_hold_hours": "Zadrževanje po koncu prekinitve"
                 },
                 "data_description": {
                     "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
@@ -127,7 +130,10 @@
                     "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
                     "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot predčasni začetek zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za predčasni začetek in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od predčasnega začetka zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
                     "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
-                    "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
+                    "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost.",
+                    "outage_entity_id": "Koledar ali binarni senzor, ki pove, kdaj bo omrežje izpadlo - npr. koledar integracije za izklope ali njen senzor Planned outage active. Medtem ko okno teče ali se začne v spodaj nastavljenem času vnaprej, objekt z omrežjem baterijo napolni do konca: zgornja meja napolnjenosti se dvigne na polno, omejitev hitrosti polnjenja se sprosti in predčasni začetki počakajo, porabniki Solar Only in Solar Priority pa čakajo na baterijo (porabniki Standard se ne spremenijo). Koledar sporoči začetek vnaprej; binarni senzor le tekoče okno, razen če ima atribut next_start. Objekti brez omrežja tega ne upoštevajo. Ni na voljo ali neznano: ni okna. Ni nastavljeno: brez sprememb.",
+                    "outage_precharge_lead_hours": "Koliko ur pred začetkom okna v koledarju (ali pred atributom next_start senzorja) se začne polnjenje baterije.",
+                    "outage_hold_hours": "Koliko ur po koncu okna se vse vrne v običajno stanje."
                 }
             },
             "inverter_features": {
@@ -644,7 +650,10 @@
                     "forecast_excess_enabled": "Predčasni začetek glede na viške",
                     "forecast_clip_early_enabled": "Predčasni začetek glede na rezanje PV",
                     "forecast_excess_soc_source": "Najmanjši SOC za predčasni začetek",
-                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek"
+                    "forecast_excess_soc": "Fiksni SOC za predčasni začetek",
+                    "outage_entity_id": "Koledar ali senzor načrtovane prekinitve (neobvezno)",
+                    "outage_precharge_lead_hours": "Predpolnjenje: čas vnaprej",
+                    "outage_hold_hours": "Zadrževanje po koncu prekinitve"
                 },
                 "data_description": {
                     "battery_soc_hysteresis": "Preprečuje hitro vklapljanje/izklapljanje blizu pragov napolnjenosti. Pas leži na varni strani vsake nastavitve: s 3 % histerezo in 90 % ciljem se polnjenje nadaljuje pri 87 % in zaustavi pri 90 %; pri 20 % spodnji meji se praznjenje ustavi pri 20 % in nadaljuje pri 23 % - baterija nikoli ne pade pod spodnjo mejo. Polna ima pas nad nastavitvijo: z 2 % histereze in polno pri 90 % baterija šteje za polno od 92 %, dokler ne pade pod 90 %.",
@@ -658,7 +667,10 @@
                     "forecast_excess_enabled": "Zažene Excess, preden je baterija polna, dokler je višek energije (zgoraj) nad 0 in je napolnjenost baterije na najmanjšem SOC za predčasni začetek (spodaj) ali nad njim - sonce bo baterijo tako ali tako prepolnilo. Predčasno se začne vse, kar sledi presoji Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), porabniki v načinu Excess pa dobijo sonce, ki ga baterija sprejema, največ toliko, kot je višek energije, deljen s preostalimi urami do sončnega zahoda. Potrebna sta oba senzorja zgoraj; porabniki Solar Priority in Solar Only se ne spremenijo. Izklopljeno: Excess se začne le s polno baterijo ali ob izvozu.",
                     "forecast_clip_early_enabled": "Zažene porabnike Excess (dvig temperature bojlerja, porabniki in vtičnice v načinu Excess), preden se začne napovedano rezanje PV proizvodnje, kadar baterija ne more sprejeti vse odrezane energije - višek gre tako v porabnike, namesto da bi bil odrezan. Potrebna je napoved rezanja PV (omejitev izvoza ali brez omrežja, kapaciteta baterije in sončna napoved). Vsak porabnik se začne toliko ur pred rezanjem, kot jih po svoji najmanjši moči potrebuje za to energijo - kot predčasni začetek zgoraj, z enakimi preverjanji, enakim najmanjšim SOC za predčasni začetek in »Prostorom za porabo danes« porabnika, če je nastavljen (sicer njegova moč krat trajanje rezanja). Neodvisno od predčasnega začetka zgoraj in njegovih senzorjev. Izklopljeno: brez sprememb.",
                     "forecast_excess_soc_source": "Napolnjenost, od katere se Excess sme začeti predčasno: najnižja, ciljna ali fiksna vrednost spodaj.",
-                    "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost."
+                    "forecast_excess_soc": "Velja, ko je zgoraj izbrana fiksna vrednost.",
+                    "outage_entity_id": "Koledar ali binarni senzor, ki pove, kdaj bo omrežje izpadlo - npr. koledar integracije za izklope ali njen senzor Planned outage active. Medtem ko okno teče ali se začne v spodaj nastavljenem času vnaprej, objekt z omrežjem baterijo napolni do konca: zgornja meja napolnjenosti se dvigne na polno, omejitev hitrosti polnjenja se sprosti in predčasni začetki počakajo, porabniki Solar Only in Solar Priority pa čakajo na baterijo (porabniki Standard se ne spremenijo). Koledar sporoči začetek vnaprej; binarni senzor le tekoče okno, razen če ima atribut next_start. Objekti brez omrežja tega ne upoštevajo. Ni na voljo ali neznano: ni okna. Ni nastavljeno: brez sprememb.",
+                    "outage_precharge_lead_hours": "Koliko ur pred začetkom okna v koledarju (ali pred atributom next_start senzorja) se začne polnjenje baterije.",
+                    "outage_hold_hours": "Koliko ur po koncu okna se vse vrne v običajno stanje."
                 }
             },
             "hub_timing": {

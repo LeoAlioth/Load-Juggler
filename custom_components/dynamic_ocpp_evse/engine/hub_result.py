@@ -74,6 +74,9 @@ _LOGGER = logging.getLogger(__name__)
 # long it lasts. Gone whenever the advice is off, which is what keeps the
 # early start inert there.
 _CLIP_EARLY_KEY = "_clip_early"
+# True in hub_runtime while the planned-outage pre-charge is on (JUG-23); set by
+# engine/hub_calculation._apply_outage_precharge, read here and by the early starts.
+OUTAGE_PRECHARGE_KEY = "_outage_precharge"
 
 # The forecast advice's carried state in hub_runtime (see
 # _compute_forecast_advice), dropped together whenever the advice is off.
@@ -417,7 +420,11 @@ def _compute_forecast_advice(
     export_now_w = reconstructed_export_power(view)
     charge_limit = None
     limiting = False
-    if fleet_charge_cap and not off_grid:
+    # The planned-outage pre-charge (JUG-23) stands the whole advice down: no
+    # ceiling below full, no charge-rate cap - the site wants every watt it can
+    # put into the battery before the grid goes.
+    precharge = bool(hub_runtime.get(OUTAGE_PRECHARGE_KEY))
+    if fleet_charge_cap and not off_grid and not precharge:
         # Above the destination the battery is the absorber of LAST RESORT: the
         # Excess loads that exist to soak up surplus get it first, and the
         # battery takes what they cannot. Below it the battery comes first, as
@@ -474,7 +481,7 @@ def _compute_forecast_advice(
     per_inverter = {}
     hub_id = getattr(hub_entry, "entry_id", None)
     # Off-grid publishes no ceiling either - see the suppression above.
-    published_soc = None if off_grid else proposed
+    published_soc = None if off_grid or precharge else proposed
     charge_shares = fleet.split_charge_limit(members, charge_limit, proposed)
     for m in members:
         if m.entry_id == hub_id or not m.has_battery or not (m.capacity_kwh or 0) > 0:

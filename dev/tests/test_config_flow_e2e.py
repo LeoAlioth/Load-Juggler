@@ -707,11 +707,18 @@ async def test_options_flow_hub_saves_changes(
         CONF_FORECAST_CLIP_EARLY_ENABLED,
         CONF_FORECAST_EXCESS_SOC_SOURCE,
         CONF_FORECAST_EXCESS_SOC,
+        "outage_entity_id",
+        "outage_precharge_lead_hours",
+        "outage_hold_hours",
     ):
         assert _schema_has(result["data_schema"], key)
+    hass.states.async_set("calendar.planned_outages", "off")
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
+            "outage_entity_id": "calendar.planned_outages",
+            "outage_precharge_lead_hours": 8,
+            "outage_hold_hours": 2,
             CONF_BATTERY_SOC_HYSTERESIS: 5,
             CONF_BASE_CONSUMPTION: 400,
             CONF_FORECAST_SOC_FLOOR: 35,
@@ -730,6 +737,10 @@ async def test_options_flow_hub_saves_changes(
     assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_SOC) == 70
     assert mock_hub_entry.options.get(CONF_PACING_ENERGY_ENTITY_ID) == "sensor.energy_to_use"
     assert mock_hub_entry.options.get(CONF_PACING_HORIZON_ENTITY_ID) == "sensor.horizon_end"
+    # JUG-23: the planned-outage input, additive keys, no migration
+    assert mock_hub_entry.options.get("outage_entity_id") == "calendar.planned_outages"
+    assert mock_hub_entry.options.get("outage_precharge_lead_hours") == 8
+    assert mock_hub_entry.options.get("outage_hold_hours") == 2
 
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_timing")
     result = await hass.config_entries.options.async_configure(

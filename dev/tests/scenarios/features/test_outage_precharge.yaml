@@ -1,0 +1,125 @@
+# Planned-outage pre-charge (JUG-23). While a planned outage is near or running,
+# the engine runs the allocation on "full" as the battery's target SOC
+# (calculations/outage_window.precharge_target): the battery counts as below target
+# until it is full, so Solar Only / Solar Priority loads wait for it, and Standard
+# loads are as ever. The harness hook is `site.outage_precharge: true`.
+#
+# Every scenario shares one site: 1-phase, 20 A of PV, 3 A household, battery at 85 %
+# with the owner's target at 80 % and Full at 97 %. The "-no-outage" twin of each is
+# the same site with the input unset - the unchanged behaviour.
+
+scenarios:
+
+  - name: "outage-precharge-solar-only-waits"
+    description: "Outage near: battery 85 % is below the pre-charge target (full 97 %), Solar Only waits for it"
+    human_verified: false
+    site: &site
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600
+      phase_a_consumption: 3.0
+      battery_soc: 85
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_soc_full: 97
+      battery_max_charge_power: 4600
+      battery_max_discharge_power: 4600
+      inverter_supports_asymmetric: true
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+      outage_precharge: true
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 0
+
+  - name: "outage-precharge-solar-only-no-outage"
+    description: "Same site, no outage input: 85 % is above the 80 % target, Solar Only runs on solar plus the battery above target"
+    human_verified: false
+    site:
+      <<: *site
+      outage_precharge: false
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 32.0
+
+  - name: "outage-precharge-solar-priority-minimum-only"
+    description: "Outage near: Solar Priority falls back to its minimum while the battery fills"
+    human_verified: false
+    site:
+      <<: *site
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 6
+
+  - name: "outage-precharge-solar-priority-no-outage"
+    description: "Same site, no outage input: Solar Priority runs on solar plus the battery above target"
+    human_verified: false
+    site:
+      <<: *site
+      outage_precharge: false
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Priority"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 32.0
+
+  - name: "outage-precharge-standard-unchanged"
+    description: "Outage near: a Standard load is as today (max speed from every source)"
+    human_verified: false
+    site:
+      <<: *site
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 32.0
+
+  - name: "outage-precharge-ends-battery-full"
+    description: "Outage near and the battery already full (98 %): the loads are released, the target is met"
+    human_verified: false
+    site:
+      <<: *site
+      battery_soc: 98
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 32
+        phases: 1
+        priority: 1
+    expected:
+      load_1:
+        allocated: 32.0

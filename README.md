@@ -248,6 +248,9 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Base consumption sensor | Optional sensor (W/kW) read each cycle instead of *Base house consumption*; Load Insights publishes the daytime minimum of its whole-house forecast | none |
 | Forecast SOC floor | Lowest max-SOC the forecast may recommend (%) | 30% |
 | Start Excess early on forecast clipping | With the PV clipping forecast: starts Excess loads (tank boost, Excess loads and plugs) before the clipping window opens when the battery cannot take all the clipped energy, so that surplus goes into them. Counted back from the window like the early start on forecast excess is counted back from the next full charge, with the same checks and the same minimum SOC for early start; needs no planning sensors | Off |
+| Planned outage calendar or sensor | A calendar or binary sensor saying when the grid will be lost (for example an outage integration's calendar or *Planned outage active*). Grid-tied sites with a battery pre-charge it to full while a window is within the lead time or running: the SOC ceiling slots are lifted to full (with SOC control armed), the charge-rate cap is released, and Solar Only / Solar Priority loads wait for the battery (Standard loads are as ever). A calendar gives the start ahead; a binary sensor only the running window, unless it has a `next_start` attribute. Does not touch any Storm Reserve switch. Unavailable or unknown: no window | none |
+| Pre-charge lead time | Hours before the window starts (calendar, or the sensor's `next_start`) when pre-charging begins (h) | 6 |
+| Hold after the window | Hours after the window ends before the ceiling and the loads return to normal (h) | 1 |
 
 #### Inverter Settings
 

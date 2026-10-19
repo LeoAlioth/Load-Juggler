@@ -209,6 +209,10 @@ INVERTER_RT_SOC_SLOTS = "soc_control_slots"  # {entity_id: read-back or None}
 # normal entity would otherwise log once per site cycle, forever.
 INVERTER_RT_SOC_WARNED = "soc_control_normal_warned"
 INVERTER_RT_SOC_FLOOR_WARNED = "soc_control_floor_warned"
+# True from the write that lifted the slots to full for a planned outage (JUG-23)
+# until the write that restored them: the only thing that lets a FLOOR register be
+# lowered again, which its direction rule otherwise forbids for an above-normal slot.
+INVERTER_RT_SOC_LIFTED = "soc_control_lifted"
 SOC_NORMAL_WARN_INTERVAL = 300.0  # s between repeats of that warning
 
 
@@ -829,12 +833,16 @@ def resolve_normal_soc(hass, entry):
     return units.read_number(hass, normal_entity)
 
 
-async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
+async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono, lift=False) -> None:
     """Drive every configured SOC-ceiling entity toward the desired ceiling.
 
     ``advice_soc`` is the forecast's recommended battery max SOC in percent, or
     None when the forecast has nothing to say - which, unlike the charge-rate
     control, is not a release event but simply "track the normal".
+
+    ``lift`` (JUG-23, a planned outage is near or running) puts the slots at full
+    instead - the normal or 100, whichever is higher - whatever the advice says;
+    when it ends they return to the normal ceiling by the ordinary rule.
 
     Read-then-write, with the reads recorded for the SOC-control sensor on every
     call - including the ones the pacing makes return early and the ones taken
@@ -901,6 +909,9 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
     # The lower of the normal and the advice: we only ever hold the battery
     # below what the slots' owner asked, and the advice climbing back releases.
     desired = round(float(normal if advice_soc is None else min(normal, advice_soc)), 1)
+    if lift:
+        desired = round(float(max(normal, DEFAULT_SOC_LIMIT_NORMAL)), 1)
+    restoring = bool(inverter_rt.get(INVERTER_RT_SOC_LIFTED)) and not lift
     inverter_rt[INVERTER_RT_SOC_DESIRED] = desired
     # "limiting" is specifically "we are holding it below what its owner asked
     # for". Tracking the normal - no advice, or advice at or above it - is idle,
@@ -933,7 +944,7 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
             continue
         if abs(current - desired) < SOC_LIMIT_DEADBAND:
             continue
-        if floor_semantics and (desired < normal) != (current > desired):
+        if floor_semantics and not restoring and (desired < normal) != (current > desired):
             # A floor register is only ever written in the state's own safe
             # direction. Limiting (desired below the normal) may only LOWER a
             # slot - "the house may drain to here", the pre-clip drop - and
@@ -950,10 +961,13 @@ async def send_inverter_soc_limit(hass, entry, advice_soc, now_mono) -> None:
         due.append(entity_id)
 
     if not due:
+        if not lift:
+            inverter_rt[INVERTER_RT_SOC_LIFTED] = False  # nothing left to restore
         return
 
     for entity_id in due:
         await _write(hass, entry, entity_id, desired, "%")
+    inverter_rt[INVERTER_RT_SOC_LIFTED] = bool(lift)
     # One clock for the whole fan-out: when the interval opens, every due slot
     # goes in that cycle, and the next window starts from there. Per-slot clocks
     # would let the slots drift apart in time and turn one paced control into N.

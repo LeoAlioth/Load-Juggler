@@ -18,6 +18,7 @@ from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
     forecast_excess_gate,
     forecast_excess_verdict,
 )
+from custom_components.dynamic_ocpp_evse.calculations.outage_window import precharge_target
 from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_cap_current, pace_watts
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
@@ -615,7 +616,16 @@ def build_site_from_scenario(scenario, excess_on=False):
         solar_is_derived=solar_is_derived,
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
-        battery_soc_target=site_data.get('battery_soc_target', 80),
+        # ``outage_precharge: true`` - a planned outage is near (JUG-23): the
+        # engine runs the allocation on "full" as the target.
+        battery_soc_target=(
+            precharge_target(
+                site_data.get('battery_soc_target', 80),
+                site_data.get('battery_soc_full', DEFAULT_BATTERY_SOC_FULL),
+            )
+            if site_data.get('outage_precharge')
+            else site_data.get('battery_soc_target', 80)
+        ),
         battery_soc_full=site_data.get('battery_soc_full', DEFAULT_BATTERY_SOC_FULL),
         excess_export_threshold=site_data.get('excess_export_threshold', 13000),
         battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
