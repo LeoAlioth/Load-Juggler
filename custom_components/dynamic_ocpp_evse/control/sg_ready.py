@@ -108,7 +108,10 @@ async def send_sg_ready_command(sensor, status, now_mono) -> None:
     rt["_sg_last_send"] = now_mono
     _LOGGER.debug("SG Ready %s: %s -> %s", sensor._attr_name, observed, target)
     ok = await _drive(hass, rt, entities, observed, target)
-    rt["_sg_commanded"] = (target, now_mono)
+    previous = rt.get("_sg_commanded")
+    # a repeated command keeps its first time: that is what the verify time runs from
+    since = previous[1] if previous and previous[0] == target else now_mono
+    rt["_sg_commanded"] = (target, since)
     if not ok:
         rt["sg_relay_fault"] = True
     stamp_command(sensor, now_mono)

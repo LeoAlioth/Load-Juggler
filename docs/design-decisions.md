@@ -80,3 +80,13 @@ at or below target.
 **Why:** the key name suggested "enable the limit" and I never read the contract the user configured against. An unticked box beside a configured sensor is the NORMAL configuration for someone driving the limit from their own sensor - they have no use for a slider - not a leftover. The "ten dropouts a morning" that motivated the change were the SolarEdge integration blinking (same source as the grid CTs), not the cap sensor causing anything.
 
 **How to apply:** before changing what a config key gates or its precedence, read its label and `data_description` in strings.json (and sl.json). When a flag and an entity coexist, ask what the UI told the user each one does. "This looks like a leftover" is a hypothesis to put to the owner, never grounds to change precedence on my own.
+
+## SG Ready heat pump: Block waits, and some sites never Block
+
+Built 2026-10-19 (JUG-24), designed with the owner; `calculations/sg_ready.py`, `engine/hub_calculation._apply_sg_ready`.
+
+- **The 10-minute rule covers all four states, Block included.** An overload that arrives while the pump has been in Force or Recommended for less than the minimum time waits for it before the Block. Deliberate: the standard puts the limit on the sender, and the sources disagree on whether it covers every state.
+- **The overload is the household's, with every managed load already off** (`target_calculator.grid_headroom_w`: the breaker less the power buffer, and the max import power). The chargers and other loads are cut first because the pool is empty before the pump is asked. An off-grid site has no such limit, so its pump is never blocked and a Block is released at once.
+- **The Normal draw is household.** Only the extra draw above Normal is a managed load, and only while the state is Recommended or Force. A circuit group's limit therefore counts that extra draw alone.
+- **Force needs the allocation's grant** (the same phase-is-buying guard and circuit groups as any Excess load), so a pump on an importing phase is not forced although the site has excess.
+- **After the allowance is used up the overload goes unanswered**, by design: Normal, a warning in the log and the State sensor's reason.

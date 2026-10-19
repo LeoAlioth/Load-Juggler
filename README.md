@@ -31,6 +31,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Auto-detection** of sensors, phase mapping, and charger settings; setup forms also open pre-filled from the Energy dashboard (read only)
 - **OCPP 1.6J** control for EV chargers (Amps or Watts, auto-detected)
 - **Hot water tank control** - thermostat-driven (climate or water heater entity) binary heating loads with away/normal/boost setpoints
+- **SG Ready heat pump control** - two relays, no modes: Block on the overload that reaches it (within the standard's 10-minute, maximum-block and blocks-per-day limits), Force on excess, Recommended on a predicted excess or a battery above target
 - **Portable power station control** - modulated charge rate plus a managed backup reserve, so a station soaks up surplus and spends it again
 - **Relative and absolute OCPP profile modes** for different charger compatibility
 - **Current rate limiting** (ramp up/down) for stable operation
@@ -44,7 +45,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 | **Smart Plug** | On/off switch | Continuous, Solar Priority, Solar Only, Excess | Any device behind a smart plug (heaters, pumps, etc.) |
 | **Hot Water Tank** | Climate or water heater entity (on/off + setpoint) | Freeze Protection, Normal, Solar Priority | Tank with a thermostat (e.g. Generic Thermostat); the mode picks an away/normal/boost setpoint |
 | **Power Station** | Charge-speed + backup-reserve numbers | Standard, Solar Priority, Solar Only, Excess | Portable station (EcoFlow Delta and similar); modulates its charge rate, and its reserve is the on/off gate |
-| **SG Ready** | *Planned* | Automatic | 2-relay site-state mapping (Block/Normal/Recommend/Force) |
+| **SG Ready Heat Pump** | Two relay switches (Block / Normal / Recommended / Force) | None - the state follows the site | A heat pump with SG Ready inputs; Block on the overload that reaches it, Force on excess, Recommended on a predicted excess or a battery above target, else Normal. See the [guide](CHARGE_MODES_GUIDE.md#sg-ready-heat-pump) |
 
 ## Operating Modes
 

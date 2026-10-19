@@ -12,7 +12,8 @@ For circuit groups (shared breaker limits), see [DISTRIBUTION_MODES_GUIDE.md](DI
 6. [Excess Mode](#excess-mode)
 7. [Hot Water Tank Modes](#hot-water-tank-modes)
 8. [Power Station Modes](#power-station-modes)
-9. [Configuration Parameters](#configuration-parameters)
+9. [SG Ready Heat Pump](#sg-ready-heat-pump)
+10. [Configuration Parameters](#configuration-parameters)
 
 ---
 
@@ -953,6 +954,55 @@ Prefer keeping this in an **automation** rather than a template sensor if you wa
 to stay UI-managed - trigger-based template sensors cannot be created through
 Helpers, but an automation can hold the same trigger, action and template
 condition, and lives in Home Assistant's own storage.
+
+---
+
+## SG Ready Heat Pump
+
+**Available for:** a heat pump with SG Ready inputs, switched by two relays (a Shelly with two relays does it)
+
+An SG Ready heat pump has four operating states, chosen by two potential-free contacts. The pump's own controller decides what each state does.
+
+| State | Relay 1 | Relay 2 | Meaning |
+|---|---|---|---|
+| 1 Block | closed | open | utility lockout, the pump is off |
+| 2 Normal | open | open | regular, energy-efficient operation |
+| 3 Recommended | open | closed | run harder; a recommendation, the draw is the pump's choice |
+| 4 Force | closed | closed | run-up command, as hard as it safely can |
+
+With both relays open the pump is in Normal, so a relay that loses power or Home Assistant falls back to Normal. Unloading the entry, a relay that is unavailable and a restart of Home Assistant all leave the pump in Normal.
+
+### No operating mode
+
+The device has no mode of its own. Its state follows the site, first match wins:
+
+| Order | Condition | State |
+|---|---|---|
+| 1 | The overload reaches this device | Block |
+| 2 | Actual excess - the Excess verdict, and the allocation grants the pump its extra power | Force |
+| 3 | The early start on forecast excess says it should already run (the hub's *Early start on forecast excess* is on) | Recommended (predicted excess) |
+| 4 | The battery is above its target SOC | Recommended (battery above target) |
+| 5 | Otherwise | Normal |
+
+A site without a battery never meets rows 3 and 4 by the battery: it goes Normal, then Force on excess, with nothing between. The device's **State** sensor shows the reason in brackets, so the two Recommended causes can be told apart, and carries the number of Blocks in the last 24 hours and the minutes left in the current state.
+
+The pump competes like an Excess load: its *Extra power above Normal* is what the early start, the Excess pool and circuit groups count for it. Its draw in Normal is part of the household and is never counted as a managed load. With the optional power sensor, the reading while the pump is in Normal is taken as its Normal draw, and only what it draws above that in Recommended and Force counts.
+
+### Block, and its limits
+
+Block is a last resort. It is reached only when the shortage - the household over the breaker or the maximum import power with every managed load already off - actually gets to this device in the priority order: the chargers and other loads are cut first, as ever, and with several heat pumps the lowest priority is blocked first. A site without a grid limit to judge by (off-grid) never overloads the pump.
+
+The standard puts timing limits on the sender, and Load Juggler enforces them (settings per device):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Minimum time per state | 10 min | a state stays at least this long, and so is re-entered no sooner than this after it ended; applied to all four states |
+| Maximum block time | 120 min | one Block lasts at most this long |
+| Maximum blocks per day | 3 | counted over a rolling 24 hours, not the calendar day |
+
+A Block is released only when the grid headroom covers the pump's Normal draw (its last measured one, or the extra power setting without a sensor) plus a 300 W margin, so the pump does not come back and push the house straight over the limit again. When the allowance is used up (3 Blocks in the rolling 24 hours, or a Block at its maximum time) the pump goes to Normal and is never blocked again until the allowance returns; a warning is logged and the State sensor says so, because the overload then goes unanswered and the other loads and the site's own limits have to handle it.
+
+Because every state lasts at least the minimum time, an overload that arrives while the pump is in Force or Recommended waits for that time before the Block.
 
 ---
 

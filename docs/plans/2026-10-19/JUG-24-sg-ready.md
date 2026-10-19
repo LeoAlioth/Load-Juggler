@@ -131,3 +131,16 @@ Settings per device, all with defaults:
 - Mark new scenarios `human_verified: false`. Slovenian strings are the owner's to review: list every new one
   in your report.
 - Do not touch Load Insights; do not deploy anywhere.
+
+## Implementer's note (2026-10-19): mapping and decisions
+
+1. **Allocation mapping.** The device is ONE `LoadContext` in the existing allocation: a binary EXCESS load (`device_type sg_ready`, always "Charging") whose rating is the nominal extra power. It therefore joins the early-start group (`early_room_kwh`, `early_rate_w`), the Excess pool, the phase-is-buying guard and circuit groups with no new branch in the calculator.
+   - Force = the grant (`available_current > 0` after everything) AND the site's Excess latch (or a full battery, which the Excess behaviour treats the same way). A grant resting on the forecast verdict alone is not actual excess.
+   - Recommended / early start = `hub_runtime["_early_planned_on"]` (forecast-excess source, needs the hub option and this load in the group).
+   - Recommended / SOC and Normal = SOC against the latched target; never true without a battery.
+   - Block = `target_calculator.grid_headroom_w` (signed, unclamped `_calculate_grid_limit`: breaker less buffer, and max import power) on the device's phases, read from `site.consumption` - the household with every managed load off, so the other loads are cut first by construction. It reaches several pumps lowest priority first (`overloaded_devices`). No grid limit (off-grid) = never overloaded.
+2. **Circuit groups and household.** The device may be a member of a circuit group like any load; the group limit then counts its extra draw only. Its Normal draw stays in the household (never a managed draw), so nothing is counted twice. Measured extra draw = power sensor less the last Normal-state reading (held while unavailable); without a sensor, the nominal power while the state is Recommended or Force.
+3. **Release margin.** A constant 300 W (`sg_ready.RELEASE_MARGIN_W`) on top of the Normal draw, not a setting.
+4. **Open point 4 (owner's question).** Following the PV-clipping early start is the single flag `sg_ready.FOLLOW_CLIP_EARLY` (default False): the hook reads `hub_runtime["_early_clip_on"]` beside `["_early_planned_on"]`.
+
+Other choices: no stored key changes for existing entries, so no migration and no `MINOR_VERSION` bump. There is no `strings.json` in this repo; the strings live in `translations/en.json` and `sl.json`. Dynamic Control off drops the relays to Normal once, then hands off; a manual override (the relays operated outside Load Juggler) is left alone. The block history is in memory only, so a restart starts in Normal with no history.
