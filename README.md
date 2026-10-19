@@ -28,7 +28,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Symmetric and asymmetric inverter** support
 - **Circuit groups** - shared breaker limits for co-located loads
 - **Off-grid support** - grid CTs optional, infers phases from inverter output
-- **Auto-detection** of sensors, phase mapping, and charger settings
+- **Auto-detection** of sensors, phase mapping, and charger settings; setup forms also open pre-filled from the Energy dashboard (read only)
 - **OCPP 1.6J** control for EV chargers (Amps or Watts, auto-detected)
 - **Hot water tank control** - thermostat-driven (climate or water heater entity) binary heating loads with away/normal/boost setpoints
 - **Portable power station control** - modulated charge rate plus a managed backup reserve, so a station soaks up surplus and spends it again

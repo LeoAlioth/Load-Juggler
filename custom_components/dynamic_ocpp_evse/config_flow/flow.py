@@ -23,6 +23,7 @@ from ..const import (
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_ID,
@@ -100,9 +101,13 @@ from .helpers import (
     _compose_entry_title,
     _detect_meter_value_interval,
     _check_power_window,
+    _energy_site,
     _entity_registry_ids,
+    _fill_empty,
     _fill_hidden_legs,
+    _grid_meter_suggestion,
     _hub_phase_count,
+    _inverter_suggestions,
     _load_options,
     _normalize_list,
     _normalize_inverter_power_caps,
@@ -119,6 +124,7 @@ from ..ocpp_discovery import (
     ocpp_entry_fields,
     scan_ocpp_chargers,
 )
+from ..registry import get_inverters_for_hub
 from .options import LoadJugglerOptionsFlow
 from .schemas import (
     _charger_current_schema,
@@ -172,6 +178,20 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._discovered_chargers = []
         self._selected_charger = None
         self._entity_cache = None
+        self._suggest: dict | None = None
+
+    async def _inverter_suggest(self) -> dict:
+        """What the Energy dashboard offers this new inverter, worked out
+        once per flow (_inverter_suggestions)."""
+        if self._suggest is None:
+            self._suggest = _inverter_suggestions(
+                self.hass,
+                await _energy_site(self.hass),
+                first=not get_inverters_for_hub(
+                    self.hass, self._data.get(CONF_HUB_ENTRY_ID)
+                ),
+            )
+        return self._suggest
 
     def _get_entity_registry_ids(self) -> list[str]:
         """The auto-detection candidates, scanned once per flow."""
@@ -334,14 +354,17 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             entity_ids = self._get_entity_registry_ids()
             ct_detected = _same_device_fill(self.hass, entity_ids, PHASE_PATTERNS)
 
-            data_schema = _hub_grid_schema(
-                self.hass,
-                {
-                    CONF_PHASE_A_CURRENT_ENTITY_ID: ct_detected["phase_a"],
-                    CONF_PHASE_B_CURRENT_ENTITY_ID: ct_detected["phase_b"],
-                    CONF_PHASE_C_CURRENT_ENTITY_ID: ct_detected["phase_c"],
-                },
-            )
+            # The Energy dashboard names the grid meter: its device's readings,
+            # and whether the dashboard declares them inverted, win over the
+            # guess; without a usable meter the detection stands.
+            defaults = _grid_meter_suggestion(
+                self.hass, await _energy_site(self.hass)
+            ) or {
+                CONF_PHASE_A_CURRENT_ENTITY_ID: ct_detected["phase_a"],
+                CONF_PHASE_B_CURRENT_ENTITY_ID: ct_detected["phase_b"],
+                CONF_PHASE_C_CURRENT_ENTITY_ID: ct_detected["phase_c"],
+            }
+            data_schema = _hub_grid_schema(self.hass, defaults)
 
         except Exception as e:
             _LOGGER.error("Error in async_step_hub_grid: %s", e, exc_info=True)
@@ -689,9 +712,16 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data.update(user_input)
                 return await self.async_step_inverter_config()
 
+        defaults = {**self._data, **(user_input or {})}
+        if user_input is None:  # first show only: what was typed always wins
+            suggested = await self._inverter_suggest()
+            defaults = _fill_empty(
+                defaults,
+                {k: v for k, v in suggested.items() if k == CONF_INVERTER_FEATURES},
+            )
         return self.async_show_form(
             step_id="inverter_features",
-            data_schema=_inverter_features_schema({**self._data, **(user_input or {})}),
+            data_schema=_inverter_features_schema(defaults),
             errors=errors,
             last_step=False,
         )
@@ -746,6 +776,16 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return await self._async_after_inverter_config()
 
         defaults = {**self._data, **(user_input or {})}
+        if user_input is None:  # first show only: what was typed always wins
+            suggested = await self._inverter_suggest()
+            defaults = _fill_empty(
+                defaults,
+                {
+                    k: v
+                    for k, v in suggested.items()
+                    if k in (CONF_SOLAR_PRODUCTION_ENTITY_ID, CONF_SOLAR_FORECAST_DEVICE_IDS)
+                },
+            )
         data_schema = vol.Schema(
             dict(
                 [
@@ -787,13 +827,23 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 self._data.update(user_input)
                 return await self._async_after_inverter_battery()
 
-        data_schema = vol.Schema(
-            dict(
-                _build_inverter_battery_schema(
-                    self.hass, {**self._data, **(user_input or {})}
-                )
+        defaults = {**self._data, **(user_input or {})}
+        if user_input is None:  # first show only: what was typed always wins
+            suggested = await self._inverter_suggest()
+            defaults = _fill_empty(
+                defaults,
+                {
+                    k: v
+                    for k, v in suggested.items()
+                    if k
+                    in (
+                        CONF_BATTERY_POWER_ENTITY_ID,
+                        CONF_BATTERY_SOC_ENTITY_ID,
+                        CONF_BATTERY_CAPACITY_KWH,
+                    )
+                },
             )
-        )
+        data_schema = vol.Schema(dict(_build_inverter_battery_schema(self.hass, defaults)))
         return self.async_show_form(
             step_id="inverter_battery",
             data_schema=data_schema,
