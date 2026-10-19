@@ -75,6 +75,8 @@
                     "phase_b_current_entity_id": "Senzor za tok faze B (neobvezno - nastavite na 'None' za enofazno)",
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno - nastavite na 'None' za eno/dvofazno)",
                     "main_breaker_rating": "Nazivni tok glavnega odklopnika (na fazo)",
+                    "grid_input_is_generator": "Senzorji omrežja merijo agregat",
+                    "generator_rating": "Nazivni tok agregata (na fazo)",
                     "invert_phases": "Obrni odčitke toka",
                     "enable_max_import_power": "Omogoči omejitev največje odjemne moči",
                     "max_import_power_entity_id": "Senzor za največjo odjemno moč (neobvezno - nadomesti drsnik)",
@@ -100,6 +102,8 @@
                 },
                 "data_description": {
                     "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "grid_input_is_generator": "Obkljukajte, če zgornji fazni senzorji merijo rezervni agregat, priključen na izmenični vhod razsmernika, ne omrežja. Objekt ostane brez omrežja: agregat je le še en vir, izvoza vanj ni, dokler njegovi senzorji niso na voljo (agregat izklopljen), pa ne šteje nič.",
+                    "generator_rating": "Največji tok, ki ga agregat sme dati na fazo - pri Victronu omejitev toka izmeničnega vhoda. Ko je zgornje polje obkljukano, se uporablja namesto nazivnega toka glavnega odklopnika.",
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
                     "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = varovalka x faze x napetost). Odznačite, da drsnik odstranite - vendar pozor: senzor za preglasitev spodaj, če je nastavljen, še vedno velja; ima prednost pred drsnikom in pred to nastavitvijo.",
                     "max_import_power_entity_id": "Napredno - uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom.",
@@ -591,6 +595,8 @@
                     "phase_c_current_entity_id": "Senzor za tok faze C (neobvezno)",
                     "invert_phases": "Obrni odčitke toka",
                     "main_breaker_rating": "Nazivni tok glavnega odklopnika (na fazo)",
+                    "grid_input_is_generator": "Senzorji omrežja merijo agregat",
+                    "generator_rating": "Nazivni tok agregata (na fazo)",
                     "phase_voltage": "Napetost na fazo",
                     "enable_max_import_power": "Omogoči omejitev največje odjemne moči",
                     "max_import_power_entity_id": "Senzor za največjo odjemno moč (neobvezno - nadomesti drsnik)"
@@ -598,6 +604,8 @@
                 "data_description": {
                     "invert_phases": "Omogočite, če vaša CT sonda bere negativne vrednosti pri uvozu energije iz omrežja. Pogosto pri nekaterih Shelly in Eastron merilnikih.",
                     "main_breaker_rating": "Nazivni tok (v amperih), natisnjen na vašem glavnem odklopniku. Uporablja se za izračun maksimalne varne porabe moči na fazo.",
+                    "grid_input_is_generator": "Obkljukajte, če zgornji fazni senzorji merijo rezervni agregat, priključen na izmenični vhod razsmernika, ne omrežja. Objekt ostane brez omrežja: agregat je le še en vir, izvoza vanj ni, dokler njegovi senzorji niso na voljo (agregat izklopljen), pa ne šteje nič.",
+                    "generator_rating": "Največji tok, ki ga agregat sme dati na fazo - pri Victronu omejitev toka izmeničnega vhoda. Ko je zgornje polje obkljukano, se uporablja namesto nazivnega toka glavnega odklopnika.",
                     "phase_voltage": "Običajno 230 V v Evropi, 120 V v Severni Ameriki.",
                     "enable_max_import_power": "Ko je omogočeno, ustvari drsnik za omejitev skupne uvozne moči (privzeto = varovalka x faze x napetost). Odznačite, da drsnik odstranite - vendar pozor: senzor za preglasitev spodaj, če je nastavljen, še vedno velja; ima prednost pred drsnikom in pred to nastavitvijo.",
                     "max_import_power_entity_id": "Napredno - uporabite predlogo senzorja ali input_number namesto vgrajenega drsnika. Ko je nastavljen, ima prednost pred drsnikom."

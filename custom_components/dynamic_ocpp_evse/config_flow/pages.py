@@ -41,6 +41,8 @@ from ..const import (
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
+    CONF_GENERATOR_RATING,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_INVERT_PHASES,
     CONF_MAIN_BREAKER_RATING,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
@@ -63,6 +65,7 @@ from ..const import (
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_DISTRIBUTION_MODE,
     DEFAULT_HEATING_ELEMENT_POWER,
+    DEFAULT_GENERATOR_RATING,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
@@ -595,6 +598,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             CONF_PHASE_C_CURRENT_ENTITY_ID,
         )
     ]
+    generator = bool(get_entry_value(entry, CONF_GRID_INPUT_IS_GENERATOR, False))
     if any(configured_cts):
         grid_phases = [None, None, None]
         try:
@@ -610,11 +614,18 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             # configured-but-unreadable CT (it deliberately does not invent 0 A),
             # so the overview can say so instead of showing a confident "0.0 A".
             if units.is_unusable_number(value):
-                lines.append(f"- Phase {label}: {_DASH} (sensor unreadable)")
+                lines.append(
+                    f"- Phase {label}: {_DASH} "
+                    + ("(generator not connected)" if generator else "(sensor unreadable)")
+                )
                 continue
             flow = "export" if value < 0 else "import"
+            if generator:
+                lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} from the generator")
+                continue
             lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
-        off_grid = False
+        # A generator on the grid input is off-grid: no meter, nothing to export to.
+        off_grid = generator
     else:
         lines.append("- No grid CTs configured - off-grid site")
         off_grid = True
@@ -991,7 +1002,12 @@ def _summary_text(hass, hub_entry_id: str) -> str:
         )
         if get_entry_value(entry, key, None)
     ]
-    if grid_cts:
+    if grid_cts and get_entry_value(entry, CONF_GRID_INPUT_IS_GENERATOR, False):
+        lines.append(
+            "- ✓ Off-grid with a generator on the grid input, "
+            f"{_fmt(get_entry_value(entry, CONF_GENERATOR_RATING, DEFAULT_GENERATOR_RATING), 'A', 0)} per phase"
+        )
+    elif grid_cts:
         lines.append(
             f"- ✓ Grid CTs on phase {', '.join(grid_cts)}, main breaker "
             f"{_fmt(get_entry_value(entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING), 'A', 0)} per phase"

@@ -6,6 +6,11 @@ CONF_PHASE_B_CURRENT_ENTITY_ID = "phase_b_current_entity_id"
 CONF_PHASE_C_CURRENT_ENTITY_ID = "phase_c_current_entity_id"
 CONF_MAIN_BREAKER_RATING = "main_breaker_rating"
 CONF_INVERT_PHASES = "invert_phases"
+# The "grid" sensors read what a backup generator feeds into the inverter's AC input
+# (JUG-13): the site is off-grid, the generator is one more supply capped at its own
+# per-phase rating, and nothing can be exported to it.
+CONF_GRID_INPUT_IS_GENERATOR = "grid_input_is_generator"
+CONF_GENERATOR_RATING = "generator_rating"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_ENABLE_MAX_IMPORT_POWER = "enable_max_import_power"  # Checkbox: create slider for max import power
 CONF_PHASE_VOLTAGE = "phase_voltage"
@@ -68,6 +73,7 @@ CONF_FILTER_RAMP_DOWN_RATE = "filter_ramp_down_rate"    # RAMP_DOWN_RATE (A/s)
 
 # Hub default values
 DEFAULT_MAIN_BREAKER_RATING = 25
+DEFAULT_GENERATOR_RATING = 6  # A per phase - the MultiPlus AC input limit on the first site
 DEFAULT_SITE_UPDATE_FREQUENCY = 2  # Fast site info refresh (seconds)
 DEFAULT_SOLAR_GRACE_PERIOD = 5  # minutes
 DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000  # LEGACY - migration fallback only

@@ -221,6 +221,19 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     # Total raw demand across active phases
     total_raw = sum(v for v in [raw_a, raw_b, raw_c] if v is not None)
 
+    # A generator on the grid input (JUG-13), while running: it passes through
+    # to the loads up to its rating before the pack is asked for anything, and
+    # its AC-in reading (``site.generator_current``, set below) carries it.
+    generator_supply = 0.0
+    generator_running = (
+        site.is_off_grid
+        and site.generator_rating > 0
+        and site.generator_current is not None
+    )
+    if generator_running and total_raw > 0:
+        generator_supply = min(total_raw, site.generator_rating * num_phases)
+        total_raw -= generator_supply
+
     # Self-consumption battery: buffer to minimize grid flow
     battery_per_phase = 0.0
     if site.battery_soc is not None:
@@ -258,7 +271,10 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
 
     # Grid CT = raw + battery effect: a symmetric inverter's solar and battery
     # flow land evenly on every phase.
-    nets = [None if r is None else r + battery_per_phase for r in (raw_a, raw_b, raw_c)]
+    nets = [
+        None if r is None else r - generator_supply / num_phases + battery_per_phase
+        for r in (raw_a, raw_b, raw_c)
+    ]
     if site.inverter_supports_asymmetric and num_phases > 1:
         # An asymmetric one places the same net output per phase so the grid
         # phases come out as equal as it can make them (place_asymmetric_output).
@@ -295,6 +311,12 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             return 0.0 if h is not None else None
         site.consumption = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
         site.export_current = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
+        if generator_running:
+            # What the generator carries per phase: the AC-in reading.
+            per = generator_supply / num_phases
+            site.generator_current = PhaseValues(
+                *[None if h is None else per for h in (household.a, household.b, household.c)]
+            )
 
     # Set battery_power for engine battery awareness in derived mode.
     # Convention: positive = discharging, negative = charging.
@@ -606,6 +628,16 @@ def build_site_from_scenario(scenario, excess_on=False):
         allow_grid_charging=site_data.get('allow_grid_charging', True),
         is_off_grid=site_data.get('off_grid', False),
     )
+    # ``generator: {rating: 6, running: true}`` - a backup generator on the grid
+    # input of an off-grid site (JUG-13). ``running: false`` is the AC-in
+    # reading being unavailable: the site is plainly off-grid.
+    generator = site_data.get('generator')
+    if generator:
+        site.generator_rating = float(generator['rating'])
+        if generator.get('running', True):
+            site.generator_current = PhaseValues(
+                *[None if c is None else 0.0 for c in (phase_a_cons, phase_b_cons, phase_c_cons)]
+            )
 
     # Per-phase inverter output: explicit values or auto-derived from simulation
     inv_out_a = site_data.get('inverter_output_phase_a')

@@ -64,7 +64,9 @@ def _read(monkeypatch, grid, inverter_phases):
         hub_calculation, "get_entry_value",
         lambda entry, key, default=None: entry.options.get(key, default),
     )
-    return hub_calculation._read_site_phases(None, SimpleNamespace(entry_id="h"), V)
+    return hub_calculation._read_site_phases(
+        None, SimpleNamespace(entry_id="h", options={}), V
+    )
 
 
 ABC = (

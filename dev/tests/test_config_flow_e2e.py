@@ -31,6 +31,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_MAIN_BREAKER_RATING,
     CONF_INVERT_PHASES,
+    CONF_GENERATOR_RATING,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -669,11 +671,16 @@ async def test_options_flow_hub_saves_changes(
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
             CONF_MAIN_BREAKER_RATING: 25,
             CONF_INVERT_PHASES: False,
+            CONF_GRID_INPUT_IS_GENERATOR: True,
+            CONF_GENERATOR_RATING: 6,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+    # JUG-13: additive optional keys, no migration - stored as given.
+    assert mock_hub_entry.options.get(CONF_GRID_INPUT_IS_GENERATOR) is True
+    assert mock_hub_entry.options.get(CONF_GENERATOR_RATING) == 6
 
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_export")
     result = await hass.config_entries.options.async_configure(

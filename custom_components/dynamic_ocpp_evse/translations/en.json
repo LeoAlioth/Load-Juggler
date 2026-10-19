@@ -75,6 +75,8 @@
                     "phase_b_current_entity_id": "Sensor for phase B current (optional - set to 'None' for single-phase)",
                     "phase_c_current_entity_id": "Sensor for phase C current (optional - set to 'None' for single/two-phase)",
                     "main_breaker_rating": "Main breaker rating (per phase)",
+                    "grid_input_is_generator": "The grid sensors read a generator",
+                    "generator_rating": "Generator rating (per phase)",
                     "invert_phases": "Invert current readings",
                     "enable_max_import_power": "Create max import power limit slider",
                     "max_import_power_entity_id": "Sensor for maximum import power (optional override)",
@@ -100,6 +102,8 @@
                 },
                 "data_description": {
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
+                    "grid_input_is_generator": "Tick if the phase sensors above read a backup generator feeding the inverter's AC input, not the grid. The site then stays off-grid: the generator is one more supply, nothing can be exported to it, and while its sensors are unavailable (generator off) it counts for nothing.",
+                    "generator_rating": "The most current the generator may deliver per phase - on a Victron, the AC input current limit. Used instead of the main breaker rating when the box above is ticked.",
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
                     "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to remove the slider - but note that an override sensor below, if set, still applies: it takes precedence over both the slider and this checkbox.",
                     "max_import_power_entity_id": "Advanced - use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider.",
@@ -591,6 +595,8 @@
                     "phase_c_current_entity_id": "Sensor for phase C current (optional)",
                     "invert_phases": "Invert current readings",
                     "main_breaker_rating": "Main breaker rating (per phase)",
+                    "grid_input_is_generator": "The grid sensors read a generator",
+                    "generator_rating": "Generator rating (per phase)",
                     "phase_voltage": "Phase voltage",
                     "enable_max_import_power": "Create max import power limit slider",
                     "max_import_power_entity_id": "Sensor for maximum import power (optional override)"
@@ -598,6 +604,8 @@
                 "data_description": {
                     "invert_phases": "Enable if your CT clamp reads negative values when importing power from the grid. Common with some Shelly and Eastron meters.",
                     "main_breaker_rating": "The amperage rating printed on your main circuit breaker. Used to calculate maximum safe power draw per phase.",
+                    "grid_input_is_generator": "Tick if the phase sensors above read a backup generator feeding the inverter's AC input, not the grid. The site then stays off-grid: the generator is one more supply, nothing can be exported to it, and while its sensors are unavailable (generator off) it counts for nothing.",
+                    "generator_rating": "The most current the generator may deliver per phase - on a Victron, the AC input current limit. Used instead of the main breaker rating when the box above is ticked.",
                     "phase_voltage": "Typically 230V in Europe, 120V in North America.",
                     "enable_max_import_power": "When enabled, creates a slider to limit total import power (default = breaker x phases x voltage). Uncheck to remove the slider - but note that an override sensor below, if set, still applies: it takes precedence over both the slider and this checkbox.",
                     "max_import_power_entity_id": "Advanced - use a template sensor or input_number instead of the built-in slider. When set, takes precedence over the slider."

@@ -57,8 +57,10 @@ from ..const import (
     CONF_EXCESS_HYSTERESIS,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
+    CONF_GENERATOR_RATING,
     CONF_GRID_EXPORT_LIMIT,
     CONF_GRID_EXPORT_LIMIT_PER_PHASE,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_HEATING_ELEMENT_POWER,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_ENTITY_ID,
@@ -161,6 +163,7 @@ from ..const import (
     DEFAULT_EXCESS_HYSTERESIS,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
+    DEFAULT_GENERATOR_RATING,
     DEFAULT_GRID_EXPORT_LIMIT,
     DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE,
     DEFAULT_HEATING_ELEMENT_POWER,
@@ -342,6 +345,20 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
                 CONF_INVERT_PHASES, default=defaults.get(CONF_INVERT_PHASES, False)
             ),
             bool,
+        ),
+        # JUG-13: the sensors above read a backup generator on the inverter's AC
+        # input, not a grid. Off-grid, with the generator one more supply capped
+        # at its own rating; nothing can be exported to it.
+        (
+            vol.Required(
+                CONF_GRID_INPUT_IS_GENERATOR,
+                default=defaults.get(CONF_GRID_INPUT_IS_GENERATOR, False),
+            ),
+            bool,
+        ),
+        _num(
+            CONF_GENERATOR_RATING, defaults, DEFAULT_GENERATOR_RATING,
+            1, 200, 1, "A",
         ),
         (
             vol.Required(
@@ -794,7 +811,9 @@ HUB_CONNECTION_KEYS = (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_INVERT_PHASES,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_MAIN_BREAKER_RATING,
+    CONF_GENERATOR_RATING,
     CONF_PHASE_VOLTAGE,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,

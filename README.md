@@ -122,6 +122,8 @@ Load Juggler works on off-grid installations. When no grid CT entities are confi
 
 Configure inverter output entities on the inverter entry. The hub status sensor shows "Off-grid mode" when no grid CTs are present.
 
+**A generator on the grid input** (a backup generator wired to the inverter's AC input, as on a Victron MultiPlus): put the AC-in power or current sensors in the hub's phase fields, tick *Grid sensors read a generator* and set the *Generator rating*. The site stays off-grid in every respect - no export, Excess on the battery side only - and the generator adds a supply of its own: its rating less what it carries now (the AC-in reading) is the room it still has, and our loads' draws are not taken off that reading. While the sensors are unavailable, as a Victron's are with no source connected, the site behaves exactly as off-grid does without one.
+
 ## Multiple Inverters
 
 A site can have several inverters - typically an older AC-coupled string inverter plus a newer hybrid with a battery. Each is added as its own **Inverter** entry linked to the hub (*Add Inverter / Home Battery* in the setup menu), carrying everything physically attached to it: capacity, per-phase limit, output sensors, optional input sensors (or a tick that the grid flows through it), its PV array (production sensor and solar forecast device) and optionally its battery (SOC/power sensors, charge/discharge limits, full-SOC, capacity).
@@ -235,6 +237,8 @@ I recommend including "Power Limit" in the name so it gets auto-selected during 
 | Grid export limit per phase | Optional cap (W) on what one phase may export. The forecast's learning counts the inverter as curtailing when the total is at its limit OR any phase is at this one (an asymmetric inverter can breach one phase while the total passes). It does not enable the forecast or move the Excess trigger (0 = none) | 0 |
 | Excess trigger margin | How far below the export limit Excess mode engages (W) | 500W |
 | Invert phases | Flip CT polarity if installed backwards | Off |
+| Grid sensors read a generator | The phase sensors measure a backup generator feeding the inverter's AC input, not a grid. The site stays off-grid (nothing is exported to it); the generator is one more supply, capped at its rating, and counts for nothing while its sensors are unavailable (generator off) | Off |
+| Generator rating | Most current the generator may deliver per phase (A) - on a Victron, the AC input current limit. Used instead of the main breaker rating when the box above is ticked | 6A |
 | Distribution mode | How to allocate power between loads | Priority |
 | Solar/Excess grace period | How long Solar/Excess loads keep running at minimum when conditions lapse (min) | 5 |
 | Battery SOC hysteresis | SOC change before triggering mode switches (%) | 3% |
