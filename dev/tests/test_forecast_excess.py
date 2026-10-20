@@ -282,6 +282,25 @@ def test_every_binary_excess_load_follows_the_verdict():
     ) == 0
 
 
+def test_a_due_groups_fixed_load_keeps_its_permit_whatever_the_pool():
+    """The group was judged on the energy it can spend before the battery is full
+    (paced 2.2 kW), not on the sun the battery is absorbing this minute (0.3 kW):
+    a fixed-power member keeps its full rating, behind a claim ahead of it too -
+    re-tested against the instantaneous pool it was withdrawn after its minimum
+    run and let start again after its rest (Kozolec, 20 Oct 2026). Not due, or on
+    a phase that is buying, it gets nothing."""
+    full = PhaseConstraints.from_pool(30, 30, 30, 30)
+    site = _site(charge_w=300.0, pace_w=2200.0)
+    pool = _calculate_excess_available(site)
+    due, waiting = _tank(early_start_ok=True), _tank(early_start_ok=False)
+    for ahead in (None, -3.0):
+        assert _source_limit(due, site, full, pool, excess_ahead=ahead) == pytest.approx(8.3)
+    assert _source_limit(waiting, site, full, pool) == 0
+    buying = _site(charge_w=300.0, pace_w=2200.0, export=0.0, consumption=1.0)
+    buying.battery_power = 0.0   # no charge to hand out: the phase is importing
+    assert _source_limit(due, buying, full, _calculate_excess_available(buying)) == 0
+
+
 @pytest.mark.parametrize("behavior", [BEHAVIOR_SOLAR_ONLY, BEHAVIOR_SOLAR_PRIORITY])
 def test_solar_behaviours_ignore_the_forecast_verdict(behavior):
     # battery under its target: Solar Only 0, Solar Priority its minimum - as
@@ -469,19 +488,22 @@ async def test_hub_without_a_battery_reading_is_inert(hass):
 # --- early start per load: counting back from the next full charge ---------------------
 
 def test_starts_early_is_the_latest_start_before_the_next_full_charge():
-    # 16.1 kWh at a 1.9 kW element is 8.5 h of heating: from 8.4 h before full
-    assert starts_early(16.1, 8.4, 1900) is True
+    # 16.1 kWh at a 1.9 kW element is 8.5 h of heating; the paced rate must be
+    # 10 % above the element's power, so from 7.7 h before full (8.5 / 1.1)
+    assert starts_early(16.1, 7.6, 1900) is True
+    assert starts_early(16.1, 8.4, 1900) is False
     assert starts_early(16.1, 9.0, 1900) is False
     # 2.4 kWh is 1.3 h: nowhere near, the boiler waits for the full battery
     assert starts_early(2.4, 8.4, 1900) is False
-    assert starts_early(2.4, 1.2, 1900) is True
+    assert starts_early(2.4, 1.1, 1900) is True
+    assert starts_early(2.4, 1.2, 1900) is False
     # full now (0 h left): any energy goes
     assert starts_early(0.5, 0.0, 1900) is True
 
 
 def test_starts_early_holds_inside_a_band_and_is_off_when_unreadable():
     assert starts_early(16.1, 9.0, 1900) is False
-    assert starts_early(16.1, 9.0, 1900, was_on=True) is True  # inside the 20 % band
+    assert starts_early(16.1, 9.0, 1900, was_on=True) is True  # inside the 10 % band (released at 0.9 of the power; started at 1.1)
     assert starts_early(16.1, 11.0, 1900, was_on=True) is False
     assert starts_early(None, 2.0, 1900) is False
     assert starts_early(3.0, None, 1900) is False
@@ -496,9 +518,11 @@ def test_a_load_not_yet_due_does_not_take_the_forecast_verdict():
 
 
 def test_early_group_shares_the_energy_and_starts_together_at_full_power():
-    # boiler 1.9 kW + 300 W load: 2.2 kW together; 16.1 kWh fits 7.3 h of that
+    # boiler 1.9 kW + 300 W load: 2.2 kW together; 16.1 kWh fits 7.3 h of that,
+    # 6.65 h with the 10 % start margin
     assert early_group([1900, 300], [None, None], 16.1, 8.0) == (False, 2200.0, 16.1)
-    due, group_w, usable = early_group([1900, 300], [None, None], 16.1, 7.0)
+    assert early_group([1900, 300], [None, None], 16.1, 7.0)[0] is False
+    due, group_w, usable = early_group([1900, 300], [None, None], 16.1, 6.5)
     assert (due, group_w, usable) == (True, 2200.0, 16.1)
     # the group never plans more than the rooms can take, nor more power than the charge rating
     assert early_group([1900, 300], [1.0, 0.5], 16.1, 7.0)[2] == 1.5
@@ -553,8 +577,8 @@ def test_the_engine_starts_every_taker_together_when_the_group_is_due():
     on, site = run(16.1, 15.0, [boiler, small])
     assert (boiler.early_start_ok, small.early_start_ok) == (False, False)
     assert on is False
-    # 7 h before full both go at once
-    on, site = run(16.1, 7.0, [boiler, small])
+    # 6.5 h before full both go at once (7.3 h of heating, 10 % margin)
+    on, site = run(16.1, 6.5, [boiler, small])
     assert (boiler.early_start_ok, small.early_start_ok) == (True, True)
     assert on is True and site.forecast_excess is True
     # today: 2.4 kWh, 8 h to full - the group waits
@@ -562,7 +586,7 @@ def test_the_engine_starts_every_taker_together_when_the_group_is_due():
     assert (boiler.early_start_ok, small.early_start_ok) == (False, False)
     # a load with no room left drops out of the group: the others carry on alone
     small.early_room_kwh = 0.0
-    run(16.1, 8.4, [boiler, small])
+    run(16.1, 7.4, [boiler, small])
     assert (boiler.early_start_ok, small.early_start_ok) == (True, False)
     # the boiler alone, not due: no site verdict at all, so no pool top-up either
     boiler.early_room_kwh = None
