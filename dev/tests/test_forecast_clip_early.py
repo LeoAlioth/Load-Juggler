@@ -80,7 +80,7 @@ def test_a_load_absorbs_its_room_or_its_power_over_the_span():
 
 # --- the engine wiring -------------------------------------------------------------------
 
-CLIP = {"kwh": 3.0, "start_h": 1.5, "span_h": 4.0}
+CLIP = {"kwh": 3.0, "start_h": 1.2, "span_h": 4.0}
 
 
 def _run(options=None, clip=CLIP, loads=None, soc=85.0, runtime=None, planned=None, hours=8.0):
@@ -101,7 +101,7 @@ def _run(options=None, clip=CLIP, loads=None, soc=85.0, runtime=None, planned=No
 
 
 def test_a_load_is_due_when_the_clip_fits_the_hours_before_the_window():
-    # 3 kWh >= 1.9 kW x 1.5 h = 2.86 kWh: due
+    # 3 kWh >= 1.1 x 1.9 kW x 1.2 h = 2.5 kWh: due
     boiler = _tank()
     on, site, _ = _run(loads=[boiler])
     assert boiler.early_start_ok is True and on is True and site.forecast_excess is True
@@ -114,7 +114,7 @@ def test_a_load_is_due_when_the_clip_fits_the_hours_before_the_window():
 
 def test_the_pool_is_topped_up_at_the_clip_over_the_hours_to_the_windows_end():
     _, site, _ = _run()
-    assert site.forecast_excess_pace_w == pytest.approx(3000.0 / 5.5)
+    assert site.forecast_excess_pace_w == pytest.approx(3000.0 / 5.2)
 
 
 def test_it_is_off_without_the_option():
@@ -147,7 +147,7 @@ def test_a_blocked_load_does_not_join():
 
 
 def test_a_room_sensor_limits_the_energy_a_load_can_use():
-    # 1 kWh of room: 1 kWh < 1.9 kW x 1.5 h, not due; with the window 0.4 h away it is
+    # 1 kWh of room: 1 kWh < 1.1 x 1.9 kW x 1.2 h, not due; with the window 0.4 h away it is
     small = _tank(early_room_kwh=1.0)
     assert _run(loads=[small])[0] is False
     small = _tank(early_room_kwh=1.0)
@@ -155,7 +155,7 @@ def test_a_room_sensor_limits_the_energy_a_load_can_use():
 
 
 def test_without_a_room_sensor_a_load_can_use_its_power_over_the_span():
-    # a 1.9 kW tank over a 1 h clip can take 1.9 kWh of the 3 kWh: 1.9 < 1.9 x 1.5
+    # a 1.9 kW tank over a 1 h clip can take 1.9 kWh of the 3 kWh: 1.9 < 1.1 x 1.9 x 1.2
     boiler = _tank()
     assert _run(clip={**CLIP, "span_h": 1.0}, loads=[boiler])[0] is False
     boiler = _tank()
@@ -165,24 +165,24 @@ def test_without_a_room_sensor_a_load_can_use_its_power_over_the_span():
 def test_the_group_starts_together_and_holds_inside_the_band():
     a, b = _tank(), _tank()
     b.load_id = "b"
-    # 2 x 1.9 kW x 0.8 h = 3.06 kWh > 3: not due; at 0.7 h due
+    # 1.1 x 2 x 1.9 kW x 0.8 h = 3.4 kWh > 3: not due; at 0.7 h (2.9 kWh) due
     assert _run(clip={**CLIP, "start_h": 0.8}, loads=[a, b])[0] is False
     runtime = {}
     on, _, runtime = _run(clip={**CLIP, "start_h": 0.7}, loads=[a, b], runtime=runtime)
     assert on and (a.early_start_ok, b.early_start_ok) == (True, True)
-    # once on it holds down to 80 % of the start condition: 3.06 kWh x 0.8 = 3.06 >= 2.45
+    # once on it holds down to 0.9 of the group's power: 0.9 x 3.8 kW x 0.8 h = 2.7 kWh <= 3
     on, _, _ = _run(clip={**CLIP, "start_h": 0.8}, loads=[a, b], runtime=runtime)
     assert on and (a.early_start_ok, b.early_start_ok) == (True, True)
 
 
 def test_it_does_not_disturb_the_planned_energy_source():
-    # the planned energy alone (no clip): as before - 3 kWh, 1.5 h to full, 1.9 kW: due
+    # the planned energy alone (no clip): as before - 3 kWh, 1.3 h to full, 1.9 kW: due
     boiler = _tank()
     on, site, _ = _run(
-        options={CONF_FORECAST_EXCESS_ENABLED: True}, clip=None, loads=[boiler], planned=3.0, hours=1.5
+        options={CONF_FORECAST_EXCESS_ENABLED: True}, clip=None, loads=[boiler], planned=3.0, hours=1.3
     )
     assert on and boiler.early_start_ok
-    assert site.forecast_excess_pace_w == pytest.approx(3000.0 / 1.5)
+    assert site.forecast_excess_pace_w == pytest.approx(3000.0 / 1.3)
     # both sources: the verdict is either's, the pool the larger pace
     boiler = _tank()
     _, site, _ = _run(
@@ -196,7 +196,7 @@ def test_a_waiting_group_says_it_is_for_the_clipping_forecast():
     other.load_id = "other"
     runtime = {}
     _, site, runtime = _run(clip={**CLIP, "start_h": 3.0, "kwh": 6.0}, loads=[waiting, other], runtime=runtime)
-    # 6 kWh is 1.57 h of the pair's 3.8 kW: not due 3 h ahead, due from 1.4 h ahead
+    # 6 kWh is 1.57 h of the pair's 3.8 kW: not due 3 h ahead, due from 1.4 h ahead (1.3 with the 10 % margin)
     assert not waiting.early_start_ok
     runtime["_clip_active"] = (6.0, 3.0, 4.0)  # what the engine keeps while the verdict is on
     hass = SimpleNamespace(data={DOMAIN: {"loads": {"tank": {}, "other": {}}}})

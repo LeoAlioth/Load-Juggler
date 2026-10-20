@@ -83,6 +83,8 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   restart margin (applied in _source_limit; entities read in engine/readers.py)
 │   ├── forecast_excess.py         # Forecast-driven Excess verdict latch and pool top-up (gate SOC, planned
 │   │                              #   energy > 0.2 kWh, paced rate); the engine latches it, the calculator reads it
+│   │                              #   The early-start group starts at 1.1 x and holds to 0.9 x its power, and a due
+│   │                              #   group's fixed-power loads keep their permit (owner, 2026-10-20)
 │   │                              #   The early-start group rule (``early_group``/``early_blocker``) has two energy
 │   │                              #   sources, both latched in engine/hub_calculation._apply_forecast_excess: the
 │   │                              #   planned energy counted back from the next full charge, and (hub option

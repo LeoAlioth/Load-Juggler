@@ -2078,6 +2078,19 @@ def _mode_source_limit(
             and _inverter_covers_load(load, site)
         ):
             return load.max_current
+        # A fixed-power load of the early-start group (``early_start_ok`` is
+        # True here only while the group is due) was judged on the ENERGY it
+        # can spend before the battery is next full, at the power it really
+        # pulls, with a band on each side (calculations/forecast_excess.py). The
+        # instantaneous pool - the sun the battery is absorbing right now - is
+        # a different, much smaller measure at dawn, and re-testing a running
+        # load against it withdrew it after its minimum run while an idle one
+        # was let start again after its rest: Kozolec's boiler, 20 Oct 2026,
+        # five 5-minute cycles in 47 minutes. A load that cannot vary its power
+        # cannot follow a pool anyway, so the group's verdict stands for it
+        # until the group releases. The importing guard still applies.
+        if site.forecast_excess and load.early_start_ok and not _excess_phase_is_importing(load, site):
+            return load.max_current
         if excess_ahead is not None and excess_ahead <= 0:
             return 0
         pool = excess.get_available(mask) if excess_ahead is None else excess_ahead

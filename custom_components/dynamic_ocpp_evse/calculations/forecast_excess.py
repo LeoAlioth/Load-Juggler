@@ -32,11 +32,13 @@ FORECAST_EXCESS_MIN_KWH = 0.2
 FORECAST_EXCESS_RELEASE_KWH = FORECAST_EXCESS_MIN_KWH / 2
 
 
-# A load that began early keeps going until its start condition has slipped by
-# this much (a 20 % band, as catch-up's release and pacing's restart margin), so
-# a planned energy or full-charge time wobbling at the boundary does not start
-# and stop it each cycle.
-EARLY_START_RELEASE_RATIO = 0.8
+# The group starts when the paced rate (planned energy over the hours to the
+# next full charge) is this far above its power, and keeps going until it has
+# slipped this far below it (owner, 2026-10-20: 10 % each side, the group's
+# power being what its loads really pull), so a planned energy or full-charge
+# time wobbling at the boundary does not start and stop it each cycle.
+EARLY_START_MARGIN = 1.1
+EARLY_START_RELEASE_RATIO = 0.9
 
 
 def starts_early(planned_kwh, hours_left, load_min_w, was_on=False) -> bool:
@@ -53,7 +55,7 @@ def starts_early(planned_kwh, hours_left, load_min_w, was_on=False) -> bool:
         return False
     if load_min_w <= 0:
         return True
-    ratio = EARLY_START_RELEASE_RATIO if was_on else 1.0
+    ratio = EARLY_START_RELEASE_RATIO if was_on else EARLY_START_MARGIN
     return planned_kwh * 1000.0 >= ratio * load_min_w * hours_left
 
 
