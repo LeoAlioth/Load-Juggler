@@ -23,6 +23,7 @@ from .const import (
     CONF_PLUG_SWITCH_ENTITY_ID, CONF_CLIMATE_ENTITY_ID,
     CONF_STATION_CHARGE_SPEED_ENTITY_ID, CONF_STATION_RESERVE_ENTITY_ID,
     CONF_SG_RELAY_1_ENTITY_ID, CONF_SG_RELAY_2_ENTITY_ID, DEVICE_TYPE_SG_READY,
+    CONF_VL_SETPOINT_ENTITY_ID, DEVICE_TYPE_VARIABLE_LOAD,
     CONF_MANUAL_OVERRIDE_TIMEOUT, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
     MIN_MANUAL_OVERRIDE_TIMEOUT,
 )
@@ -196,6 +197,7 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
                 entry.data.get(CONF_STATION_CHARGE_SPEED_ENTITY_ID),
                 entry.data.get(CONF_STATION_RESERVE_ENTITY_ID),
             ],
+            DEVICE_TYPE_VARIABLE_LOAD: [get_entry_value(entry, CONF_VL_SETPOINT_ENTITY_ID, None)],
         }.get(behaviour_type(entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)), [])
         watched = [e for e in watched if e]
         if watched:

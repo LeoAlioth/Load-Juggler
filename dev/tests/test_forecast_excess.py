@@ -549,6 +549,10 @@ def test_early_blocker_names_why_a_load_sits_out():
     assert early_blocker(tank) is None                        # nothing known: counts as able
     tank.thermal_headroom_k = 1.5
     assert early_blocker(tank) is not None
+    # a tank already in the group stays down to 1 K of boost: the hysteresis band
+    assert early_blocker(tank, was_member=True) is None
+    tank.thermal_headroom_k = 0.8
+    assert early_blocker(tank, was_member=True) is not None
     tank.thermal_headroom_k = 12.0
     assert early_blocker(tank) is None
     tank.early_room_kwh = 0.05

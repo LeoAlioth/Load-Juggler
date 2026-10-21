@@ -227,6 +227,34 @@ from ..const.sg_ready import (
     DEFAULT_SG_MIN_STATE_TIME,
     DEFAULT_SG_NOMINAL_POWER,
 )
+from ..const.variable_load import (
+    CONF_VL_BIAS,
+    CONF_VL_CHARGING_ENTITY_ID,
+    CONF_VL_CONNECTED_ENTITY_ID,
+    CONF_VL_CURRENT_L1_ENTITY_ID,
+    CONF_VL_CURRENT_L2_ENTITY_ID,
+    CONF_VL_CURRENT_L3_ENTITY_ID,
+    CONF_VL_FALLBACK_SETPOINT,
+    CONF_VL_MAX,
+    CONF_VL_MIN,
+    CONF_VL_PHASE_MIN_INTERVAL,
+    CONF_VL_PHASE_MULTI_ABOVE,
+    CONF_VL_PHASE_SINGLE_BELOW,
+    CONF_VL_POWER_ENTITY_ID,
+    CONF_VL_RESEND_INTERVAL,
+    CONF_VL_SETPOINT_ENTITY_ID,
+    CONF_VL_SETPOINT_UNIT,
+    DEFAULT_VL_BIAS,
+    DEFAULT_VL_MAX,
+    DEFAULT_VL_MIN,
+    DEFAULT_VL_PHASE_MIN_INTERVAL,
+    DEFAULT_VL_PHASE_MULTI_ABOVE,
+    DEFAULT_VL_PHASE_SINGLE_BELOW,
+    DEFAULT_VL_RESEND_INTERVAL,
+    DEFAULT_VL_SETPOINT_UNIT,
+    VL_UNIT_AMPS,
+    VL_UNIT_WATTS,
+)
 from ..helpers import normalize_optional_entity
 from .helpers import (
     _CURRENT_UNITS,
@@ -1003,9 +1031,28 @@ def _charger_current_schema(
     Only shows L2/L3 phase mapping fields when the hub has 2+/3+ phases.
     """
     defaults = defaults or {}
-    # One site phase per charger LEG - not a phase mask. L1/L2/L3 each land on
-    # exactly one phase, so the multi-phase combinations that the load pickers
-    # offer (PHASE_MASK_OPTIONS) would be meaningless here.
+    return vol.Schema(
+        dict(
+            [
+                _num(
+                    CONF_EVSE_MINIMUM_CHARGE_CURRENT, defaults, DEFAULT_MIN_CHARGE_CURRENT,
+                    6, 80, 1, "A", required=True,
+                ),
+                _num(
+                    CONF_EVSE_MAXIMUM_CHARGE_CURRENT, defaults, DEFAULT_MAX_CHARGE_CURRENT,
+                    6, 80, 1, "A", required=True,
+                ),
+                *_leg_fields(defaults, hub_phases),
+            ]
+        )
+    )
+
+
+def _leg_fields(defaults: dict, hub_phases: int) -> list[tuple]:
+    """The L1..L3 → site phase fields of a charger (or a variable load), as many
+    as the site has phases. One site phase per LEG - not a phase mask: L1/L2/L3
+    each land on exactly one phase, so the multi-phase combinations that the
+    load pickers offer (PHASE_MASK_OPTIONS) would be meaningless here."""
     leg_phase = selector(
         {
             "select": {
@@ -1024,34 +1071,19 @@ def _charger_current_schema(
     )
 
     def _leg_field(key, phase):
-        # L1 is the charger's first leg and always set. L2/L3 are optional:
-        # blank means the leg is unused (a 1-/2-phase charger). A suggested
-        # value, not a default - a default would come back after the user
-        # clears the field.
+        # L1 is the first leg and always set. L2/L3 are optional: blank means
+        # the leg is unused (a 1-/2-phase device). A suggested value, not a
+        # default - a default would come back after the user clears the field.
         if key == CONF_CHARGER_L1_PHASE:
             return vol.Required(key, default=defaults.get(key, phase))
         return vol.Optional(
             key, description={"suggested_value": defaults.get(key, phase)}
         )
 
-    return vol.Schema(
-        dict(
-            [
-                _num(
-                    CONF_EVSE_MINIMUM_CHARGE_CURRENT, defaults, DEFAULT_MIN_CHARGE_CURRENT,
-                    6, 80, 1, "A", required=True,
-                ),
-                _num(
-                    CONF_EVSE_MAXIMUM_CHARGE_CURRENT, defaults, DEFAULT_MAX_CHARGE_CURRENT,
-                    6, 80, 1, "A", required=True,
-                ),
-                *(
-                    (_leg_field(key, phase), leg_phase)
-                    for key, phase in legs[: max(hub_phases, 1)]
-                ),
-            ]
-        )
-    )
+    return [
+        (_leg_field(key, phase), leg_phase)
+        for key, phase in legs[: max(hub_phases, 1)]
+    ]
 
 
 def _charger_timing_schema(
@@ -1612,6 +1644,86 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                             CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED
                         ),
                     ),
+                    bool,
+                ),
+            ]
+        )
+    )
+
+
+def _variable_load_schema(defaults: dict | None = None, hub_phases: int = 3) -> vol.Schema:
+    """Build schema for a Variable Load (JUG-30) - one page, the readings optional.
+
+    The setpoint entity is optional too: without it the device only publishes
+    its allowance. Its bounds and bias are in the setpoint unit (amps per leg,
+    or watts over its legs).
+    """
+    defaults = defaults or {}
+
+    def _entity(key, domains, device_class=None):
+        filters = [{"domain": d} for d in domains]
+        if device_class:
+            filters = [
+                {"domain": "sensor", "device_class": device_class},
+                *(f for f in filters if f["domain"] != "sensor"),
+            ]
+        return (
+            _optional_entity_field(key, defaults),
+            selector({"entity": {"domain": domains, "filter": filters}}),
+        )
+
+    return vol.Schema(
+        dict(
+            [
+                _entity(CONF_VL_SETPOINT_ENTITY_ID, ["number", "input_number"]),
+                (
+                    vol.Required(
+                        CONF_VL_SETPOINT_UNIT,
+                        default=defaults.get(CONF_VL_SETPOINT_UNIT, DEFAULT_VL_SETPOINT_UNIT),
+                    ),
+                    selector({"select": {"options": [
+                        {"value": VL_UNIT_AMPS, "label": "Amperes per leg (A)"},
+                        {"value": VL_UNIT_WATTS, "label": "Watts (W)"},
+                    ], "mode": "dropdown"}}),
+                ),
+                _num(CONF_VL_MIN, defaults, DEFAULT_VL_MIN, 0, 100000, 0.1, None, required=True),
+                _num(CONF_VL_MAX, defaults, DEFAULT_VL_MAX, 0, 100000, 0.1, None, required=True),
+                *_leg_fields(defaults, hub_phases),
+                _num(CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY, 1, 10, 1, None, required=True),
+                _entity(CONF_VL_CURRENT_L1_ENTITY_ID, ["sensor"]),
+                _entity(CONF_VL_CURRENT_L2_ENTITY_ID, ["sensor"]),
+                _entity(CONF_VL_CURRENT_L3_ENTITY_ID, ["sensor"]),
+                _entity(CONF_VL_POWER_ENTITY_ID, ["sensor", "input_number"]),
+                _entity(CONF_VL_CONNECTED_ENTITY_ID, ["binary_sensor"]),
+                _entity(CONF_VL_CHARGING_ENTITY_ID, ["binary_sensor"]),
+                _num(CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY, 5, 300, 1, "s", required=True),
+                _num(CONF_VL_RESEND_INTERVAL, defaults, DEFAULT_VL_RESEND_INTERVAL, 0, 3600, 1, "s", required=True),
+                _num(CONF_VL_BIAS, defaults, DEFAULT_VL_BIAS, -10000, 10000, 0.1, None, required=True),
+                (
+                    # Optional and clearable; 0 is a real value, so not _optional_entity_field.
+                    vol.Optional(
+                        CONF_VL_FALLBACK_SETPOINT,
+                        description={"suggested_value": defaults.get(CONF_VL_FALLBACK_SETPOINT)}
+                        if defaults.get(CONF_VL_FALLBACK_SETPOINT) is not None else None,
+                    ),
+                    selector({"number": {"min": -100000, "max": 100000, "step": 0.1, "mode": "box"}}),
+                ),
+                _num(CONF_VL_PHASE_MULTI_ABOVE, defaults, DEFAULT_VL_PHASE_MULTI_ABOVE, 0, 50000, 100, "W", required=True),
+                _num(CONF_VL_PHASE_SINGLE_BELOW, defaults, DEFAULT_VL_PHASE_SINGLE_BELOW, 0, 50000, 100, "W", required=True),
+                _num(CONF_VL_PHASE_MIN_INTERVAL, defaults, DEFAULT_VL_PHASE_MIN_INTERVAL, 0, 120, 1, "min", required=True),
+                _entity(CONF_EARLY_ROOM_ENTITY_ID, ["sensor", "input_number"], ["energy", "energy_storage"]),
+                _entity(CONF_EARLY_RATE_ENTITY_ID, ["sensor", "input_number"], "power"),
+                _num(CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD, 0, 30, 1, "min", required=True),
+                _num(
+                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
+                ),
+                (
+                    vol.Required(CONF_PACE_OVER_HORIZON, default=defaults.get(CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON)),
+                    bool,
+                ),
+                (
+                    vol.Required(CONF_CATCH_UP_ENABLED, default=defaults.get(CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED)),
                     bool,
                 ),
             ]

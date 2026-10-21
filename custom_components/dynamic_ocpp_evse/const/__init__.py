@@ -17,4 +17,5 @@ from .plug import *            # noqa: F401,F403
 from .hot_water_tank import *  # noqa: F401,F403
 from .power_station import *   # noqa: F401,F403
 from .sg_ready import *        # noqa: F401,F403
+from .variable_load import *   # noqa: F401,F403
 from .modes import *           # noqa: F401,F403

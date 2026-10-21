@@ -61,8 +61,13 @@ def starts_early(planned_kwh, hours_left, load_min_w, was_on=False) -> bool:
 
 # A thermostat load this close to its boost temperature (K) cannot pull its
 # element for any length of time, and one with less than this much room left today
-# (kWh) has nothing to add: neither counts in the early-start group.
+# (kWh) has nothing to add: neither counts in the early-start group. A hysteresis:
+# a load joins the group from ``EARLY_MIN_HEADROOM_K`` of headroom, and one already
+# in it stays until under ``EARLY_RELEASE_HEADROOM_K`` - a tank hovering at the
+# join line (Kozolec's boiler at 73 C of 75, 19 Oct) otherwise left and rejoined
+# every few minutes.
 EARLY_MIN_HEADROOM_K = 2.0
+EARLY_RELEASE_HEADROOM_K = 1.0
 EARLY_MIN_ROOM_KWH = 0.1
 
 
@@ -71,15 +76,17 @@ EARLY_MIN_ROOM_KWH = 0.1
 EARLY_EVSE_READY = ("Preparing", "Charging", "SuspendedEVSE")
 
 
-def early_blocker(load):
+def early_blocker(load, was_member=False):
     """Why this load sits out the early-start group, or None when it may join.
     Direct checks, no forecast: a car that is not plugged in or not asking, a
     thermostat load already within ``EARLY_MIN_HEADROOM_K`` of its boost
-    temperature, a load with under ``EARLY_MIN_ROOM_KWH`` left to absorb today.
+    temperature (``EARLY_RELEASE_HEADROOM_K`` for a load that was in the group last
+    cycle), a load with under ``EARLY_MIN_ROOM_KWH`` left to absorb today.
     A reading that is not known (None) never blocks."""
     if load.device_type == DEVICE_TYPE_EVSE and load.connector_status not in EARLY_EVSE_READY:
         return "no car ready to charge"
-    if load.thermal_headroom_k is not None and load.thermal_headroom_k < EARLY_MIN_HEADROOM_K:
+    floor = EARLY_RELEASE_HEADROOM_K if was_member else EARLY_MIN_HEADROOM_K
+    if load.thermal_headroom_k is not None and load.thermal_headroom_k < floor:
         return "already near its boost temperature"
     if load.early_room_kwh is not None and load.early_room_kwh < EARLY_MIN_ROOM_KWH:
         return "no room left to absorb today"

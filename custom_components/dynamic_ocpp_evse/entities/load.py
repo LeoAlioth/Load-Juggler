@@ -41,14 +41,18 @@ from ..const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DOMAIN,
     EVSE_MODE_EXCESS,
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_SOLAR_PRIORITY,
     EVSE_RT_READOUT_WATCH,
     LOAD_RT_SUN_PROBE,
+    VL_MODE_HOLD,
+    VL_RT_LEGS_GREW,
+    VL_RT_SIZED_COUNT,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, variable_load_amps
 from ..ocpp_discovery import ocpp_charge_control_entity, ocpp_connector_status_entity
 from .. import units
 from .mixins import LoadEntityMixin, SiteFreshnessMixin
@@ -64,6 +68,7 @@ from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
 from ..control.sg_ready import send_sg_ready_command
+from ..control.variable_load import send_variable_load_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -338,6 +343,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             )
         return attrs
 
+    def _variable_load_floor(self, hub_entry) -> float:
+        """A variable load's minimum per-leg amps: its bounds are in its
+        setpoint unit, over the legs it is sized on - see _build_variable_load()."""
+        return variable_load_amps(
+            self.config_entry,
+            get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
+            self._runtime().get(VL_RT_SIZED_COUNT),
+        )[0]
+
     async def async_process(self, hub_data):
         """Apply one site result to this load: state, timers and commands.
 
@@ -460,7 +474,26 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         device_type = behaviour_type(
             self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         )
-        if device_type == DEVICE_TYPE_EVSE:
+        legs_grew = device_type == DEVICE_TYPE_VARIABLE_LOAD and self._runtime().pop(
+            VL_RT_LEGS_GREW, False
+        )
+        if legs_grew:
+            # It now draws on more legs than it was sized on (switched back to
+            # three phases): the allowance it holds was sized for fewer legs.
+            # Restart the permit from the minimum - the new legs only rise
+            # through the ramp - and let the cut (or the stop) go out now,
+            # not at the command slot, without the one-cycle confirmation.
+            floor = self._variable_load_floor(hub_entry)
+            self._ema_current = self._schmitt_current = self._rate_limited_current = floor
+            self._schmitt_state = "rising"
+            self._short_last_cycle = True
+            self._last_command_time = -float("inf")
+            self._last_commanded_limit = None  # not the cut straight to the new permit
+            _LOGGER.info(
+                "%s draws on more legs than it was sized on - restarting its allowance at %.1f A",
+                self._attr_name, floor,
+            )
+        if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_VARIABLE_LOAD):
             self._available_current = apply_smoothing(
                 self, raw_permit, mode_changed, hub_entry
             )
@@ -477,6 +510,13 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             )
         else:
             self._available_current = raw_permit
+        if (
+            device_type == DEVICE_TYPE_VARIABLE_LOAD
+            and self._operating_mode == VL_MODE_HOLD.key
+        ):
+            # Hold: nothing allowed. The engine claims nothing for it, but an
+            # inactive load is still offered what is left over.
+            raw_permit = self._available_current = 0.0
         self._state = self._available_current
 
         # The pause/grace floor MUST be the same number the engine floored this
@@ -507,6 +547,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 or "A"
             )
             min_charge_current = _min_power / (_voltage * _phases)
+        elif device_type == DEVICE_TYPE_VARIABLE_LOAD:
+            min_charge_current = self._variable_load_floor(hub_entry)
         else:
             # Mirrors _build_evse_load(): runtime "Min Current" slider, then
             # the configured minimum. Plugs and tanks never publish
@@ -855,8 +897,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             else:
                 limit = runnable
 
-        connector_state = self.hass.states.get(self._connector_status_entity)
-        connector_status = units.state_or_unknown(connector_state)
+        if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+            # No OCPP connector: the engine's verdict from its gates.
+            connector_status = hub_data.get("load_connector_status", {}).get(
+                self.config_entry.entry_id
+            ) or units.state_or_unknown(None)
+        else:
+            connector_status = units.state_or_unknown(
+                self.hass.states.get(self._connector_status_entity)
+            )
 
         self._charging_status = determine_charging_status(
             self,
@@ -892,6 +941,13 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             if dynamic_control_on:
                 await send_power_station_command(
                     self, limit, hub_entry, now_mono
+                )
+        elif device_type == DEVICE_TYPE_VARIABLE_LOAD:
+            # Dynamic Control off → hands off: no write, nothing published.
+            if dynamic_control_on:
+                await send_variable_load_command(
+                    self, limit, hub_entry, now_mono,
+                    (hub_data.get("load_potential") or {}).get(self.config_entry.entry_id),
                 )
         else:
             await check_profile_compliance(self, limit, dynamic_control_on)

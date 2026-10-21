@@ -30,6 +30,7 @@ from ..const import (
     EVSE_RT_READOUT_WATCH,
     LOAD_RT_SUN_PROBE,
     SG_RT_STATUS,
+    VL_RT_OUTPUTS,
 )
 from ..control.status import hands_off_status, with_early_start
 from ..helpers import get_entry_value, stored_legs
@@ -538,3 +539,48 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
             "heating_permitted": load_rt.get("tank_heating_permitted"),
             "priority_elevated": load_rt.get("tank_priority_elevated", False),
         }
+
+
+class LoadJugglerAllowanceSensor(LoadJugglerLoadSensor):
+    """One of a Variable Load's published allowance figures (JUG-30): allowed
+    current per leg, the lowest across the legs in use, allowed power, percent
+    of maximum, or the phase advice (``single`` / ``multi``, with its reason as
+    an attribute). Written by control/variable_load.py on each command cycle;
+    unknown until the first."""
+
+    _SPECS = {
+        # key: (name, unit, device class, icon)
+        "allowed_l1": ("Allowed Current L1", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_l2": ("Allowed Current L2", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_l3": ("Allowed Current L3", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_lowest": ("Allowed Current", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_power": ("Allowed Power", "W", SensorDeviceClass.POWER, "mdi:flash"),
+        "allowed_percent": ("Allowed Percent", "%", None, "mdi:percent"),
+        "phase_advice": ("Phase Advice", None, None, "mdi:sine-wave"),
+    }
+    _UNIQUE_SUFFIX = {"allowed_lowest": "allowed_current", "allowed_l1": "allowed_current_l1",
+                      "allowed_l2": "allowed_current_l2", "allowed_l3": "allowed_current_l3"}
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id, key):
+        label, unit, device_class, icon = self._SPECS[key]
+        super().__init__(
+            hass, config_entry, hub_entry, f"{name} {label}",
+            f"{entity_id}_{self._UNIQUE_SUFFIX.get(key, key)}",
+        )
+        self._key = key
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_state_class = SensorStateClass.MEASUREMENT if unit else None
+        self._attr_icon = icon
+        self._attr_native_value = None
+        self._attrs = {}
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+    def _read_site_data(self):
+        published = self._runtime().get(VL_RT_OUTPUTS) or {}
+        self._attr_native_value = published.get(self._key)
+        if self._key == "phase_advice":
+            self._attrs = {"reason": published.get("phase_advice_reason")}

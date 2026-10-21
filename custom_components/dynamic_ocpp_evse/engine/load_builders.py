@@ -77,6 +77,18 @@ from ..const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
+    CONF_VL_CHARGING_ENTITY_ID,
+    CONF_VL_CONNECTED_ENTITY_ID,
+    CONF_VL_CURRENT_L1_ENTITY_ID,
+    CONF_VL_CURRENT_L2_ENTITY_ID,
+    CONF_VL_CURRENT_L3_ENTITY_ID,
+    CONF_VL_POWER_ENTITY_ID,
+    VL_MODE_HOLD,
+    VL_RT_ALLOWED_A,
+    VL_RT_LEGS_IN_USE,
+    VL_RT_LEGS_GREW,
+    VL_RT_SIZED_COUNT,
     CONF_SG_NOMINAL_POWER,
     CONF_SG_POWER_ENTITY_ID,
     DEFAULT_SG_NOMINAL_POWER,
@@ -113,7 +125,8 @@ from ..const import (
     TANK_MODE_NORMAL,
 )
 from ..calculations import sg_ready
-from ..helpers import get_entry_value, stored_legs
+from ..calculations.variable_load import sized_legs as vl_sized_legs
+from ..helpers import get_entry_value, stored_legs, variable_load_amps
 from ..ocpp_discovery import ocpp_connector_status_entity
 from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
@@ -1441,6 +1454,118 @@ def _build_sg_ready_load(hass, entry, voltage, load_entity_id, priority):
     return load
 
 
+def _build_variable_load(hass, entry, voltage, load_entity_id, priority):
+    """Build a LoadContext for a Variable Load (JUG-30): a modulating load
+    behind a setpoint entity, or none at all (output-only).
+
+    To the allocation it is an EVSE without the OCPP: per-leg amps between its
+    bounds (stored in its setpoint unit), on its configured legs. Its draw is
+    the per-leg current sensors, else the power sensor spread over the legs,
+    else - with no reading configured - the allowance it was last handed while
+    it is active, as a power station books its commanded speed. The optional
+    connected / charging sensors gate it: not connected is no demand,
+    connected but not charging is inactive (its available current is still
+    offered, so it can start). Hold claims nothing.
+    """
+    load_rt = hass.data[DOMAIN]["loads"].get(entry.entry_id, {})
+    legs = stored_legs(entry) or ["A"]
+    phases = len(legs)
+
+    mode = resolve_operating_mode(DEVICE_TYPE_VARIABLE_LOAD, load_rt.get("operating_mode"))
+    connected = units.state_or_unknown(
+        hass.states.get(get_entry_value(entry, CONF_VL_CONNECTED_ENTITY_ID, None) or "")
+    )
+    charging = units.state_or_unknown(
+        hass.states.get(get_entry_value(entry, CONF_VL_CHARGING_ENTITY_ID, None) or "")
+    )
+    # Only an explicit "off" gates: an unreadable sensor says nothing.
+    if connected == "off":
+        connector_status = "Available"
+    elif charging == "off" or mode.key == VL_MODE_HOLD.key:
+        connector_status = "Finishing"
+    else:
+        connector_status = "Charging"
+
+    leg_entities = [
+        get_entry_value(entry, key, None)
+        for key in (CONF_VL_CURRENT_L1_ENTITY_ID, CONF_VL_CURRENT_L2_ENTITY_ID,
+                    CONF_VL_CURRENT_L3_ENTITY_ID)
+    ][:phases]
+    power_entity = get_entry_value(entry, CONF_VL_POWER_ENTITY_ID, None)
+    draws = [0.0, 0.0, 0.0]
+    draw_assumed = False
+    if any(leg_entities):
+        raw = [_read_entity(hass, e, None, unit="A", voltage=voltage) for e in leg_entities]
+        draw_assumed = _UNAVAILABLE in raw
+        for i, value in enumerate(raw):
+            draws[i] = _coerce(value, None) or 0.0
+    elif power_entity:
+        raw = _read_entity(hass, power_entity, None, unit="W")
+        draw_assumed = raw is _UNAVAILABLE
+        per_leg = (_coerce(raw, None) or 0.0) / (voltage * phases) if voltage > 0 else 0.0
+        draws[:phases] = [per_leg] * phases
+    elif connector_status not in INACTIVE_STATUSES:
+        draws[:phases] = [load_rt.get(VL_RT_ALLOWED_A) or 0.0] * phases
+    # The legs it is sized on: the legs in use (over 1 A) when per-leg current
+    # sensors say so, remembered while it draws nothing (a single-phase device
+    # that stopped restarts as one) until the connected sensor goes off - a new
+    # session starts on every configured leg. A power sensor cannot tell legs
+    # apart, so it and no reading at all mean the configured legs.
+    sized = vl_sized_legs(
+        [draws[n] if leg_entities[n] else None for n in range(len(leg_entities))],
+        load_rt.get(VL_RT_LEGS_IN_USE), connected == "off", LEG_DRAWING_CURRENT,
+    ) if any(leg_entities) else []
+    load_rt[VL_RT_LEGS_IN_USE] = sized
+    sized = sized or list(range(1, phases + 1))
+    # More legs than last cycle (a switch back to three phases): the processor
+    # cuts at once and ramps the new allowance up from the minimum.
+    if len(sized) > load_rt.get(VL_RT_SIZED_COUNT, len(sized)):
+        load_rt[VL_RT_LEGS_GREW] = True
+    load_rt[VL_RT_SIZED_COUNT] = len(sized)
+    min_current, max_current = variable_load_amps(entry, voltage, len(sized))
+    if min_current > max_current:
+        min_current = max_current
+
+    load = LoadContext(
+        load_id=entry.entry_id,
+        entity_id=load_entity_id,
+        min_current=min_current,
+        max_current=max_current,
+        phases=len(sized),
+        priority=priority,
+        active_phases_mask="".join(sorted({legs[n - 1] for n in sized})),
+        potential_phases_mask=(
+            "".join(sorted(set(legs[:phases]))) if len(sized) < phases else ""
+        ),
+        connector_status=connector_status,
+        dynamic_control=load_rt.get("dynamic_control", True),
+        device_type=DEVICE_TYPE_VARIABLE_LOAD,
+        operating_mode=mode.key,
+        mode_behavior=mode.behavior,
+        mode_priority=mode.priority,
+        rated_current=max_current,
+        excess_claim_current=(
+            min_current
+            if mode.behavior == BEHAVIOR_EXCESS
+            and connector_status not in INACTIVE_STATUSES
+            else 0.0
+        ),
+        draw_assumed=draw_assumed,
+        l1_phase=legs[0],
+        l2_phase=legs[1] if phases > 1 else legs[0],
+        l3_phase=legs[2] if phases > 2 else legs[0],
+        l1_current=draws[0],
+        l2_current=draws[1],
+        l3_current=draws[2],
+    )
+    _LOGGER.debug(
+        "  Variable load %s [%s]: %s-%sA %dph on %s prio=%d [%s] draw=%s",
+        load_entity_id, mode.key, _fv(min_current), _fv(max_current), phases,
+        "".join(legs), priority, connector_status, [_fv(d) for d in draws],
+    )
+    return load
+
+
 def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
                        settle_seconds=SETTLE_DRAW_SECONDS, pacing=None):
     """Build LoadContext objects for all loads and add them to the site.
@@ -1463,6 +1588,7 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
         DEVICE_TYPE_ROOM_THERMOSTAT: _build_hot_water_tank_load,   # the same load; the LoadContext says tank
         DEVICE_TYPE_POWER_STATION: _build_power_station_load,
         DEVICE_TYPE_SG_READY: _build_sg_ready_load,
+        DEVICE_TYPE_VARIABLE_LOAD: _build_variable_load,
     }
     # Any other type is an EVSE, the integration's original device.
     build_evse = partial(_build_evse_load, settle_seconds=settle_seconds)
@@ -1500,12 +1626,12 @@ def _add_loads_to_site(hass, site, hub_entry_id, load_entries=None,
             )
             load.active_phases_mask = clamped
 
-        # Pacing is for loads that can vary their power: an EVSE or a power
-        # station. A plug or tank is on or off, so a cap under its power only
-        # ever means off.
+        # Pacing is for loads that can vary their power: an EVSE, a power
+        # station or a variable load. A plug or tank is on or off, so a cap
+        # under its power only ever means off.
         if (
             pacing is not None
-            and device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION)
+            and device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_VARIABLE_LOAD)
             and get_entry_value(entry, CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON)
         ):
             load.pace_cap_current = pace_cap_current(

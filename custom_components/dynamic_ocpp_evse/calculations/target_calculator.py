@@ -12,7 +12,7 @@ Clear architecture:
 """
 
 import logging
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import Optional
 
 from .models import (
@@ -36,6 +36,7 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_VARIABLE_LOAD,
     EXCESS_URGENCY_TIER,
     LEG_DRAWING_CURRENT,
     OPTIMIZED_START_MARGIN,
@@ -306,8 +307,9 @@ def _set_available_current_for_loads(
 
     # Active loads, in distribution order.
     for load in _sort_loads(active_loads):
+        _set_potential_current(load, remaining, solar_rem, excess_rem, site)
         mask = load.active_phases_mask
-        if load.device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION):
+        if load.device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_VARIABLE_LOAD):
             # A MODULATING load's permit is the current it was signalled.
             #
             # The permit is not merely informational for these two: it is what
@@ -341,6 +343,7 @@ def _set_available_current_for_loads(
 
     # Inactive loads: what they could get from the leftover capacity.
     for load in inactive_loads:
+        _set_potential_current(load, remaining, solar_rem, excess_rem, site)
         mask = load.active_phases_mask
         if not mask:
             load.available_current = 0
@@ -352,6 +355,26 @@ def _set_available_current_for_loads(
             load.available_current = round(min(load.max_current, available), 1)
         else:
             load.available_current = 0
+
+
+def _set_potential_current(load, remaining, solar_rem, excess_rem, site) -> None:
+    """Per-leg current a Variable Load could be given on ALL its configured legs.
+
+    Set only while it is sized on fewer (a charger switched to one phase): the
+    phase advice must read what switching back would get, not what one leg
+    gets. The same physical and mode-source limits an inactive load's permit
+    reads, on the configured mask, from the pools left by the loads ranked
+    ahead of it. No hardware cap here: the advice caps it at the device's max.
+    Circuit-group limits are not in it (the advice is a hint, not a command).
+    """
+    mask = load.potential_phases_mask
+    if not mask:
+        return
+    whole = replace(load, active_phases_mask=mask, phases=len(mask))
+    load.potential_current = round(max(0.0, min(
+        remaining.get_available(mask),
+        _source_limit(whole, site, solar_rem, excess_rem, base=0),
+    )), 1)
 
 
 def _enforce_circuit_groups(site: SiteContext) -> None:

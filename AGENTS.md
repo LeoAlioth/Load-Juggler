@@ -54,7 +54,7 @@ custom_components/dynamic_ocpp_evse/
 │                                  #   dashboard suggestions (_energy_site, _inverter_suggestions,
 │                                  #   _grid_meter_suggestion, _fill_empty - create flow only)
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
-│                                  #   inverter, modes, power_station, sg_ready
+│                                  #   inverter, modes, power_station, sg_ready, variable_load
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
 │   ├── hub_calculation.py         # Main entry point - run_hub_calculation() builds SiteContext, calls engine
 │   │                              #   Keeps the core cycle: _apply_feedback_loop(), the SOC/Excess latches,
@@ -62,7 +62,8 @@ custom_components/dynamic_ocpp_evse/
 │   ├── readers.py                 # HA-state edge: _read_entity() (returns _UNAVAILABLE sentinel),
 │   │                              #   _smooth() (EMA) + _stale_guard() (holdover), _coerce(),
 │   │                              #   grid/inverter/fleet-member reading
-│   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank]_load(),
+│   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank|sg_ready]_load(),
+│   │                              #   _build_variable_load(),
 │   │                              #   _add_loads_to_site(), _build_circuit_groups()
 │   ├── readout_watch.py           # Pure: judges an EVSE's reported draw STUCK - it claims more than
 │   │                              #   the limit in force for 2x its learned reporting gap, OR the
@@ -97,6 +98,9 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   _apply_sg_ready feeds it (grant + Excess latch -> Force, early-start source,
 │   │                              #   SOC, target_calculator.grid_headroom_w -> Block). FOLLOW_CLIP_EARLY is the one flag
 │   │                              #   for following the PV-clipping early start
+│   ├── variable_load.py           # Variable Load (JUG-30), pure: bounds in amps from the setpoint unit, the
+│   │                              #   setpoint for an allowance (bias, entity step/min/max), the published allowance
+│   │                              #   figures, the phase advice (thresholds, hysteresis, minimum time between changes)
 │   ├── outage_window.py           # Expected grid loss window (JUG-23): ``precharge_window`` reads a calendar /
 │   │                              #   binary_sensor state + attributes (lead time, hold after, memory returned for
 │   │                              #   hub_runtime["_outage_hold"]); on, the engine (hub_calculation._apply_outage_
@@ -122,6 +126,8 @@ custom_components/dynamic_ocpp_evse/
 │   ├── hot_water_tank.py          # Tank climate control
 │   ├── sg_ready.py                # SG Ready heat pump: the two relays, one per call through the mildest state, verified
 │   │                              #   against the relay states (a mismatch -> fault -> Normal)
+│   ├── variable_load.py           # Variable Load: publishes the allowance (runtime "vl_outputs") and writes the
+│   │                              #   setpoint entity when there is one (output-only without); never a phase switch
 │   ├── smoothing.py               # Output smoothing (EMA / Schmitt trigger / ramp limits)
 │   └── status.py                  # Charging status determination
 ├── entities/                      # Entity classes shared by the platform files (ALL push-driven - nothing polls)

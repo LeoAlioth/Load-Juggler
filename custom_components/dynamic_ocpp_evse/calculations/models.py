@@ -190,6 +190,10 @@ class LoadContext:
     #   draw, up to its rated/max. Drives the device command.
     allocated_current: float = 0
     available_current: float = 0
+    # Variable Load sized on fewer legs than it has: its configured legs, and
+    # the per-leg current those legs could be given (the phase advice reads it).
+    potential_phases_mask: str = ""
+    potential_current: float = 0
 
     @property
     def reports_idle(self) -> bool:

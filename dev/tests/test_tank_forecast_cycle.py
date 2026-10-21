@@ -68,8 +68,9 @@ class Tank:
     """One tank: its element draws ``element_w`` while its setpoint is above its water."""
 
     def __init__(self, name, *, element_w, away, normal, boost, water_c, priority,
-                 room_kwh=None, rate_kw=None):
+                 room_kwh=None, rate_kw=None, rise_k_per_h=0.0, cool_k_per_h=0.0):
         self.name, self.element_w = name, element_w
+        self.rise_k_per_h, self.cool_k_per_h = rise_k_per_h, cool_k_per_h
         self.away, self.normal, self.boost = away, normal, boost
         self.water_c, self.priority = water_c, priority
         self.room_kwh, self.rate_kw = room_kwh, rate_kw
@@ -83,6 +84,12 @@ class Tank:
     @property
     def w(self):
         return self.element_w if self.heating else 0.0
+
+    def advance(self, seconds):
+        """The water warms while the element is on and cools slowly otherwise (constant rates:
+        enough for the near-boost band)."""
+        rate = self.rise_k_per_h if self.heating else -self.cool_k_per_h
+        self.water_c += rate * seconds / 3600.0
 
 
 def boiler(**kw):
@@ -206,6 +213,8 @@ async def _morning(hass, tanks, *, minutes=47, **world):
             w.publish()
             await sensor_platform.async_run_hub_cycle(hass, hub)
             log.append((clock.now, [t.setpoint for t in tanks], w.battery_w))
+            for t in tanks:
+                t.advance(CYCLE_S)
             clock.now += CYCLE_S
     return log
 
@@ -213,6 +222,11 @@ async def _morning(hass, tanks, *, minutes=47, **world):
 def _boosts(log, i):
     """How many times tank ``i`` was sent to its boost temperature."""
     return sum(1 for a, b in zip(log, log[1:]) if a[1][i] != b[1][i] and b[1][i] > a[1][i])
+
+
+def _withdrawals(log, i):
+    """How many times tank ``i`` was dropped back from a higher setpoint."""
+    return sum(1 for a, b in zip(log, log[1:]) if b[1][i] < a[1][i])
 
 
 def _show(log):
@@ -249,3 +263,38 @@ async def test_a_due_group_runs_through_without_cycling(hass):
                                 heater(room_kwh=5.0, rate_kw=0.52)], planned_kwh=8.0)
     _show(log)
     assert all(setpoints == [75.0, 24.0] for _, setpoints, *_ in log)
+
+
+def _hovering_group():
+    """The due group of the test above with the boiler warming through the join line:
+    72.5 C of 75, +6 K an hour on, -1.5 K an hour off."""
+    return [boiler(room_kwh=3.0, rate_kw=1.583, rise_k_per_h=6.0, cool_k_per_h=1.5),
+            heater(room_kwh=5.0, rate_kw=0.52)]
+
+
+async def test_a_tank_in_the_group_stays_until_one_kelvin_from_boost(hass):
+    """Kozolec 19 Oct 06:50-07:19: the boiler warmed to 73 C (2 K under its 75 boost),
+    left the group, cooled under the line and rejoined - five cycles. A tank already in the
+    group now stays until it is within 1 K of boost (water over 74 C): it is boosted from the
+    first cycle, withdrawn once, and does not come back."""
+    tanks = _hovering_group()
+    tanks[0].water_c = 72.5
+    log = await _morning(hass, tanks, planned_kwh=8.0)
+    _show(log)
+    assert log[0][1][0] == 75.0 and _boosts(log, 0) == 0
+    assert _withdrawals(log, 0) == 1
+    on_s = sum(CYCLE_S for _, setpoints, *_ in log if setpoints[0] == 75.0)
+    assert on_s >= 900                         # it ran through the old 73 C line (about 15 min of warming)
+    assert tanks[0].setpoint == 42.0          # withdrawn once, for good
+    assert all(setpoints[1] == 24.0 for _, setpoints, *_ in log)   # the heater runs through
+
+
+async def test_without_the_band_the_same_tank_cycles(hass, monkeypatch):
+    """The old single line (leave and join at 2 K) on the same morning: the boiler is
+    withdrawn at 73 C and boosted again - the test above would fail on it."""
+    from custom_components.dynamic_ocpp_evse.calculations import forecast_excess
+    monkeypatch.setattr(forecast_excess, "EARLY_RELEASE_HEADROOM_K", forecast_excess.EARLY_MIN_HEADROOM_K)
+    tanks = _hovering_group()
+    tanks[0].water_c = 72.5
+    log = await _morning(hass, tanks, planned_kwh=8.0)
+    assert _boosts(log, 0) >= 1 and _withdrawals(log, 0) >= 2

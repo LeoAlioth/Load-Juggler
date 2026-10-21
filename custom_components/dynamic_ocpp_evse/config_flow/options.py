@@ -40,6 +40,7 @@ from ..const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
     ENTRY_TYPE_GROUP,
@@ -71,6 +72,8 @@ from .helpers import (
     _SOLAR_UNIT_MAP,
     _STATION_ENTITY_KEYS,
     _SG_READY_ENTITY_KEYS,
+    _VL_ENTITY_KEYS,
+    _check_variable_load,
     _TANK_ENTITY_KEYS,
     _apply_priority_order,
     _controlled_devices,
@@ -101,6 +104,7 @@ from .schemas import (
     _plug_schema,
     _power_station_schema,
     _sg_ready_schema,
+    _variable_load_schema,
     _inverter_features_schema,
     _build_hub_inverter_schema,
     _build_inverter_solar_schema,
@@ -339,6 +343,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_power_station()
             if device_type == DEVICE_TYPE_SG_READY:
                 return await self.async_step_sg_ready()
+            if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+                return await self.async_step_variable_load()
             return await self.async_step_charger()
         if entry_type == ENTRY_TYPE_GROUP:
             return await self.async_step_group()
@@ -747,6 +753,18 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             step_id="sg_ready",
             schema=_sg_ready_schema,
             entity_keys=_SG_READY_ENTITY_KEYS,
+        )
+
+    async def async_step_variable_load(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        hub_phases = _hub_phase_count(self.hass, self.config_entry.data.get(CONF_HUB_ENTRY_ID))
+        return await self._async_edit_page(
+            user_input,
+            step_id="variable_load",
+            schema=lambda defaults: _variable_load_schema(defaults, hub_phases),
+            entity_keys=_VL_ENTITY_KEYS,
+            validate=lambda data, errors: _check_variable_load(data, errors, hub_phases),
         )
 
     async def async_step_power_station(
