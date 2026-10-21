@@ -33,6 +33,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 - **Hot water tank control** - thermostat-driven (climate or water heater entity) binary heating loads with away/normal/boost setpoints
 - **SG Ready heat pump control** - two relays, no modes: Block on the overload that reaches it (within the standard's 10-minute, maximum-block and blocks-per-day limits), Force on excess, Recommended on a predicted excess or a battery above target
 - **Portable power station control** - modulated charge rate plus a managed backup reserve, so a station soaks up surplus and spends it again
+- **Variable load** - anything that takes a current or power setpoint through an entity (a Modbus charger, a heater, a battery charge setpoint), or nothing at all: it publishes its allowance as sensors for your own automations
 - **Relative and absolute OCPP profile modes** for different charger compatibility
 - **Current rate limiting** (ramp up/down) for stable operation
 - **Failsafe operation** - loads revert to safe defaults if sensors become unavailable (EMA holdover, grid stale detection)
@@ -45,6 +46,7 @@ Intelligent load management for Home Assistant. Dynamically distributes availabl
 | **Smart Plug** | On/off switch | Continuous, Solar Priority, Solar Only, Excess | Any device behind a smart plug (heaters, pumps, etc.) |
 | **Hot Water Tank** | Climate or water heater entity (on/off + setpoint) | Freeze Protection, Normal, Solar Priority | Tank with a thermostat (e.g. Generic Thermostat); the mode picks an away/normal/boost setpoint |
 | **Power Station** | Charge-speed + backup-reserve numbers | Standard, Solar Priority, Solar Only, Excess | Portable station (EcoFlow Delta and similar); modulates its charge rate, and its reserve is the on/off gate |
+| **Variable Load** | A `number` / `input_number` setpoint in A per leg or W, or none (output only) | Standard, Solar Priority, Solar Only, Excess, Hold | Any device that takes a current or power setpoint; allocated like a charger and published as allowance sensors (per leg, lowest, power, percent, phase advice). See [Variable Load](#variable-load) |
 | **SG Ready Heat Pump** | Two relay switches (Block / Normal / Recommended / Force) | None - the state follows the site | A heat pump with SG Ready inputs; Block on the overload that reaches it, Force on excess, Recommended on a predicted excess or a battery above target, else Normal. See the [guide](CHARGE_MODES_GUIDE.md#sg-ready-heat-pump) |
 
 ## Operating Modes
@@ -86,6 +88,23 @@ Its second knob does the gating. The charge-speed control has no zero (200 W is 
 - **Storm Reserve switch on**: reserve holds at the **Storm Reserve** (default 80%), charged from any source at full rate and not discharged below - this overrides the operating mode.
 
 Whatever is plugged into the station passes through to its outputs and counts as household consumption; only the charging component (`AC input − AC output`) is treated as this load's draw. Minimum and maximum charge power are configured rather than read from the device, so a station can be held below what its hardware allows.
+
+### Variable Load
+
+A load Load Juggler cannot reach by OCPP, a plug or a climate entity - a charger on Modbus, a heater, a battery or inverter charge setpoint - is a **Variable Load** (*Add Variable Load*). One settings page; everything but its bounds and legs is optional:
+
+- **Setpoint entity** (a `number` or `input_number`) in **amperes per leg** or **watts** over its legs. Without one the device is **output-only**: nothing is written, and the allowance is only published.
+- **Minimum / maximum** in the setpoint unit, its **legs** (L1-L3 to site phases, as for a charger; a single-phase device on any phase uses L1), priority.
+- **Readings**: a current sensor per leg, or a power sensor; without either the device is taken to draw what it was allowed. A **connected** binary sensor (off = no demand) and a **charging** one (off = claims nothing, but may start).
+- **Update frequency** (minimum time between writes), a **re-send interval** for a device that falls back to a safe value when its setpoint is not refreshed, a fixed **bias** for a device that delivers less than it is told, and an optional **fallback setpoint** written when Load Juggler lets go of it (the entry reloaded, removed or disabled).
+
+With a current sensor per leg it is allocated on the legs it is **drawing on** (over 1 A): a three-phase charger switched to one phase gets a single-phase allowance, and keeps it while it pauses, until its connected sensor goes off. When it starts drawing on more legs, the allowance is cut at once (to 0 where a phase has no room for the minimum) and climbs from the minimum through the ramp. With only a power sensor, or none, it is allocated on all its configured legs. With the grid CTs unavailable past the stale timeout a running device keeps its minimum, as a charger does.
+
+It runs the charger's modes - Standard, Solar Priority, Solar Only, Excess - plus **Hold**, which sets the setpoint to 0 (to the entity's own minimum when it cannot take 0). Because it is allocated like any modulating load, the main fuse, circuit groups and the power budget apply as for a charger.
+
+Its sensors: **Allowed Current** (the lowest across the legs in use), **Allowed Current L1/L2/L3** (devices with more than one leg; the same current on every leg it is drawing on, 0 on the others), **Allowed Power** (over the legs it is drawing on), **Allowed Percent** of its maximum, and **Phase Advice** - `single` or `multi` with the reason as an attribute: multi above 4000 W, single below 2000 W, the last advice held between them and changed at most every 10 minutes (all settings). The advice reads the power the device is allowed, except while it runs on fewer legs than it has: then it reads what it could be allowed on all its legs (the room every one of them has within the site limits and its mode, up to its maximum), so a charger on one phase is told to switch back once three phases could take more than the threshold. The advice is advice only: Load Juggler never switches a device's phases; an automation of yours can.
+
+**Known limits.** When the device switches itself to more legs, the new legs can overload for a cycle or two before a reading shows it; Load Juggler then cuts or stops it at once. Without a *connected* sensor the legs it last drew on are remembered until it draws again, so a device stopped on one phase and restarted on three hits that same short overload. The fallback setpoint is written when the entry unloads, not when Home Assistant shuts down.
 
 ### Mode Urgency
 

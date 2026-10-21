@@ -1153,6 +1153,9 @@ def _build_hub_result(
         # Per-load targets
         "load_targets": load_targets,
         "load_available": {c.load_id: c.available_current for c in site.loads},
+        "load_potential": {
+            c.load_id: c.potential_current for c in site.loads if c.potential_phases_mask
+        },
         "load_names": {c.load_id: c.entity_id for c in site.loads},
         "load_modes": load_modes,
         "load_rank": load_rank,

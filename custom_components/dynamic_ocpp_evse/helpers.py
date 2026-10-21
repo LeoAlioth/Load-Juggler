@@ -49,7 +49,14 @@ from .const import (
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    CONF_VL_MAX,
+    CONF_VL_MIN,
+    CONF_VL_SETPOINT_UNIT,
+    DEFAULT_VL_MAX,
+    DEFAULT_VL_MIN,
+    DEFAULT_VL_SETPOINT_UNIT,
 )
+from .calculations.variable_load import bounds_amps
 from .registry import get_inverters_for_hub
 
 _LOGGER = logging.getLogger(__name__)
@@ -214,6 +221,19 @@ def stored_legs(entry: ConfigEntry) -> list[str]:
     legacy default (A/B/C); a stored None means the leg is unused."""
     return set_legs(
         *(get_entry_value(entry, k, d) for k, d in zip(_LEG_KEYS, _LEG_DEFAULTS))
+    )
+
+
+def variable_load_amps(entry: ConfigEntry, voltage: float, legs: int | None = None) -> tuple[float, float]:
+    """A variable load's ``(min, max)`` per-leg amps: its bounds are stored in
+    its setpoint unit (amps per leg, or watts over the ``legs`` it is sized on -
+    its configured legs when not given)."""
+    return bounds_amps(
+        get_entry_value(entry, CONF_VL_SETPOINT_UNIT, DEFAULT_VL_SETPOINT_UNIT),
+        float(get_entry_value(entry, CONF_VL_MIN, DEFAULT_VL_MIN) or 0),
+        float(get_entry_value(entry, CONF_VL_MAX, DEFAULT_VL_MAX) or 0),
+        voltage,
+        legs or len(stored_legs(entry)),
     )
 
 

@@ -30,6 +30,7 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
 )
 from ..helpers import get_entry_value
 from .. import units
@@ -471,6 +472,7 @@ class LoadEntityMixin(LoadJugglerEntity):
             DEVICE_TYPE_ROOM_THERMOSTAT: "Room Thermostat",
             DEVICE_TYPE_POWER_STATION: "Power Station",
             DEVICE_TYPE_SG_READY: "SG Ready Heat Pump",
+            DEVICE_TYPE_VARIABLE_LOAD: "Variable Load",
         }.get(self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE), "EV Charger")
 
     def _runtime(self) -> dict:

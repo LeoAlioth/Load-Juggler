@@ -44,6 +44,7 @@ def behaviour_type(device_type):
     return DEVICE_TYPE_HOT_WATER_TANK if device_type == DEVICE_TYPE_ROOM_THERMOSTAT else device_type
 DEVICE_TYPE_POWER_STATION = "power_station"
 DEVICE_TYPE_SG_READY = "sg_ready"
+DEVICE_TYPE_VARIABLE_LOAD = "variable_load"  # a setpoint entity, amps or watts (JUG-30)
 DEVICE_TYPE_GROUP = "group"
 DEVICE_TYPE_INVERTER = "inverter"
 

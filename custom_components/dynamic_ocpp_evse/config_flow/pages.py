@@ -19,6 +19,8 @@ from ..control.status import hands_off_status
 from ..const.sg_ready import CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER
 from ..const import (
     behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
+    CONF_VL_MAX, CONF_VL_MIN, CONF_VL_SETPOINT_ENTITY_ID, CONF_VL_SETPOINT_UNIT,
+    DEFAULT_VL_MAX, DEFAULT_VL_MIN, DEFAULT_VL_SETPOINT_UNIT,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_ENTITY_ID,
@@ -80,6 +82,7 @@ from ..const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_GROUP,
@@ -121,6 +124,7 @@ _DEVICE_TYPE_LABELS = {
     DEVICE_TYPE_ROOM_THERMOSTAT: "Room thermostat",
     DEVICE_TYPE_POWER_STATION: "Power station",
     DEVICE_TYPE_SG_READY: "SG Ready heat pump",
+    DEVICE_TYPE_VARIABLE_LOAD: "Variable load",
 }
 
 
@@ -360,6 +364,12 @@ def _load_limits_text(hass, load_entry) -> str:
             load_entry, CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
         )
         return f"{_fmt(low, 'W', 0)}–{_fmt(high, 'W', 0)}"
+    if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+        unit = get_entry_value(load_entry, CONF_VL_SETPOINT_UNIT, DEFAULT_VL_SETPOINT_UNIT)
+        low = get_entry_value(load_entry, CONF_VL_MIN, DEFAULT_VL_MIN)
+        high = get_entry_value(load_entry, CONF_VL_MAX, DEFAULT_VL_MAX)
+        setpoint = get_entry_value(load_entry, CONF_VL_SETPOINT_ENTITY_ID, None)
+        return f"{_fmt(low, unit, 0)}–{_fmt(high, unit, 0)}" + ("" if setpoint else ", output only")
     low = get_entry_value(
         load_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
     )
@@ -785,7 +795,7 @@ def _load_overview_lines(hass, entry) -> list[str]:
         + (f" · served {rank}. this cycle" if rank is not None else "")
     )
     lines.append(f"- Configured envelope: {_load_limits_text(hass, entry)}")
-    if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_PLUG):
+    if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_PLUG, DEVICE_TYPE_VARIABLE_LOAD):
         lines.append(f"- Phase mapping (L1→L3): {_phase_mapping_text(hass, entry)}")
 
     lines += ["", "**📊 Right now**"]
@@ -1112,6 +1122,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
             DEVICE_TYPE_EVSE,
             DEVICE_TYPE_POWER_STATION,
             DEVICE_TYPE_PLUG,
+            DEVICE_TYPE_VARIABLE_LOAD,
         ):
             bits.append(f"phases {_phase_mapping_text(hass, load)}")
         cap = _group_cap_for(hass, hub_entry_id, load.entry_id)

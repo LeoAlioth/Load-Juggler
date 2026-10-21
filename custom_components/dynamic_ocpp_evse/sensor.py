@@ -24,6 +24,7 @@ from .const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -44,6 +45,7 @@ from .engine.hub_calculation import run_hub_calculation
 from .entities.load import LoadJugglerDeviceSensor
 from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
+    LoadJugglerAllowanceSensor,
     LoadJugglerDeviceStatusSensor,
     LoadJugglerEffectivePrioritySensor,
     LoadJugglerPhaseMaskSensor,
@@ -388,6 +390,18 @@ async def async_setup_entry(
         entities.append(
             LoadJugglerPhaseMaskSensor(hass, config_entry, hub_entry, name, entity_id)
         )
+
+    # A variable load publishes its allowance (JUG-30). Per-leg figures and the
+    # phase advice only with more than one leg: on one they say nothing more.
+    if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+        legs = len(stored_legs(config_entry))
+        keys = ["allowed_lowest", "allowed_power", "allowed_percent"]
+        if legs > 1:
+            keys += [f"allowed_l{n}" for n in range(1, legs + 1)] + ["phase_advice"]
+        entities += [
+            LoadJugglerAllowanceSensor(hass, config_entry, hub_entry, name, entity_id, key)
+            for key in keys
+        ]
 
     async_add_entities(entities)
 

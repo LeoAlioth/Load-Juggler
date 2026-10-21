@@ -8,6 +8,7 @@ from ..const import (
     CONF_CHARGE_PAUSE_DURATION,
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_CHARGE_PAUSE_DURATION,
+    VL_MODE_HOLD,
 )
 from homeassistant.util import dt as dt_util
 from ..helpers import get_entry_value
@@ -51,6 +52,8 @@ def determine_charging_status(
         return "Unplugged"
     if not dynamic_control_on:
         return hands_off_status(sensor._runtime())
+    if sensor._operating_mode == VL_MODE_HOLD.key:
+        return "Hold"
 
     if (
         sensor._grace_started_at is not None

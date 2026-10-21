@@ -63,6 +63,7 @@ from ..const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -102,7 +103,9 @@ from .helpers import (
     _STATION_ENTITY_KEYS,
     _TANK_ENTITY_KEYS,
     _SG_READY_ENTITY_KEYS,
+    _VL_ENTITY_KEYS,
     _auto_detect_entity,
+    _check_variable_load,
     _compose_entry_title,
     _detect_meter_value_interval,
     _check_power_window,
@@ -143,6 +146,7 @@ from .schemas import (
     _plug_schema,
     _power_station_schema,
     _sg_ready_schema,
+    _variable_load_schema,
     _inverter_config_schema,
     _inverter_features_schema,
     _num,
@@ -157,6 +161,7 @@ _DEVICE_TYPE_BY_SETUP_TYPE = {
     "room": DEVICE_TYPE_ROOM_THERMOSTAT,
     "station": DEVICE_TYPE_POWER_STATION,
     "sg_ready": DEVICE_TYPE_SG_READY,
+    "variable_load": DEVICE_TYPE_VARIABLE_LOAD,
     "group": DEVICE_TYPE_GROUP,
     "inverter": DEVICE_TYPE_INVERTER,
 }
@@ -240,6 +245,9 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             )
             options.append(
                 {"value": "sg_ready", "label": "Add SG Ready Device (Heat Pump)"}
+            )
+            options.append(
+                {"value": "variable_load", "label": "Add Variable Load (setpoint in A or W)"}
             )
             options.append(
                 {"value": "inverter", "label": "Add Inverter / Home Battery"}
@@ -424,6 +432,7 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             DEVICE_TYPE_ROOM_THERMOSTAT: self.async_step_room_thermostat_config,
             DEVICE_TYPE_POWER_STATION: self.async_step_power_station_config,
             DEVICE_TYPE_SG_READY: self.async_step_sg_ready_config,
+            DEVICE_TYPE_VARIABLE_LOAD: self.async_step_variable_load_config,
             DEVICE_TYPE_GROUP: self.async_step_group_config,
             DEVICE_TYPE_INVERTER: self.async_step_inverter_features,
         }.get(self._data.get(CONF_DEVICE_TYPE), self.async_step_discover_chargers)
@@ -599,6 +608,24 @@ class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             defaults={CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1},
             entity_keys=_SG_READY_ENTITY_KEYS,
             static_keys=(CONF_SG_RELAY_1_ENTITY_ID, CONF_SG_RELAY_2_ENTITY_ID),
+        )
+
+    async def async_step_variable_load_config(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Variable Load configuration step (JUG-30): one page, every entity optional."""
+        hub_phases = _hub_phase_count(self.hass, self._data.get(CONF_HUB_ENTRY_ID))
+        return await self._async_create_load_page(
+            user_input,
+            step_id="variable_load_config",
+            schema=lambda defaults: _variable_load_schema(defaults, hub_phases),
+            device_type=DEVICE_TYPE_VARIABLE_LOAD,
+            type_label="Variable Load",
+            default_name="Variable Load",
+            default_entity_id="lj_variable_load",
+            defaults={CONF_LOAD_PRIORITY: len(self._get_load_entries()) + 1},
+            entity_keys=_VL_ENTITY_KEYS,
+            validate=lambda data, errors: _check_variable_load(data, errors, hub_phases),
         )
 
     async def async_step_power_station_config(

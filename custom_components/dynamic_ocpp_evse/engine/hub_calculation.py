@@ -101,6 +101,8 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
+    LEG_DRAWING_CURRENT,
     CONF_SG_MAX_BLOCK_TIME,
     CONF_SG_MAX_BLOCKS_PER_DAY,
     CONF_SG_MIN_STATE_TIME,
@@ -795,7 +797,8 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
     # shares the planned energy and they start together at full power. Loads that
     # fail a direct check (early_blocker) do not count and do not start.
     takers = [load for load in site.loads if _takes_early_verdict(load)]
-    group = [load for load in takers if early_blocker(load) is None]
+    members = hub_runtime.get("_early_members", ())
+    group = [load for load in takers if early_blocker(load, load.load_id in members) is None]
     due, _, _ = early_group(
         [_load_watts(load, site) for load in group],
         [load.early_room_kwh for load in group],
@@ -843,6 +846,10 @@ def _apply_forecast_excess(hub_runtime, hub_entry, site, pacing, full_hours):
         load.early_start_ok = (
             (due or (clip_on and clip_due)) and load in group if load in takers else True
         )
+    # who is in the group while it runs, for the headroom hysteresis next cycle
+    hub_runtime["_early_members"] = (
+        {load.load_id for load in group} if due or (clip_on and clip_due) else set()
+    )
     # Each source's verdict stands only while one of its own loads is due.
     on_planned = on and (not takers or any(due and load in group for load in takers))
     on_clip = clip_on and (
@@ -905,7 +912,8 @@ def _publish_early_start(hass, hub_runtime, site, planned, hours_left, excess_on
     on = hub_runtime.get("_excess_by_forecast_on", False)
     clip = hub_runtime.get("_clip_active")
     takers = [load for load in site.loads if _takes_early_verdict(load)]
-    group = [load for load in takers if early_blocker(load) is None]
+    members = hub_runtime.get("_early_members", ())
+    group = [load for load in takers if early_blocker(load, load.load_id in members) is None]
     group_w = sum(_load_watts(load, site) for load in group)
     if site.battery_max_charge_power and group_w:
         group_w = min(group_w, site.battery_max_charge_power)
@@ -930,7 +938,7 @@ def _publish_early_start(hass, hub_runtime, site, planned, hours_left, excess_on
             continue
         note = None
         if (on and hours_left is not None or clip is not None) and load in takers:
-            blocker = early_blocker(load)
+            blocker = early_blocker(load, load.load_id in members)
             if blocker:
                 note = f"No early start: {blocker}"
             elif not load.early_start_ok and waits:
@@ -1498,7 +1506,7 @@ def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
         and site.battery_soc > site.battery_soc_target
     )
     for load, rt, mem, cfg in managed:
-        grouped = early_blocker(load) is None
+        grouped = early_blocker(load, load.load_id in hub_runtime.get("_early_members", ())) is None
         early = grouped and (
             hub_runtime.get("_early_planned_on", False)
             or (sg_ready.FOLLOW_CLIP_EARLY and hub_runtime.get("_early_clip_on", False))
@@ -1558,9 +1566,16 @@ def _apply_grid_stale_fallback(site, grid_stale_duration):
             # loads (plugs/tanks) and idle EVSEs get no permit - a permit > 0
             # switches a binary load ON, and energizing a load the engine had
             # deliberately shed while it cannot see the site is unsafe.
-            if (
+            # A variable load is the same modulating load (JUG-30, owner
+            # 2026-10-21): running - active and drawing (its booked draw is
+            # its last allowance when nothing reads it) - it keeps its minimum
+            # too.
+            if load.connector_status == "Charging" and (
                 load.device_type == DEVICE_TYPE_EVSE
-                and load.connector_status == "Charging"
+                or (
+                    load.device_type == DEVICE_TYPE_VARIABLE_LOAD
+                    and max(load.get_site_phase_draw()) > LEG_DRAWING_CURRENT
+                )
             ):
                 load.allocated_current = load.min_current
                 load.available_current = load.min_current

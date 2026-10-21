@@ -31,6 +31,22 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.selector import selector
 from .. import units
 from ..const import (
+    CONF_VL_CHARGING_ENTITY_ID,
+    CONF_VL_CONNECTED_ENTITY_ID,
+    CONF_VL_CURRENT_L1_ENTITY_ID,
+    CONF_VL_CURRENT_L2_ENTITY_ID,
+    CONF_VL_CURRENT_L3_ENTITY_ID,
+    CONF_VL_FALLBACK_SETPOINT,
+    CONF_VL_MAX,
+    CONF_VL_MIN,
+    CONF_VL_PHASE_MULTI_ABOVE,
+    CONF_VL_PHASE_SINGLE_BELOW,
+    CONF_VL_POWER_ENTITY_ID,
+    CONF_VL_SETPOINT_ENTITY_ID,
+    DEFAULT_VL_MAX,
+    DEFAULT_VL_MIN,
+    DEFAULT_VL_PHASE_MULTI_ABOVE,
+    DEFAULT_VL_PHASE_SINGLE_BELOW,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
@@ -106,7 +122,12 @@ from ..const.sg_ready import (
 )
 from ..detection_patterns import PHASE_PATTERNS
 from ..energy_prefs import SiteModel
-from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
+from ..helpers import (
+    get_entry_value,
+    normalize_optional_entity,
+    ocpp_config_value,
+    validate_charger_settings,
+)
 from ..phases import beside, match_meter_entities
 from ..registry import get_inverters_for_hub
 
@@ -287,6 +308,19 @@ _PACING_ENTITY_KEYS = [
 _PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
 _TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
 _SG_READY_ENTITY_KEYS = [CONF_SG_POWER_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
+_VL_ENTITY_KEYS = [
+    CONF_VL_SETPOINT_ENTITY_ID,
+    CONF_VL_CURRENT_L1_ENTITY_ID,
+    CONF_VL_CURRENT_L2_ENTITY_ID,
+    CONF_VL_CURRENT_L3_ENTITY_ID,
+    CONF_VL_POWER_ENTITY_ID,
+    CONF_VL_CONNECTED_ENTITY_ID,
+    CONF_VL_CHARGING_ENTITY_ID,
+    CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
+    # Not an entity, but optional the same way: a cleared field is None.
+    CONF_VL_FALLBACK_SETPOINT,
+]
 _STATION_ENTITY_KEYS = [
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -315,6 +349,7 @@ def _normalize_optional_inputs(
         + _PLUG_ENTITY_KEYS
         + _TANK_ENTITY_KEYS
         + _SG_READY_ENTITY_KEYS
+        + _VL_ENTITY_KEYS
     ):
         if key in normalized:
             normalized[key] = normalize_optional_entity(normalized.get(key))
@@ -737,6 +772,19 @@ def _check_power_window(data: dict, errors: dict) -> None:
         CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
     ) < data.get(CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER):
         errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
+
+
+def _check_variable_load(data: dict, errors: dict, hub_phases: int) -> None:
+    """A variable load's legs (as a charger's), its bounds and its phase
+    advice band. Fills the unused legs in place first."""
+    _fill_hidden_legs(data, hub_phases)
+    validate_charger_settings(data, errors)
+    if data.get(CONF_VL_MIN, DEFAULT_VL_MIN) > data.get(CONF_VL_MAX, DEFAULT_VL_MAX):
+        errors[CONF_VL_MAX] = "vl_min_exceeds_max"
+    if data.get(CONF_VL_PHASE_SINGLE_BELOW, DEFAULT_VL_PHASE_SINGLE_BELOW) > data.get(
+        CONF_VL_PHASE_MULTI_ABOVE, DEFAULT_VL_PHASE_MULTI_ABOVE
+    ):
+        errors[CONF_VL_PHASE_SINGLE_BELOW] = "vl_advice_band"
 
 
 def _fill_hidden_legs(data: dict, hub_phases: int) -> None:

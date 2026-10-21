@@ -419,6 +419,9 @@ _HUB_REPUBLISH_KEYS = frozenset(
     "draw_estimated",
     "load_targets",
     "load_available",
+    # A Variable Load's per-leg current on all its legs while it runs on fewer
+    # (calculations.target_calculator._set_potential_current) - its phase advice.
+    "load_potential",
     "forecast_window_tomorrow",
     "forecast_accuracy_pct",
     "forecast_clipped_actual_yesterday_kwh",
