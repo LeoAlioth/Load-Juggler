@@ -41,7 +41,7 @@ PLUG_RESTART_BACKOFF_S = (3600, 3 * 3600, 6 * 3600, 12 * 3600, 24 * 3600)
 PLUG_RESTART_RECOVERY_S = 5 * 60  # drawing this long resets the count
 # A first restart needs the load to have drawn lately: at least this share of its regular
 # draw (the absorption-rate sensor, else the plug's rated power) in the PLUG_RESTART_RECENT_S
-# before the no-draw span began. A load with no car or no WiFi behind it is never cycled.
+# before the no-draw span began. A load with no car behind it is never cycled.
 PLUG_RESTART_DRAW_SHARE = 0.10
 PLUG_RESTART_RECENT_S = 30 * 60
 
