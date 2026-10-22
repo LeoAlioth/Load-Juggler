@@ -58,7 +58,7 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
     Only a load that drew lately is restarted (JUG-33): the first restart needs
     a draw of PLUG_RESTART_DRAW_SHARE of the load's regular power within
     PLUG_RESTART_RECENT_S before the no-draw span began, so a plug with no car
-    or no WiFi behind it is left alone. The next restarts back off by
+    behind it is left alone. The next restarts back off by
     PLUG_RESTART_BACKOFF_S (1 h, 3 h, ... 24 h, then every 24 h) and go on
     until the load draws for PLUG_RESTART_RECOVERY_S, which resets the count;
     a permit that goes away and returns does not. An unreadable monitor is no
