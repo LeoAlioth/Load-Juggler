@@ -15,6 +15,8 @@ import voluptuous as vol
 from typing import Any
 from homeassistant import config_entries
 from homeassistant.helpers.selector import selector
+from .groups import OPTIONS as OPTIONS_GROUPS
+from .sections import SectionedFlowMixin
 from ..const import (
     DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_BATTERY_POWER_ENTITY_ID,
@@ -122,8 +124,10 @@ from .schemas import (
 )
 
 
-class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
+class LoadJugglerOptionsFlow(SectionedFlowMixin, config_entries.OptionsFlow):
     """Handle options flow for Load Juggler."""
+
+    GROUPS = OPTIONS_GROUPS
 
     def __init__(self):
         self._data = {}

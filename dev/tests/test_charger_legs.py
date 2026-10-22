@@ -213,12 +213,12 @@ async def test_options_page_refuses_two_legs_on_one_phase(
     )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_current"
-    assert result["errors"] == {L2: "charger_phase_duplicate"}
+    assert result["errors"] == {"phases": "charger_phase_duplicate"}  # keyed by its section
 
     result = await hass.config_entries.options.async_configure(
         result["flow_id"], {**MIN_MAX, L1: "A", L2: "B", L3: "A"}
     )
-    assert result["errors"] == {L3: "charger_phase_duplicate"}
+    assert result["errors"] == {"phases": "charger_phase_duplicate"}  # keyed by its section
 
 
 @pytest.mark.parametrize(
@@ -294,7 +294,7 @@ async def test_create_wizard_refuses_two_legs_on_one_phase(
     )
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "charger_current"
-    assert result["errors"] == {L2: "charger_phase_duplicate"}
+    assert result["errors"] == {"phases": "charger_phase_duplicate"}  # keyed by its section
 
     # fixing it moves on
     result = await hass.config_entries.flow.async_configure(

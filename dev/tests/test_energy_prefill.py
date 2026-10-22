@@ -16,6 +16,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.dynamic_ocpp_evse.config_flow.sections import flat_fields
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_CAPACITY_ENTITY_ID,
     CONF_BATTERY_CAPACITY_KWH,
@@ -116,14 +117,14 @@ def _states(hass, *entity_ids, attrs=POWER):
 
 
 def _suggested(result, key):
-    for marker in result["data_schema"].schema:
+    for marker in flat_fields(result["data_schema"]):
         if getattr(marker, "schema", None) == key:
             return (getattr(marker, "description", None) or {}).get("suggested_value")
     raise AssertionError(f"{key} not in the form")
 
 
 def _default(result, key):
-    for marker in result["data_schema"].schema:
+    for marker in flat_fields(result["data_schema"]):
         if getattr(marker, "schema", None) == key:
             default = getattr(marker, "default", None)
             return default() if callable(default) else default

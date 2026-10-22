@@ -13,6 +13,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .translation_steps import helps, labels
+from custom_components.dynamic_ocpp_evse.config_flow.sections import flat_fields
 from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
@@ -305,9 +307,7 @@ async def test_inverter_forecast_devices_validated(hass: HomeAssistant):
         },
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {
-        CONF_SOLAR_FORECAST_DEVICE_IDS: "forecast_device_no_watts"
-    }
+    assert result["errors"] == {"solar": "forecast_device_no_watts"}  # keyed by its section
     assert result["description_placeholders"] == {"entity": "Weather Station"}
 
     result = await hass.config_entries.flow.async_configure(
@@ -761,7 +761,7 @@ async def test_options_flow_hub_saves_changes(
         user_input={CONF_FILTER_CTRL_FAST_TAU_S: 10.0, CONF_FILTER_INPUT_TAU_S: 5.0},
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {CONF_FILTER_CTRL_FAST_TAU_S: "fast_filter_not_below_input"}
+    assert result["errors"] == {"filters": "fast_filter_not_below_input"}  # keyed by its section
     # Corrected, the same flow saves - and only this page's fields.
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -787,7 +787,7 @@ async def test_options_flow_hub_saves_changes(
 
 def _suggested_value(data_schema, key):
     """Read the suggested default a form schema offers for a field key."""
-    for marker in data_schema.schema:
+    for marker in flat_fields(data_schema):
         if getattr(marker, "schema", None) == key:
             desc = getattr(marker, "description", None) or {}
             return desc.get("suggested_value")
@@ -800,7 +800,7 @@ def _schema_default(data_schema, key):
     The sibling above reads ``suggested_value``; these are the fields that use a
     plain default instead, which voluptuous stores as a callable.
     """
-    for marker in data_schema.schema:
+    for marker in flat_fields(data_schema):
         if getattr(marker, "schema", None) == key:
             default = getattr(marker, "default", None)
             return default() if callable(default) else default
@@ -810,13 +810,13 @@ def _schema_default(data_schema, key):
 def _schema_has(data_schema, key) -> bool:
     """Whether a form schema offers a field at all."""
     return any(
-        getattr(marker, "schema", None) == key for marker in data_schema.schema
+        getattr(marker, "schema", None) == key for marker in flat_fields(data_schema)
     )
 
 
 def _selector_config(data_schema, key) -> dict:
     """The selector config behind a field - e.g. to assert `multiple: True`."""
-    for marker, validator in data_schema.schema.items():
+    for marker, validator in flat_fields(data_schema).items():
         if getattr(marker, "schema", None) == key:
             return getattr(validator, "config", {}) or {}
     raise AssertionError(f"{key} not present in schema")
@@ -1150,12 +1150,12 @@ async def test_options_flow_plug_saves_catch_up(
     result = await _open_options(hass, plug.entry_id)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "plug"
-    keys = {str(k): k for k in result["data_schema"].schema}
+    keys = {str(k): k for k in flat_fields(result["data_schema"])}
     assert keys[CONF_CATCH_UP_ENABLED].default() is False
 
     user_input = {
         str(k): k.default()
-        for k in result["data_schema"].schema
+        for k in flat_fields(result["data_schema"])
         if k.default is not vol.UNDEFINED
     }
     user_input[CONF_CATCH_UP_ENABLED] = True
@@ -1198,12 +1198,12 @@ async def test_options_flow_power_station_saves_catch_up(
     result = await _open_options(hass, station.entry_id)
     assert result["type"] == FlowResultType.FORM
     assert result["step_id"] == "power_station"
-    keys = {str(k): k for k in result["data_schema"].schema}
+    keys = {str(k): k for k in flat_fields(result["data_schema"])}
     assert keys[CONF_CATCH_UP_ENABLED].default() is False
 
     user_input = {
         str(k): k.default()
-        for k in result["data_schema"].schema
+        for k in flat_fields(result["data_schema"])
         if k.default is not vol.UNDEFINED
     }
     user_input["station_battery_level_entity_id"] = "sensor.ef_soc"
@@ -2752,11 +2752,11 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
         seen = 0
         for section in ("config", "options"):
             for step, block in data[section]["step"].items():
-                for field in (block.get("data") or {}):
+                for field in labels(block):
                     if field not in seeds_a_slider:
                         continue
                     seen += 1
-                    help_text = (block.get("data_description") or {}).get(field)
+                    help_text = helps(block).get(field)
                     assert help_text, f"{name} {section}/{step}/{field}: no help text"
                     assert marker[lang] in help_text.lower(), (
                         f"{name} {section}/{step}/{field} does not mention the slider"
@@ -2784,9 +2784,9 @@ def test_the_filters_page_is_translated_in_every_file():
         assert opt["step"]["init"]["menu_options"]["hub_filters"], name
         page = opt["step"]["hub_filters"]
         assert page["title"] and page["description"], name
-        assert set(page["data"]) == dials, (name, set(page["data"]) ^ dials)
-        assert set(page["data_description"]) == dials, name
-        assert all(page["data"][k] and page["data_description"][k] for k in dials), name
+        assert set(labels(page)) == dials, (name, set(labels(page)) ^ dials)
+        assert set(helps(page)) == dials, name
+        assert all(labels(page)[k] and helps(page)[k] for k in dials), name
         assert opt["error"]["fast_filter_not_below_input"], name
 
 
@@ -3000,7 +3000,7 @@ async def test_inverter_core_rejects_the_tick_together_with_sensors(
         CONF_INVERTER_INPUT_IS_GRID: True,
     })
 
-    assert errors == {CONF_INVERTER_INPUT_IS_GRID: "input_grid_and_sensors"}
+    assert errors == {"input": "input_grid_and_sensors"}  # keyed by its section
 
 
 async def test_inverter_core_allows_one_tick_per_hub(
@@ -3024,7 +3024,7 @@ async def test_inverter_core_allows_one_tick_per_hub(
         CONF_INVERTER_INPUT_IS_GRID: True,
     })
 
-    assert errors == {CONF_INVERTER_INPUT_IS_GRID: "input_grid_taken"}
+    assert errors == {"input": "input_grid_taken"}  # keyed by its section
 
 
 async def test_inverter_core_needs_an_output_beside_an_input(
@@ -3043,9 +3043,7 @@ async def test_inverter_core_needs_an_output_beside_an_input(
         CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: "sensor.hyb_in_a",
     })
 
-    assert errors == {
-        CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: "input_without_output"
-    }
+    assert errors == {"input": "input_without_output"}  # keyed by its section
 
 
 def test_the_input_strings_exist_in_both_languages():
@@ -3058,17 +3056,17 @@ def test_the_input_strings_exist_in_both_languages():
         data = json.loads((base / name).read_text(encoding="utf-8"))
         for section, step in (("config", "inverter_config"), ("options", "inverter_core")):
             page = data[section]["step"][step]
-            assert "wiring_topology" not in page["data"], name
-            assert "wiring_topology" not in page["data_description"], name
+            assert "wiring_topology" not in labels(page), name
+            assert "wiring_topology" not in helps(page), name
             for key in (
                 "inverter_input_phase_a_entity_id",
                 "inverter_input_phase_b_entity_id",
                 "inverter_input_phase_c_entity_id",
                 "inverter_input_is_grid",
             ):
-                assert page["data"][key], (name, key)
-            assert page["data_description"]["inverter_input_phase_a_entity_id"], name
-            assert page["data_description"]["inverter_input_is_grid"], name
+                assert labels(page)[key], (name, key)
+            assert helps(page)["inverter_input_phase_a_entity_id"], name
+            assert helps(page)["inverter_input_is_grid"], name
             for error in (
                 "input_grid_and_sensors", "input_grid_taken", "input_without_output"
             ):
@@ -3099,13 +3097,13 @@ async def test_sg_ready_creation_flow(hass: HomeAssistant, mock_hub_entry, mock_
     hass.states.async_set("switch.hp_relay_2", "off")
 
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    options = result["data_schema"].schema["setup_type"].config["options"]
+    options = flat_fields(result["data_schema"])["setup_type"].config["options"]
     assert "sg_ready" in {o["value"] for o in options}
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={"setup_type": "sg_ready"}
     )
     assert result["step_id"] == "sg_ready_config"
-    schema = {str(k): k for k in result["data_schema"].schema}
+    schema = {str(k): k for k in flat_fields(result["data_schema"])}
     # the timing limits come with their defaults; no mode or slider anywhere
     assert schema[CONF_SG_MIN_STATE_TIME].default() == 10
     assert schema[CONF_SG_MAX_BLOCK_TIME].default() == 120
@@ -3177,7 +3175,7 @@ async def test_sg_ready_options_flow_saves_and_clears_the_power_sensor(
     assert result["step_id"] == "sg_ready"
     user_input = {
         str(k): k.default()
-        for k in result["data_schema"].schema
+        for k in flat_fields(result["data_schema"])
         if k.default is not vol.UNDEFINED
     }
     user_input[CONF_SG_MAX_BLOCKS_PER_DAY] = 4
