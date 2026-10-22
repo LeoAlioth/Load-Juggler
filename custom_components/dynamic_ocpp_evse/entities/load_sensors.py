@@ -258,14 +258,13 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor, RestoreEntity):
 
     @property
     def extra_restore_state_data(self):
-        """The restart count and the give-up, kept over a restart of Home Assistant: they
-        live in the runtime, and a plug with no car behind it was otherwise power-cycled
-        three more times after every restart (JUG-27)."""
+        """The restart count, kept over a restart of Home Assistant: it lives in the runtime,
+        and sets how long the next restart waits (JUG-27, JUG-33)."""
         rt = self._runtime()
         count = rt.get("plug_restart_count")
         if not count:
             return None
-        return RestoredExtraData({"count": count, "gave_up": bool(rt.get("_plug_restart_gave_up"))})
+        return RestoredExtraData({"count": count})
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -278,9 +277,6 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor, RestoreEntity):
             return
         rt = self._runtime()
         rt["plug_restart_count"] = int(count)
-        if saved.get("gave_up"):
-            rt["_plug_restart_gave_up"] = True
-            rt["plug_restart_status"] = f"No draw (gave up after {int(count)} restarts)"
 
     def _read_site_data(self):
         """Reflect the smart plug's switch state, surfacing error states."""
@@ -299,8 +295,7 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor, RestoreEntity):
         self._attr_icon = self._PLUG_ICONS.get(
             self._attr_native_value.split(" until ")[0].split(" - ")[0], "mdi:power-plug-off-outline"
         )
-        # A restart, or the give-up, says so until the load draws again or
-        # its permit goes away; hands off (Dynamic Control off), it is stale.
+        # A restart says so until the load draws again; hands off (Dynamic Control off), it is stale.
         load_rt = self._runtime()
         note = load_rt.get("plug_finish_status") or load_rt.get("plug_restart_status")
         if (

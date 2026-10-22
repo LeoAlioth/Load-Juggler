@@ -7,15 +7,18 @@ temperature. The switch still reads on, a turn_on to it does nothing, and
 Load Juggler never acted. The owner's stand-in automation cycled the plug every
 15 min whenever it drew under 10 W - also with the car full or the load not
 permitted, ten times in a row on 3 Oct. "Restart if it stops drawing"
-(control/plug.py) cycles it only while permitted and on, at most once per
-30 min, and gives up after 3 in a row until the load draws again.
+(control/plug.py) cycles it only while permitted and on, and only if the load drew lately (JUG-33): the first
+restart after 10 min of no draw, then 1 h, 3 h, 6 h, 12 h, 24 h, 24 h apart,
+until the load draws for 5 min.
 """
 
 import asyncio
 import logging
 
 from custom_components.dynamic_ocpp_evse.const import (
+    CONF_EARLY_RATE_ENTITY_ID,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
+    CONF_PLUG_POWER_RATING,
     CONF_PLUG_RESTART_ON_NO_DRAW,
     CONF_PLUG_SWITCH_ENTITY_ID,
     DOMAIN,
@@ -79,6 +82,9 @@ class FakeSensor:
         return self.hass.data[DOMAIN]["loads"]["pond"]
 
 
+# The load drew for 5 min, then stopped: what a charger that cut out looks like.
+CUT_OUT = lambda t: 2000.0 if t < 300 else 0.0  # noqa: E731
+
 ENABLED = {CONF_PLUG_POWER_MONITOR_ENTITY_ID: MONITOR, CONF_PLUG_RESTART_ON_NO_DRAW: True}
 
 
@@ -122,15 +128,29 @@ def _status(rt, switch="on"):
     return sensor.native_value, sensor.extra_state_attributes
 
 
-def test_a_permitted_plug_drawing_nothing_for_10_min_is_cycled_once():
-    commands, rt = _run(25 * 60, power=lambda t: 0.0)
-    assert _restarts(commands) == [600]
-    # Off at 600 s and nothing sent until the 30 s are up, then back on.
-    after = [(t, s) for t, s in commands if t >= 600]
-    assert after[0] == (600, "turn_off")
-    assert after[1][1] == "turn_on" and 630 <= after[1][0] < 630 + SITE_S
+def test_a_permitted_plug_that_stopped_drawing_for_10_min_is_cycled_once():
+    commands, rt = _run(25 * 60, power=CUT_OUT)
+    assert _restarts(commands) == [900]
+    # Off at 900 s and nothing sent until the 30 s are up, then back on.
+    after = [(t, s) for t, s in commands if t >= 900]
+    assert after[0] == (900, "turn_off")
+    assert after[1][1] == "turn_on" and 930 <= after[1][0] < 930 + SITE_S
     assert rt["plug_restart_count"] == 1
     assert _status(rt) == ("Restarted (no draw 10 min)", {"restart_count": 1})
+
+
+def test_a_plug_that_never_drew_is_never_cycled():
+    commands, rt = _run(3 * 3600, power=lambda t: 0.0)
+    assert _restarts(commands) == []
+    assert rt["plug_restart_count"] == 0
+
+
+def test_a_plug_that_drew_long_ago_is_not_cycled():
+    # It drew until 300 s, was shed from 300 s to 4000 s, and is permitted
+    # again with nothing drawn: the last draw is over 30 min before the span.
+    permit = lambda t: 0.0 if 300 <= t < 4000 else PERMIT  # noqa: E731
+    commands, rt = _run(3 * 3600, power=CUT_OUT, permit=permit)
+    assert _restarts(commands, permit) == []
 
 
 def test_a_plug_drawing_normally_is_never_cycled():
@@ -165,57 +185,92 @@ def test_without_the_option_or_a_monitor_the_plug_is_untouched():
         assert _status(rt) == ("On", {})
 
 
-def test_restarts_are_30_min_apart_and_give_up_after_3(caplog):
+def test_restarts_back_off_1_3_6_12_24_h_and_stay_at_24_h(caplog):
     with caplog.at_level(logging.INFO):
-        commands, rt = _run(4 * 3600, power=lambda t: 0.0)
-    assert _restarts(commands) == [600, 600 + 1800, 600 + 3600]
+        commands, rt = _run(3 * 86400, power=CUT_OUT)
+    h = 3600
+    assert _restarts(commands) == [900, 900 + h, 900 + 4 * h, 900 + 10 * h,
+                                   900 + 22 * h, 900 + 46 * h, 900 + 70 * h]
+    assert rt["plug_restart_count"] == 7
+    assert _status(rt) == ("Restarted (no draw 10 min)", {"restart_count": 7})
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_a_load_that_draws_again_resets_the_back_off():
+    # Two restarts, then the car charges for 400 s from 5000 s and stops.
+    power = lambda t: 2000.0 if t < 300 or 5000 <= t < 5400 else 0.0  # noqa: E731
+    commands, rt = _run(7000, power=power)
+    # Back at the first step: the next restart is 10 min after it stopped.
+    assert _restarts(commands) == [900, 4500, 6000]
+    assert rt["plug_restart_count"] == 1
+
+
+def test_a_permit_that_goes_away_and_returns_keeps_the_back_off():
+    permit = lambda t: 0.0 if 5000 <= t < 5600 else PERMIT  # noqa: E731
+    commands, rt = _run(5 * 3600, power=CUT_OUT, permit=permit)
+    assert _restarts(commands, permit) == [900, 4500, 4500 + 3 * 3600]
     assert rt["plug_restart_count"] == 3
-    assert _status(rt) == ("No draw (gave up after 3 restarts)", {"restart_count": 3})
-    infos = [r for r in caplog.records if "power-cycling" in r.getMessage()]
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert [r.levelno for r in infos] == [logging.INFO] * 3
-    assert len(warnings) == 1 and "after 3 restarts" in warnings[0].getMessage()
 
 
-def test_a_load_that_draws_again_resets_the_count():
-    # Two restarts, then the car charges for 10 min from 2500 s and stops.
-    power = lambda t: 2000.0 if 2500 <= t < 3100 else 0.0  # noqa: E731
-    commands, rt = _run(4 * 3600, power=power)
-    restarts = _restarts(commands)
-    assert restarts[:2] == [600, 2400]
-    # Reset: three more restarts before it gives up, five in all.
-    assert len(restarts) == 5
-    assert all(b - a >= 1800 for a, b in zip(restarts, restarts[1:]))
-    assert rt["plug_restart_count"] == 3
+def test_drawing_counts_from_a_tenth_of_the_rated_power():
+    # Rated 3.5 kW: 200 W is not drawing, 400 W is.
+    options = {**ENABLED, CONF_PLUG_POWER_RATING: 3500}
+    low = lambda t: 200.0 if t < 300 else 0.0  # noqa: E731
+    high = lambda t: 400.0 if t < 300 else 0.0  # noqa: E731
+    assert _restarts(_run(3600, power=low, options=options)[0]) == []
+    assert _restarts(_run(3600, power=high, options=options)[0]) == [900]
 
 
-def test_a_permit_that_goes_away_and_returns_starts_over_after_a_give_up():
-    # Given up by 1.5 h; shed for 10 min at 2 h; permitted again after.
-    permit = lambda t: 0.0 if 7200 <= t < 7800 else PERMIT  # noqa: E731
-    commands, rt = _run(4 * 3600, power=lambda t: 0.0, permit=permit)
-    restarts = _restarts(commands, permit)
-    assert restarts[:3] == [600, 2400, 4200]
-    assert restarts[3] > 7800
-    assert rt["plug_restart_count"] >= 1
+def test_drawing_counts_from_a_tenth_of_the_absorption_rate():
+    # Rate sensor 1 kW (in kW): 50 W is not drawing, 150 W is.
+    options = {**ENABLED, CONF_EARLY_RATE_ENTITY_ID: "sensor.rate", CONF_PLUG_POWER_RATING: 9000}
+    for watts, expected in ((50.0, []), (150.0, [900])):
+        hass = FakeHass()
+        hass.states.mapping["sensor.rate"] = FakeState("1.0", "kW")
+        sensor = FakeSensor(hass, FakeEntry(options))
+        on, restarts = True, []
+        for t in range(0, 3600, SITE_S):
+            hass.states.mapping[SWITCH] = FakeState("on" if on else "off")
+            hass.states.mapping[MONITOR] = FakeState(str(watts if t < 300 and on else 0.0), "W")
+            if t - sensor._last_command_time < INTERVAL_S:
+                continue
+            hass.services.calls.clear()
+            asyncio.run(send_plug_command(sensor, PERMIT, float(t)))
+            for service in hass.services.calls:
+                on = service == "turn_on"
+                if service == "turn_off":
+                    restarts.append(t)
+        assert restarts == expected, watts
 
 
-def test_the_count_and_the_give_up_survive_a_restart_of_home_assistant():
-    # Gave up after 3 restarts, then HA restarts: a fresh runtime must not start counting again.
-    _, rt = _run(6 * 3600, power=lambda t: 0.0)
+def test_the_count_survives_a_restart_of_home_assistant():
+    _, rt = _run(5 * 3600, power=CUT_OUT)
     assert rt["plug_restart_count"] == 3
     sensor = LoadJugglerPlugStatusSensor.__new__(LoadJugglerPlugStatusSensor)
     sensor._runtime = lambda: rt
     saved = sensor.extra_restore_state_data.as_dict()
-    assert saved == {"count": 3, "gave_up": True}
+    assert saved == {"count": 3}
 
     fresh = {}
     sensor._runtime = lambda: fresh
     sensor._restore(saved)
-    assert fresh == {
-        "plug_restart_count": 3,
-        "_plug_restart_gave_up": True,
-        "plug_restart_status": "No draw (gave up after 3 restarts)",
-    }
+    assert fresh == {"plug_restart_count": 3}
     # Nothing to keep while the plug is fine.
     sensor._runtime = lambda: {}
     assert sensor.extra_restore_state_data is None
+
+
+def test_a_restored_count_waits_a_full_step_from_the_first_look():
+    # HA restarted with 2 restarts behind it: the load has been quiet since, but the
+    # next restart is 3 h away, not at once.
+    hass = FakeHass()
+    hass.data[DOMAIN]["loads"]["pond"] = {"plug_restart_count": 2}
+    sensor = FakeSensor(hass, FakeEntry(ENABLED))
+    hass.states.mapping[SWITCH] = FakeState("on")
+    hass.states.mapping[MONITOR] = FakeState("0.0", "W")
+    for t in range(0, 3 * 3600 + 600, INTERVAL_S):
+        hass.services.calls.clear()
+        asyncio.run(send_plug_command(sensor, PERMIT, float(t)))
+        if "turn_off" in hass.services.calls:
+            break
+    assert t == 3 * 3600

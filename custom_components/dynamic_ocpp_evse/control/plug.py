@@ -4,6 +4,7 @@ from ..const import (
     CONF_PLUG_FINISH_BELOW_W,
     CONF_PLUG_FINISH_FOR,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
+    CONF_PLUG_POWER_RATING,
     CONF_PLUG_RESTART_AFTER,
     CONF_PLUG_RESTART_ON_NO_DRAW,
     CONF_PLUG_SWITCH_ENTITY_ID,
@@ -12,11 +13,13 @@ from ..const import (
     DEFAULT_PLUG_RESTART_AFTER,
     DEFAULT_PLUG_RESTART_ON_NO_DRAW,
     PLUG_NO_DRAW_W,
-    PLUG_RESTART_MAX_TRIES,
-    PLUG_RESTART_MIN_GAP_S,
+    PLUG_RESTART_BACKOFF_S,
+    PLUG_RESTART_DRAW_SHARE,
     PLUG_RESTART_OFF_S,
+    PLUG_RESTART_RECENT_S,
     PLUG_RESTART_RECOVERY_S,
 )
+from ..const import CONF_EARLY_RATE_ENTITY_ID
 from ..helpers import get_entry_value
 from . import call_device, stamp_command
 
@@ -29,7 +32,17 @@ _HOLD = "hold"  # a power cycle is keeping the plug off
 def _reset_restarts(rt) -> None:
     rt["plug_restart_count"] = 0
     rt["plug_restart_status"] = None
-    rt["_plug_restart_gave_up"] = False
+    rt.pop("_plug_restarted_at", None)
+
+
+def _draw_w(sensor, entry) -> float:
+    """What counts as the load drawing: PLUG_RESTART_DRAW_SHARE of its regular power - the
+    absorption-rate sensor Load Insights keeps, else the plug's rated power; any draw over
+    PLUG_NO_DRAW_W when neither is known."""
+    regular = units.read_number(
+        sensor.hass, get_entry_value(entry, CONF_EARLY_RATE_ENTITY_ID, None), units.DOMAIN_WATTS
+    ) or float(get_entry_value(entry, CONF_PLUG_POWER_RATING, 0) or 0)
+    return max(PLUG_RESTART_DRAW_SHARE * regular, PLUG_NO_DRAW_W)
 
 
 def _no_draw_restart(sensor, switch_entity, limit, now):
@@ -42,11 +55,14 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
     span, is switched off and - PLUG_RESTART_OFF_S later, by the ordinary
     command - on again; the controller sends nothing in between.
 
-    At most one restart per PLUG_RESTART_MIN_GAP_S. After
-    PLUG_RESTART_MAX_TRIES in a row it gives up until the load draws for
-    PLUG_RESTART_RECOVERY_S or its permit goes away and comes back (toggling
-    the option reloads the entry, which starts it over too). An unreadable
-    monitor is no evidence of anything, so it never restarts the plug.
+    Only a load that drew lately is restarted (JUG-33): the first restart needs
+    a draw of PLUG_RESTART_DRAW_SHARE of the load's regular power within
+    PLUG_RESTART_RECENT_S before the no-draw span began, so a plug with no car
+    or no WiFi behind it is left alone. The next restarts back off by
+    PLUG_RESTART_BACKOFF_S (1 h, 3 h, ... 24 h, then every 24 h) and go on
+    until the load draws for PLUG_RESTART_RECOVERY_S, which resets the count;
+    a permit that goes away and returns does not. An unreadable monitor is no
+    evidence of anything, so it never restarts the plug.
     State lives in the load's runtime dict, where the Status sensor reads it.
     """
     entry = sensor.config_entry
@@ -57,11 +73,12 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
         return None
     rt = sensor._runtime()
     rt.setdefault("plug_restart_count", 0)
+    if rt["plug_restart_count"] and "_plug_restarted_at" not in rt:
+        rt["_plug_restarted_at"] = now      # the count came back from a Home Assistant restart: wait a full step
     if now < rt.get("_plug_restart_until", now):
         return _HOLD
     if limit <= 0:
         rt["_plug_no_draw_since"] = rt["_plug_draw_since"] = None
-        _reset_restarts(rt)
         return None
 
     state = sensor.hass.states.get(switch_entity)
@@ -71,6 +88,8 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
         rt["_plug_no_draw_since"] = rt["_plug_draw_since"] = None
         return None
 
+    if power >= _draw_w(sensor, entry):
+        rt["_plug_last_draw_at"] = now
     if power >= PLUG_NO_DRAW_W:
         rt["_plug_no_draw_since"] = None
         if rt.get("_plug_draw_since") is None:
@@ -95,19 +114,11 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
         return None
 
     count = rt["plug_restart_count"]
-    if count >= PLUG_RESTART_MAX_TRIES:
-        if not rt.get("_plug_restart_gave_up"):
-            rt["_plug_restart_gave_up"] = True
-            rt["plug_restart_status"] = f"No draw (gave up after {count} restarts)"
-            _LOGGER.warning(
-                "Smart load %s still draws nothing after %d restarts - not"
-                " restarting it again until it draws, its permit returns or"
-                " the option is toggled",
-                sensor._attr_name,
-                count,
-            )
-        return None
-    if now - rt.get("_plug_restarted_at", -float("inf")) < PLUG_RESTART_MIN_GAP_S:
+    if count == 0:
+        drew = rt.get("_plug_last_draw_at")
+        if drew is None or drew < rt["_plug_no_draw_since"] - PLUG_RESTART_RECENT_S:
+            return None                     # it has not drawn lately: nothing to restart
+    elif now - rt["_plug_restarted_at"] < PLUG_RESTART_BACKOFF_S[min(count, len(PLUG_RESTART_BACKOFF_S)) - 1]:
         return None
 
     rt["plug_restart_count"] = count + 1
@@ -117,12 +128,11 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
     rt["_plug_no_draw_since"] = None
     _LOGGER.info(
         "Smart load %s permitted and on but drawing %.0f W for %g min -"
-        " power-cycling it (restart %d of %d)",
+        " power-cycling it (restart %d)",
         sensor._attr_name,
         power,
         after_min,
         count + 1,
-        PLUG_RESTART_MAX_TRIES,
     )
     return _RESTART
 

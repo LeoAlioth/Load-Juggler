@@ -35,9 +35,15 @@ DEFAULT_PLUG_FINISH_BELOW_W = 0
 DEFAULT_PLUG_FINISH_FOR = 5
 PLUG_NO_DRAW_W = 10  # under this the load counts as not drawing
 PLUG_RESTART_OFF_S = 30  # how long a restart holds the switch off
-PLUG_RESTART_MIN_GAP_S = 30 * 60  # at most one restart per this span
-PLUG_RESTART_MAX_TRIES = 3  # restarts in a row without a draw, then give up
+# The wait after restart 1, 2, 3... before the next one (the first restart comes after the
+# "restart after" span of no draw); the last step repeats until the load draws (JUG-33).
+PLUG_RESTART_BACKOFF_S = (3600, 3 * 3600, 6 * 3600, 12 * 3600, 24 * 3600)
 PLUG_RESTART_RECOVERY_S = 5 * 60  # drawing this long resets the count
+# A first restart needs the load to have drawn lately: at least this share of its regular
+# draw (the absorption-rate sensor, else the plug's rated power) in the PLUG_RESTART_RECENT_S
+# before the no-draw span began. A load with no car or no WiFi behind it is never cycled.
+PLUG_RESTART_DRAW_SHARE = 0.10
+PLUG_RESTART_RECENT_S = 30 * 60
 
 # Smart-plug operating modes - priority is the distribution urgency tier (1-4).
 # A binary on/off load; each mode (bar Continuous) never uses the grid and
