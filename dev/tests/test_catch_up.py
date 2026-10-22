@@ -12,6 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from .translation_steps import helps, labels
 from custom_components.dynamic_ocpp_evse.calculations.catch_up import (
     CATCH_UP_RELEASE_RATIO,
     cant_keep_up,
@@ -406,5 +407,5 @@ def test_every_page_has_en_and_sl_text():
         tr = json.loads((root / f"{lang}.json").read_text())
         for kind, step in pages:
             page = tr[kind]["step"][step]
-            assert page["data"][CONF_CATCH_UP_ENABLED]
-            assert page["data_description"][CONF_CATCH_UP_ENABLED]
+            assert labels(page)[CONF_CATCH_UP_ENABLED]
+            assert helps(page)[CONF_CATCH_UP_ENABLED]

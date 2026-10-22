@@ -45,6 +45,13 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
 │   ├── flow.py                    # LoadJugglerConfigFlow - the initial-setup step methods
 │   ├── options.py                 # LoadJugglerOptionsFlow - the "Configure" edit steps
+│   ├── groups.py / sections.py    # Which setup fields sit under which heading (plain data per step id, shared by the
+│   │                              #   wizard and the Configure pages) and the mixin that nests a form into form
+│   │                              #   sections and flattens the input back - handlers and stored options stay flat.
+│   │                              #   A section key must differ from every field key of its step; labels live under
+│   │                              #   ``sections.<key>`` in the translations; an error is keyed by the SECTION (the
+│   │                              #   frontend shows none under a field inside one). sections.py is a hand-kept copy
+│   │                              #   of Load Insights' - change both
 │   ├── schemas.py                 # Every voluptuous schema builder, as module functions - no handler
 │   │                              #   state; `hass` is a parameter only where a form offers entity selectors
 │   ├── pages.py                   # Overview / "How it decides" read-only page text builders

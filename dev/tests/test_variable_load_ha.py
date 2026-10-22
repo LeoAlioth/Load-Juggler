@@ -13,6 +13,8 @@ from types import SimpleNamespace
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .translation_steps import helps, labels
+from custom_components.dynamic_ocpp_evse.config_flow.sections import flat_fields
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_CHARGER_L1_PHASE,
@@ -265,7 +267,7 @@ async def _to_variable_load_page(hass, mock_hub_entry):
     assert await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
-    options = result["data_schema"].schema["setup_type"].config["options"]
+    options = flat_fields(result["data_schema"])["setup_type"].config["options"]
     assert "variable_load" in {o["value"] for o in options}
     return await hass.config_entries.flow.async_configure(
         result["flow_id"], user_input={"setup_type": "variable_load"}
@@ -302,7 +304,7 @@ async def test_variable_load_creation_flow_output_only(hass, mock_hub_entry, moc
     hass.states.async_set("sensor.alfen_power", "0", {"unit_of_measurement": "W"})
     result = await _to_variable_load_page(hass, mock_hub_entry)
     assert result["step_id"] == "variable_load_config"
-    schema = {str(k): k for k in result["data_schema"].schema}
+    schema = {str(k): k for k in flat_fields(result["data_schema"])}
     assert schema[CONF_VL_PHASE_MULTI_ABOVE].default() == 4000
     assert schema[CONF_VL_PHASE_SINGLE_BELOW].default() == 2000
     assert schema[CONF_VL_PHASE_MIN_INTERVAL].default() == 10
@@ -321,10 +323,10 @@ async def test_variable_load_creation_flow_output_only(hass, mock_hub_entry, moc
 
 async def test_variable_load_form_refuses_bad_bounds_bands_and_legs(hass, mock_hub_entry, mock_setup):
     result = await _to_variable_load_page(hass, mock_hub_entry)
-    for change, field, error in (
-        ({CONF_VL_MIN: 12000}, CONF_VL_MAX, "vl_min_exceeds_max"),
-        ({CONF_VL_PHASE_SINGLE_BELOW: 5000}, CONF_VL_PHASE_SINGLE_BELOW, "vl_advice_band"),
-        ({CONF_CHARGER_L2_PHASE: "A"}, CONF_CHARGER_L2_PHASE, "charger_phase_duplicate"),
+    for change, field, error in (  # an error is keyed by the field's section
+        ({CONF_VL_MIN: 12000}, "setpoint", "vl_min_exceeds_max"),
+        ({CONF_VL_PHASE_SINGLE_BELOW: 5000}, "phase_advice", "vl_advice_band"),
+        ({CONF_CHARGER_L2_PHASE: "A"}, "site", "charger_phase_duplicate"),
     ):
         result = await hass.config_entries.flow.async_configure(
             result["flow_id"], user_input={**_FORM, **change}
@@ -351,7 +353,7 @@ async def test_variable_load_options_saves_and_clears_the_setpoint(hass, mock_hu
     )
     assert result["step_id"] == "variable_load"
     user_input = {
-        str(k): k.default() for k in result["data_schema"].schema if k.default is not vol.UNDEFINED
+        str(k): k.default() for k in flat_fields(result["data_schema"]) if k.default is not vol.UNDEFINED
     }
     assert user_input[CONF_CHARGER_L1_PHASE] == "B"
     user_input[CONF_VL_MAX] = 20
@@ -406,8 +408,8 @@ def test_variable_load_strings_exist_in_both_languages():
         ):
             page = data[section]["step"][step]
             assert page["title"] and page["description"], (name, step)
-            assert set(page["data"]) == fields | extra, (name, step, set(page["data"]) ^ (fields | extra))
-            assert set(page["data_description"]) >= fields, (name, step, fields - set(page["data_description"]))
+            assert set(labels(page)) | set(page.get("data", {})) == fields | extra, (name, step, set(labels(page)) ^ (fields | extra))
+            assert set(helps(page)) >= fields, (name, step, fields - set(helps(page)))
             for error in ("vl_min_exceeds_max", "vl_advice_band"):
                 assert data[section]["error"][error], (name, section, error)
 

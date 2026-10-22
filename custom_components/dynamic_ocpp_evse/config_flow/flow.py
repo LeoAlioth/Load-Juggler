@@ -133,7 +133,9 @@ from ..ocpp_discovery import (
     scan_ocpp_chargers,
 )
 from ..registry import get_inverters_for_hub
+from .groups import CONFIG as CONFIG_GROUPS
 from .options import LoadJugglerOptionsFlow
+from .sections import SectionedFlowMixin
 from .schemas import (
     _charger_current_schema,
     _charger_info_schema,
@@ -179,9 +181,10 @@ _DETECTED_ENTITY_LABELS = (
 )
 
 
-class LoadJugglerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class LoadJugglerConfigFlow(SectionedFlowMixin, config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Load Juggler."""
 
+    GROUPS = CONFIG_GROUPS
     VERSION = 2
     MINOR_VERSION = 10
 

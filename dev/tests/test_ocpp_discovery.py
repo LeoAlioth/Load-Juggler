@@ -17,6 +17,7 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.dynamic_ocpp_evse.config_flow.sections import flat_fields
 from custom_components.dynamic_ocpp_evse.ocpp_discovery import (
     ocpp_charge_control_entity,
     ocpp_charger_for_device,
@@ -453,10 +454,10 @@ async def test_resolver_rejects_a_device_that_is_not_a_usable_charger(
 
 def _field(schema, key):
     """``(marker, validator)`` for one key of a voluptuous schema."""
-    for marker, validator in schema.schema.items():
+    for marker, validator in flat_fields(schema).items():
         if str(marker) == key:
             return marker, validator
-    raise AssertionError(f"{key} not in schema: {[str(m) for m in schema.schema]}")
+    raise AssertionError(f"{key} not in schema: {[str(m) for m in flat_fields(schema)]}")
 
 
 async def _start_discovery(hass, hub_entry, charger):
@@ -511,7 +512,7 @@ async def test_charger_info_offers_a_device_picker_not_a_text_field(
 
     assert result["step_id"] == "charger_info"
     schema = result["data_schema"]
-    assert CONF_OCPP_DEVICE_ID not in [str(m) for m in schema.schema]
+    assert CONF_OCPP_DEVICE_ID not in [str(m) for m in flat_fields(schema)]
     marker, validator = _field(schema, FIELD_OCPP_DEVICE)
     assert validator.config.get("integration") == "ocpp"
     # Pre-filled with the device discovery matched, so leaving it alone is a
@@ -918,7 +919,7 @@ async def test_options_charger_offers_the_device_picker_preselected(
     result = await _open_charger_options(hass, mock_charger_entry.entry_id)
 
     schema = result["data_schema"]
-    assert CONF_OCPP_DEVICE_ID not in [str(m) for m in schema.schema]
+    assert CONF_OCPP_DEVICE_ID not in [str(m) for m in flat_fields(schema)]
     marker, validator = _field(schema, FIELD_OCPP_DEVICE)
     assert validator.config.get("integration") == "ocpp"
     # Pre-selected to the device that claims the stored charge point id.
