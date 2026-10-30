@@ -15,6 +15,7 @@ import logging
 import time
 
 from .forecast_observers import (
+    gain_to_apply,
     observe_clipped,
     observe_gain,
     observe_peakiness,
@@ -23,6 +24,7 @@ from ..calculations.calibration import (
     battery_is_saturated,
     block_power_at,
     export_is_clamped,
+    scale_series,
 )
 from ..calculations import (
     discharge_headroom_unknown,
@@ -40,14 +42,12 @@ from ..calculations import (
     yields_to_excess,
 )
 from ..const import (
-    CONF_BASE_CONSUMPTION,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_GRID_EXPORT_LIMIT_PER_PHASE,
     CONF_PHASES,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_TOTAL_ALLOCATED_CURRENT,
-    DEFAULT_BASE_CONSUMPTION,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
     DEFAULT_GRID_EXPORT_LIMIT,
@@ -55,17 +55,30 @@ from ..const import (
     FORECAST_SOC_HYSTERESIS,
     LEG_DRAWING_CURRENT,
 )
+from ..calculations.forecast import clip_window_span, unavoidable_clip_kwh
 from ..calculations.target_calculator import _sort_loads
 from ..calculations.utils import managed_phase_draws
 from ..helpers import get_entry_value
 from . import fleet
+from .readers import _read_base_consumption
 from .forecast_reader import (
-    read_forecast_series_pair,
+    read_forecast_series,
     forecast_windows,
     configured_forecast_sensors,
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# What the early start on forecast clipping reads next cycle (published by
+# _compute_forecast_advice, consumed by engine/hub_calculation.
+# _apply_forecast_excess): ``{"kwh", "start_h", "span_h"}`` - the clip the
+# battery cannot take, the hours until it begins (0 while under way) and how
+# long it lasts. Gone whenever the advice is off, which is what keeps the
+# early start inert there.
+_CLIP_EARLY_KEY = "_clip_early"
+# True in hub_runtime while the planned-outage pre-charge is on (JUG-23); set by
+# engine/hub_calculation._apply_outage_precharge, read here and by the early starts.
+OUTAGE_PRECHARGE_KEY = "_outage_precharge"
 
 # The forecast advice's carried state in hub_runtime (see
 # _compute_forecast_advice), dropped together whenever the advice is off.
@@ -84,6 +97,7 @@ def _compute_forecast_advice(
     site,
     members,
     ctrl_site=None,
+    grid=(None, None, None),
 ):
     """Advisory battery headroom from the PV clipping forecast.
 
@@ -211,17 +225,11 @@ def _compute_forecast_advice(
         get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, DEFAULT_GRID_EXPORT_LIMIT)
         or 0
     )
-    # Fleet capacity: the hub's legacy capacity field arrives via the implicit
-    # legacy member, entry capacities via theirs.
     capacity_kwh = fleet.capacity_total(members)
     # Forecast sources are per inverter (each PV array belongs to one), but
     # clipping is a site question - every array competes for the same export
-    # headroom - so the fleet's devices merge into one site forecast. The
-    # hub's legacy fields arrive via the implicit legacy member.
+    # headroom - so the fleet's devices merge into one site forecast.
     device_ids = fleet.forecast_device_ids(members)
-    legacy_entity_ids = (
-        get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []
-    )
     # ``export_limit`` of 0 means two OPPOSITE things, and reading it as one
     # silently switched this whole feature off on the site that needs it most.
     # Grid-tied it means "no limit configured": the grid absorbs everything,
@@ -234,15 +242,15 @@ def _compute_forecast_advice(
     if (
         (export_limit <= 0 and not off_grid)
         or capacity_kwh <= 0
-        or not (device_ids or legacy_entity_ids)
+        or not device_ids
     ):
-        for key in (*_FORECAST_LATCHES, "_forecast_parse_memo"):
+        for key in (
+            *_FORECAST_LATCHES, "_forecast_parse_memo", "_forecast_held", _CLIP_EARLY_KEY
+        ):
             hub_runtime.pop(key, None)
         return None, {}
 
-    base_consumption = (
-        get_entry_value(hub_entry, CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION) or 0
-    )
+    base_consumption = _read_base_consumption(hass, hub_entry, hub_runtime)
     soc_floor = get_entry_value(
         hub_entry, CONF_FORECAST_SOC_FLOOR, DEFAULT_FORECAST_SOC_FLOOR
     )
@@ -288,25 +296,39 @@ def _compute_forecast_advice(
     if fleet_max_power:
         power_cap = fleet_max_power + (fleet_charge_cap or 0)
 
-    entity_ids = configured_forecast_sensors(hass, device_ids, legacy_entity_ids)
-    # Per-array optimism, resolved device → entity so the factor follows the
-    # array rather than the site (fleet.forecast_inflation_by_device). Only the
-    # CLIP series is inflated; ``series`` below stays raw for the overnight
-    # drop's deadline, which carries its own early bias already.
-    inflation_by_device = fleet.forecast_inflation_by_device(members)
-    inflation_by_entity = {}
-    for device_id, pct in inflation_by_device.items():
-        for entity_id in configured_forecast_sensors(hass, [device_id], None):
-            inflation_by_entity.setdefault(entity_id, pct)
-    series, clip_series, by_entity = read_forecast_series_pair(
-        hass, entity_ids, hub_runtime, inflation_by_entity
-    )
+    # Entities with a forecast held for them still resolve while their device
+    # reads nothing (see read_forecast_series).
+    held = hub_runtime.get("_forecast_held", ())
+    entity_ids = configured_forecast_sensors(hass, device_ids, held)
+    raw_series, by_entity = read_forecast_series(hass, entity_ids, hub_runtime)
+    # Each ARRAY's measured level gain biases its own series before the merge,
+    # and only for the clip integral below. ``raw_series`` stays the forecast as
+    # published: ``first_production_at`` (it carries its own early margin - two
+    # margins on one number only move the overnight drop earlier) and the
+    # observers (which must compare against the unbiased forecast, or the gain
+    # would learn from its own correction) read that. Every gain is exactly 1.0
+    # without data, which leaves ``series`` the very same object.
+    gains_applied = {
+        m.entry_id: gain_to_apply(hub_runtime, m.entry_id)
+        for m in members
+        if m.forecast_device_ids
+    }
+    entity_gain = {}
+    for m in members:
+        if gains_applied.get(m.entry_id, 1.0) != 1.0:
+            for e in configured_forecast_sensors(hass, list(m.forecast_device_ids), held):
+                entity_gain.setdefault(e, gains_applied[m.entry_id])
+    series = raw_series
+    if entity_gain:
+        series = merge_forecast_series(
+            [scale_series(s, entity_gain.get(e, 1.0)) for e, s in by_entity.items()]
+        )
     # The NEXT clipping window, not the rest of the calendar day: the remainder
     # of today while today still has clip left, tomorrow once it does not (see
     # ``select_clipping_window``). ``window`` is 0 exactly in the first case.
     windows = forecast_windows()
     window, fc = select_clipping_window(
-        clip_series,
+        series,
         clip_threshold,
         windows,
         charge_cap_w=fleet_charge_cap,
@@ -337,7 +359,7 @@ def _compute_forecast_advice(
     # the only thing carried is the latch that keeps a drop dropped. See
     # ``reservation_is_due``.
     production_at = first_production_at(
-        series, base_consumption, windows[0][0], windows[-1][1], power_cap_w=power_cap
+        raw_series, base_consumption, windows[0][0], windows[-1][1], power_cap_w=power_cap
     )
     due, due_latched = reservation_is_due(
         windows[0][0],
@@ -391,6 +413,25 @@ def _compute_forecast_advice(
     # Room needed carries information at both ends: below capacity it says the
     # charge RATE binds, at capacity it says the pack size does.
     room_needed = min(max(0.0, fc.absorbable_kwh), capacity_kwh)
+    # The clip no headroom can save, and when it opens and how long it lasts:
+    # the early start on forecast clipping (hub option) starts Excess loads
+    # ahead of it so the surplus goes into them. One cycle behind by design -
+    # the calculation reads last cycle's, a figure that moves with the forecast.
+    span = clip_window_span(
+        series, clip_threshold, windows[window][0], until, power_cap_w=power_cap
+    )
+    unavoidable = unavoidable_clip_kwh(
+        fc.clipped_kwh, room_needed, deficit if window == 0 else 0.0
+    )
+    if span and unavoidable > 0:
+        now_local = windows[0][0]
+        hub_runtime[_CLIP_EARLY_KEY] = {
+            "kwh": unavoidable,
+            "start_h": max(0.0, (span[0] - now_local).total_seconds() / 3600.0),
+            "span_h": (span[1] - span[0]).total_seconds() / 3600.0,
+        }
+    else:
+        hub_runtime.pop(_CLIP_EARLY_KEY, None)
     # The two live plant figures the engaged advice is computed from, read once
     # - from the CHARGE-CONTROL VIEW of the site when the engine supplies one:
     # the same loads, allowance and feedback subtraction, but grid phases and
@@ -403,7 +444,11 @@ def _compute_forecast_advice(
     export_now_w = reconstructed_export_power(view)
     charge_limit = None
     limiting = False
-    if fleet_charge_cap and not off_grid:
+    # The planned-outage pre-charge (JUG-23) stands the whole advice down: no
+    # ceiling below full, no charge-rate cap - the site wants every watt it can
+    # put into the battery before the grid goes.
+    precharge = bool(hub_runtime.get(OUTAGE_PRECHARGE_KEY))
+    if fleet_charge_cap and not off_grid and not precharge:
         # Above the destination the battery is the absorber of LAST RESORT: the
         # Excess loads that exist to soak up surplus get it first, and the
         # battery takes what they cannot. Below it the battery comes first, as
@@ -460,7 +505,7 @@ def _compute_forecast_advice(
     per_inverter = {}
     hub_id = getattr(hub_entry, "entry_id", None)
     # Off-grid publishes no ceiling either - see the suppression above.
-    published_soc = None if off_grid else proposed
+    published_soc = None if off_grid or precharge else proposed
     charge_shares = fleet.split_charge_limit(members, charge_limit, proposed)
     for m in members:
         if m.entry_id == hub_id or not m.has_battery or not (m.capacity_kwh or 0) > 0:
@@ -519,21 +564,30 @@ def _compute_forecast_advice(
             site.battery_soc_full,
         )
         if off_grid
-        else export_is_clamped(site.total_export_power, export_limit)
+        else export_is_clamped(
+            site.total_export_power,
+            export_limit,
+            phase_export_w=[
+                (a or 0.0) * site.voltage for a in (
+                    site.export_current.a, site.export_current.b, site.export_current.c
+                )
+            ],
+            phase_limit_w=get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT_PER_PHASE, 0),
+        )
     )
     # The observers learn from PUBLISHED production, not the calculation's:
     # None wherever the figure is not a measurement (fleet.solar_is_assumed) -
     # a dead sensor's 0 W, an off-grid output nothing splits from its battery.
     production_w = (
         None if fleet.solar_is_assumed(members)
-        else fleet.solar_total(members, site.voltage)
+        else fleet.solar_total(members, site.voltage, grid)
     )
 
     for m in members:
         if not m.forecast_device_ids:
             continue
         member_entities = configured_forecast_sensors(
-            hass, list(m.forecast_device_ids), None
+            hass, list(m.forecast_device_ids), held
         )
         member_series = merge_forecast_series(
             [by_entity[e] for e in member_entities if e in by_entity]
@@ -543,11 +597,12 @@ def _compute_forecast_advice(
             m.entry_id,
             local_day,
             block_power_at(member_series, now_local),
-            fleet.member_solar_published(m, site.voltage),
+            fleet.member_solar_published(m, site.voltage, grid),
             dt_hours,
             constrained,
             now_local=now_local,
         )
+        observed["forecast_gain_applied"] = gains_applied.get(m.entry_id, 1.0)
         per_inverter.setdefault(m.entry_id, {}).update(observed)
 
     peakiness = observe_peakiness(
@@ -566,7 +621,7 @@ def _compute_forecast_advice(
     clipped = observe_clipped(
         hub_runtime,
         local_day,
-        block_power_at(series, now_local),
+        block_power_at(raw_series, now_local),
         production_w,
         constrained,
         dt_hours,
@@ -653,6 +708,7 @@ def _build_hub_result(
     hub_warnings=None,
     excess_available=False,
     excess_margin_power=0,
+    forecast_excess=False,
     forecast_advice=None,
     inverters_data=None,
 ):
@@ -811,7 +867,7 @@ def _build_hub_result(
     # handles charging; export shows up as negative net grid).
     #  1. Measured solar: the identity is exact.
     #  2. Derived solar with inverter output entities: use the engine's
-    #     per-phase household (grid + inverter output − export per phase),
+    #     per-phase household (grid + Σ(output − input) − draws),
     #     since derived solar is itself built from these terms.
     #  3. Last resort: the identity with derived solar - best effort.
     hh_phases = getattr(site, "household_consumption", None)
@@ -1091,9 +1147,15 @@ def _build_hub_result(
         # of) the trigger the site is; the per-sink split is in the debug log.
         "excess_available": excess_available,
         "excess_margin_power": round(excess_margin_power, 0),
+        # True when the forecast (calculations/forecast_excess.py), not the
+        # surplus margin, is what started Excess before the battery was full.
+        "forecast_excess": forecast_excess,
         # Per-load targets
         "load_targets": load_targets,
         "load_available": {c.load_id: c.available_current for c in site.loads},
+        "load_potential": {
+            c.load_id: c.potential_current for c in site.loads if c.potential_phases_mask
+        },
         "load_names": {c.load_id: c.entity_id for c in site.loads},
         "load_modes": load_modes,
         "load_rank": load_rank,

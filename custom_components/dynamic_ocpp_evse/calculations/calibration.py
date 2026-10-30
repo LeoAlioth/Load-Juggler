@@ -250,6 +250,35 @@ def hourly_offsets(series, overall, min_wh=GAIN_MIN_HOUR_WH,
     return offsets
 
 
+# The gain is applied only once the series spans this many distinct days: one
+# day's ratio is weather, not calibration. Below it the correction is exactly 1.0.
+GAIN_APPLY_MIN_DAYS = 3
+
+
+def applied_gain(gain, days, min_days=GAIN_APPLY_MIN_DAYS,
+                 low=GAIN_CLAMP_LOW, high=GAIN_CLAMP_HIGH):
+    """The multiplier the clip integral applies to one array's forecast.
+
+    EXACTLY 1.0 wherever the observer has nothing to say: no gain, or fewer than
+    ``min_days`` days behind it (a fresh restart, a restore that failed, an
+    off-grid site whose pack is full all day - dev/TODO.md JUG-17). Never below
+    the clamp, whatever the stored figure says.
+
+    Pure function - unit-testable.
+    """
+    if gain is None or days is None or days < min_days:
+        return 1.0
+    return min(high, max(low, float(gain)))
+
+
+def scale_series(series, gain):
+    """``series`` (``{block start: watts}``) times ``gain``; the same object when
+    the gain is 1.0, so an uncalibrated array is byte-identical to before."""
+    if not series or gain == 1.0:
+        return series
+    return {ts: w * gain for ts, w in series.items()}
+
+
 def series_days(series):
     """How many distinct dates carry comparable energy in the series."""
     return len({b.get("t", "")[:10] for b in (series or []) if float(b.get("f", 0.0)) > 0})
@@ -289,7 +318,13 @@ def clip_pair(samples, threshold_w):
 CLIP_WALL_TOLERANCE_W = 100.0
 
 
-def export_is_clamped(export_w, export_limit_w, tolerance=CLIP_WALL_TOLERANCE_W):
+def export_is_clamped(
+    export_w,
+    export_limit_w,
+    tolerance=CLIP_WALL_TOLERANCE_W,
+    phase_export_w=(),
+    phase_limit_w=None,
+):
     """Whether the meter is sitting on the site's export wall.
 
     The PHYSICAL curtailment test, and the one both observers gate on: at the
@@ -308,6 +343,13 @@ def export_is_clamped(export_w, export_limit_w, tolerance=CLIP_WALL_TOLERANCE_W)
     and both the 9 kWp and the 4 kWp array published Unknown for days
     (2026-09-07).
 
+    The wall has two forms: the site TOTAL at its limit, or ANY one phase at its
+    per-phase limit (``phase_export_w`` per phase, ``phase_limit_w`` the cap each
+    carries). A symmetric inverter cannot breach the per-phase cap without
+    breaching the total proportionally, but an asymmetric one can - 5 kW out on
+    one leg passes a 13.5 kW total and still clamps - so the test is the OR of
+    the two. Either limit may be unset (0 / None) on its own.
+
     No export limit configured means the grid absorbs everything, so nothing
     is ever clamped. Conservative where it is unsure: an unreadable export
     reads as clamped, because admitting a curtailed interval teaches the gain
@@ -315,11 +357,18 @@ def export_is_clamped(export_w, export_limit_w, tolerance=CLIP_WALL_TOLERANCE_W)
 
     Pure function - unit-testable.
     """
-    if not export_limit_w or float(export_limit_w) <= 0:
+    total_on = bool(export_limit_w) and float(export_limit_w) > 0
+    phase_on = bool(phase_limit_w) and float(phase_limit_w) > 0
+    if not (total_on or phase_on):
         return False
     if export_w is None:
         return True
-    return float(export_w) >= float(export_limit_w) - abs(tolerance)
+    if total_on and float(export_w) >= float(export_limit_w) - abs(tolerance):
+        return True
+    return phase_on and any(
+        p is None or float(p) >= float(phase_limit_w) - abs(tolerance)
+        for p in phase_export_w
+    )
 
 
 def battery_is_saturated(

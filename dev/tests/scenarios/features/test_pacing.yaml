@@ -1,0 +1,241 @@
+# Test scenarios: pacing an Excess-mode load over the planning horizon.
+#
+# Every site has an 8 A Excess surplus (20 A solar - 2 A house - the 10 A trigger).
+# A paced load is capped at pace_energy_kwh x 1000 / max(pace_hours_left, 1) watts,
+# as per-phase current at the site voltage and the load's phases; under its
+# 6 A minimum it is off, and it starts only from 6 x 1.2 = 7.2 A up.
+
+scenarios:
+
+  - name: "pace-1ph-cap-below-minimum"
+    description: "Cap 3 A is under the 6 A minimum - the load is off despite the surplus"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A -> an 8A Excess surplus
+      pace_energy_kwh: 1.38
+      pace_hours_left: 2
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        pace: true
+    expected:
+      load_1:
+        allocated: 0.0  # 1380 W over 2 h = 690 W = 3 A
+
+  - name: "pace-1ph-cap-in-start-band"
+    description: "Cap 6.9 A clears the minimum but not the start threshold - an off load stays off"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A -> an 8A Excess surplus
+      pace_energy_kwh: 3.174
+      pace_hours_left: 2
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        pace: true
+    expected:
+      load_1:
+        allocated: 0.0  # 1587 W = 6.9 A < 7.2 A
+
+  - name: "pace-1ph-cap-binds"
+    description: "Cap 7.5 A is below the 8 A surplus - the load runs at the cap"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A -> an 8A Excess surplus
+      pace_energy_kwh: 3.45
+      pace_hours_left: 2
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        pace: true
+    expected:
+      load_1:
+        allocated: 7.5  # 1725 W = 7.5 A
+
+  - name: "pace-1ph-cap-above-surplus"
+    description: "Cap 12 A is above the surplus - the surplus decides, as without pacing"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A -> an 8A Excess surplus
+      pace_energy_kwh: 5.52
+      pace_hours_left: 2
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        pace: true
+    expected:
+      load_1:
+        allocated: 8.0  # 2760 W = 12 A; surplus 8 A
+
+  - name: "pace-1ph-hours-floored-at-one"
+    description: "0.25 h left counts as 1 h, so the energy is not spent in one burst"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A -> an 8A Excess surplus
+      pace_energy_kwh: 1.725
+      pace_hours_left: 0.25
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        pace: true
+    expected:
+      load_1:
+        allocated: 7.5  # 1725 Wh over max(0.25, 1) h = 7.5 A, not 30 A
+
+  - name: "pace-1ph-option-off"
+    description: "The load's option is off - the energy and horizon are ignored"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      max_import_power: 8050
+      distribution_mode: priority
+      solar_production: 4600  # 20A
+      phase_a_consumption: 2.0
+      excess_export_threshold: 2300  # 10A -> an 8A Excess surplus
+      pace_energy_kwh: 1.38
+      pace_hours_left: 2
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 12000
+      inverter_max_power: 12000
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        pace: false
+    expected:
+      load_1:
+        allocated: 8.0  # today's behaviour
+
+  - name: "pace-3ph-cap-per-phase"
+    description: "A 3-phase load: the cap in watts is shared over its three phases"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 17250
+      distribution_mode: priority
+      solar_production: 10350  # 15 A/phase
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      excess_export_threshold: 3450  # 15 A
+      pace_energy_kwh: 15.525
+      pace_hours_left: 3
+      battery_soc: null
+      battery_soc_min: null
+      battery_soc_target: null
+      battery_max_charge_power: null
+      battery_max_discharge_power: null
+      inverter_supports_asymmetric: false
+      inverter_max_power_per_phase: 5750
+      inverter_max_power: 17250
+    loads:
+      - entity_id: "load_1"
+        operating_mode: Excess
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+        pace: true
+    expected:
+      load_1:
+        allocated: 7.5  # 5175 W / (230 V x 3) = 7.5 A per phase; the surplus alone would give 9 A

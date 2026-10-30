@@ -124,3 +124,35 @@ A third read-only page in the hub's options ("Configure") menu - **Debug** - nex
 
 ### Why
 Config validation without moving real loads (new installs, phase-mapping experiments); dramatically better support/bug-report loops.
+
+## Pacing beyond Excess mode
+**Status:** Not yet implemented (the owner, 2026-10-17: Excess mode only for now, nothing for Solar Only)
+**Complexity:** Medium
+
+Pacing an Excess load until sunset is in (per-load `pace_over_horizon`, the hub's *Excess energy* and *Sunset* entities). Left for later, from the design (`Load_Insights/docs/specs/2026-10-17-soc-planning-and-pacing.md`):
+
+- **Solar Only pacing.** Would cap the battery's contribution above the target instead of a per-load ceiling: `min(max_discharge - actual_discharge, (SOC - target) / 100 x capacity / hours_left)` in `_calculate_solar_surplus`, needing a battery capacity and the horizon. Conflicts with the settled "Solar Only uses the battery above target SOC" decision after the horizon (`docs/design-decisions.md`) - re-ask the owner.
+- **A "Sun Only" mode** through `sun_pool`, for the requester's buffer case.
+- **After sunset.** Today the hours left are floored at 1 h, so a paced load facing leftover energy past sunset is held to that energy per hour (roughly unpaced for a small remainder). A stricter rule (stop pacing, or stop the load) is a choice for the owner.
+- **Start margin.** `PACE_START_MARGIN` is a constant (20 %); make it a setting only if live use shows one value does not fit.
+
+## Forecast-driven Excess beyond the verdict
+**Status:** Not yet implemented (the owner, 2026-10-17: the verdict and the Excess pool only)
+**Complexity:** Small to medium
+
+*Early start on forecast excess* is in (hub options `forecast_excess_*`). Left for later:
+
+- **Solar Priority / Solar Only loads.** The hub verdict still does not reach them (declined 2026-09-09); the owner allowed the narrower per-load *Catch up when the sun would overfill the battery* instead (see below, `docs/design-decisions.md`).
+- **Per-device opt-out.** The verdict is hub-wide, as the owner asked; a per-load switch only if a device should not follow it.
+- **The 0.2 / 0.1 kWh start and release margins** (`FORECAST_EXCESS_MIN_KWH`) are constants; make them settings only if the planning sensor's noise on a live site says otherwise.
+- **A battery that does not charge.** The verdict holds while the planned energy lasts even in a cloud, so a modulating Excess load sits at its minimum on the battery or grid; a release on a missing charge (the pool empty for N minutes) is a choice for the owner.
+
+## Catch-up beyond the first cut
+**Status:** In (per-load `catch_up_enabled`, 2026-10-17); left for later, only if live use asks
+**Complexity:** Small
+
+- **Floor default.** The floor is the early-Excess gate, whose default source is the target - so catch-up does nothing until the owner sets the source to the minimum or a fixed value. A separate catch-up floor setting, or a different default, is a choice for the owner.
+- **Peak vs planned rate.** The owner's words were "peak production higher than the max the EVSE can deliver"; the test uses the planned rate (energy / hours left), the one figure the hub has. A peak-production input would need the forecast curve.
+- **Constants.** The start is the load's own maximum power and the release ratio is 0.8 (`CATCH_UP_RELEASE_RATIO`), a constant; make them settings only if live use says otherwise.
+- **Several loads.** Each load is judged on the whole planned energy against its own maximum; two catch-up loads in one site both start, and the distribution then shares the one solar pool between them.
+- **Plug Solar Priority.** Its binary rule runs above the minimum SOC, which is the lowest floor, so catch-up has nothing to add there.

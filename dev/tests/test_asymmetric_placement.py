@@ -3,7 +3,7 @@
 Machine-authored tests - not yet human-reviewed.
 
 run_tests.place_asymmetric_output is what simulate_grid_ct builds every
-asymmetric inverter's per-phase grid readings from (Anže, 2026-09-24: it
+asymmetric inverter's per-phase grid readings from (2026-09-24: it
 "puts/pulls power on the phases in a way to always try to balance them on
 the grid"). Until then the harness spread its output evenly, and
 3ph-1c-standard-heavy-importing read 25.97 A on a 25 A breaker that the
@@ -37,3 +37,17 @@ def test_pulls_from_a_light_phase_to_balance():
 
 def test_a_total_past_every_cap_falls_back_to_the_even_spread():
     assert place_asymmetric_output([10.0, 0.0, 0.0], 90.0, 26.0) == [30.0, 30.0, 30.0]
+
+
+def test_the_pushes_together_stay_within_the_rating():
+    """A pull on C lets the inverter push on A and B for a small net: at 10 A
+    per phase that would be 20 A out on a 15 A inverter. The pushes come down
+    to 15 A and the pull with them, the net unchanged."""
+    out = place_asymmetric_output([12.0, 12.0, -8.0], 12.0, 10.0, rating=15.0)
+    assert abs(sum(out) - 12.0) < 1e-9
+    assert abs(sum(o for o in out if o > 0) - 15.0) < 1e-9
+    assert all(abs(o) <= 10.0 + 1e-9 for o in out)
+    # Within the rating, the placement is the caps' alone.
+    assert place_asymmetric_output([12.0, 12.0, -8.0], 12.0, 10.0) == \
+        place_asymmetric_output([12.0, 12.0, -8.0], 12.0, 10.0, rating=100.0)
+

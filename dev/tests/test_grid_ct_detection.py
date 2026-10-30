@@ -15,6 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.dynamic_ocpp_evse.config_flow.sections import flat_fields
 from custom_components.dynamic_ocpp_evse.config_flow.helpers import _auto_detect_phase_entities
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_ENTITY_ID,
@@ -406,7 +407,7 @@ async def _hub_grid_offers(hass: HomeAssistant, devices: dict, device_classes: b
         result["flow_id"], user_input={CONF_NAME: "Hub", CONF_ENTITY_ID: "hub"})
     assert result["step_id"] == "hub_grid"
     suggested = {getattr(m, "schema", None): (getattr(m, "description", None) or {}).get("suggested_value")
-                 for m in result["data_schema"].schema}
+                 for m in flat_fields(result["data_schema"])}
     return {"phase_a": suggested[CONF_PHASE_A_CURRENT_ENTITY_ID],
             "phase_b": suggested[CONF_PHASE_B_CURRENT_ENTITY_ID],
             "phase_c": suggested[CONF_PHASE_C_CURRENT_ENTITY_ID]}

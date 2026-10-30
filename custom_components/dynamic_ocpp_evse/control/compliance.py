@@ -10,16 +10,13 @@ from ..const import (
     COMPLIANCE_IDLE_CONNECTOR_STATUSES,
     FIRMWARE_BUSY_STATES,
     FIRMWARE_BUSY_HOLD_SECONDS,
-    DEFAULT_UPDATE_FREQUENCY,
-    RAMP_DOWN_RATE,
+    COMPLIANCE_TOLERANCE,
     DEAD_BAND,
     CONF_ENTITY_ID,
     CONF_CHARGER_ID,
     CONF_EVSE_CURRENT_OFFERED_ENTITY_ID,
     CONF_EVSE_POWER_OFFERED_ENTITY_ID,
-    CONF_UPDATE_FREQUENCY,
     CONF_FILTER_DEAD_BAND,
-    CONF_FILTER_RAMP_DOWN_RATE,
     CONF_PHASE_VOLTAGE,
     DEFAULT_PHASE_VOLTAGE,
     EVSE_RT_COMMANDED_LIMIT,
@@ -165,19 +162,14 @@ async def check_profile_compliance(
     if units.is_unusable_number(current_offered):
         return
 
-    update_freq = get_entry_value(
-        sensor.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
-    )
-    # The hub's Filters page dials, when this load knows its hub; each default
-    # is the constant it overrides. The ramp-down rate doubles as the
-    # compliance tolerance because a charger legitimately lags a ramp.
+    # The hub's Filters page dead band, when this load knows its hub. The
+    # tolerance is fixed, not scaled by the update frequency: it used to be
+    # RAMP_DOWN_RATE x update_frequency (6 A at 30 s), which let a charger
+    # capped at 10 A against a 16 A command go unflagged (2026-10-04). A ramp's
+    # lag is the skip below's job, not the tolerance's.
     hub = getattr(sensor, "hub_entry", None)
     dead_band = get_entry_value(hub, CONF_FILTER_DEAD_BAND, DEAD_BAND) if hub else DEAD_BAND
-    ramp_down = (
-        get_entry_value(hub, CONF_FILTER_RAMP_DOWN_RATE, RAMP_DOWN_RATE)
-        if hub else RAMP_DOWN_RATE
-    )
-    tolerance = ramp_down * update_freq
+    tolerance = max(dead_band, COMPLIANCE_TOLERANCE)
 
     # Skip while the commanded limit is still ramping - the charger's offered
     # current legitimately lags a ramp (up or down), which a single-sample diff

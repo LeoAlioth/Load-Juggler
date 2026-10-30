@@ -15,9 +15,14 @@ import voluptuous as vol
 from typing import Any
 from homeassistant import config_entries
 from homeassistant.helpers.selector import selector
+from .groups import OPTIONS as OPTIONS_GROUPS
+from .sections import SectionedFlowMixin
 from ..const import (
+    DEVICE_TYPE_ROOM_THERMOSTAT,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_LIMIT_ENTITY_ID,
@@ -29,7 +34,6 @@ from ..const import (
     CONF_PRIORITY_ORDER,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_SOC_LIMIT_ENTITY_IDS,
     DEFAULT_LOAD_PRIORITY,
@@ -37,6 +41,8 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
     ENTRY_TYPE_GROUP,
@@ -49,6 +55,7 @@ from ..const import (
     INVERTER_FEATURE_SOLAR,
 )
 from ..helpers import (
+    detect_charge_rate_unit,
     get_entry_value,
     validate_charger_settings,
     validate_offgrid_battery_requirement,
@@ -57,17 +64,21 @@ from ..helpers import hub_has_battery, inverter_features, strip_unfeatured_inver
 from .helpers import (
     _BATTERY_UNIT_MAP,
     _GRID_ENTITY_KEYS,
+    _PACING_ENTITY_KEYS,
+    _PACING_UNIT_MAP,
     _GRID_UNIT_MAP,
+    _INVERTER_AC_UNIT_MAP,
     _INVERTER_ENTITY_KEYS,
-    _INVERTER_OUTPUT_UNIT_MAP,
     _LOGGER,
     _PLUG_ENTITY_KEYS,
     _SOLAR_UNIT_MAP,
     _STATION_ENTITY_KEYS,
+    _SG_READY_ENTITY_KEYS,
+    _VL_ENTITY_KEYS,
+    _check_variable_load,
     _TANK_ENTITY_KEYS,
     _apply_priority_order,
     _controlled_devices,
-    _detect_charge_rate_unit,
     _check_power_window,
     _fill_hidden_legs,
     _hub_phase_count,
@@ -80,6 +91,7 @@ from .helpers import (
     _write_control_unit_map,
     _validate_forecast_devices,
     _validate_inverter_features,
+    _validate_inverter_input,
 )
 from ..ocpp_discovery import (
     ocpp_charger_for_device,
@@ -93,6 +105,8 @@ from .schemas import (
     _hot_water_tank_schema,
     _plug_schema,
     _power_station_schema,
+    _sg_ready_schema,
+    _variable_load_schema,
     _inverter_features_schema,
     _build_hub_inverter_schema,
     _build_inverter_solar_schema,
@@ -110,8 +124,10 @@ from .schemas import (
 )
 
 
-class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
+class LoadJugglerOptionsFlow(SectionedFlowMixin, config_entries.OptionsFlow):
     """Handle options flow for Load Juggler."""
+
+    GROUPS = OPTIONS_GROUPS
 
     def __init__(self):
         self._data = {}
@@ -255,11 +271,9 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             return self.async_show_menu(step_id="init", menu_options=menu_options)
         if entry_type == ENTRY_TYPE_HUB:
             # A hub edits its own settings one question per page - its
-            # hardware lives on inverter entries (a hub still carrying legacy
-            # hardware fields has them moved there on its next setup). The
-            # battery/forecast policy is offered only while some inverter on
-            # it declares a battery; the priority order only while it has
-            # loads to order.
+            # hardware lives on inverter entries. The battery/forecast policy
+            # is offered only while some inverter on it declares a battery;
+            # the priority order only while it has loads to order.
             menu_options = ["hub_connection", "hub_export"]
             if hub_has_battery(self.hass, self.config_entry):
                 menu_options.append("hub_policy")
@@ -269,9 +283,12 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 menu_options.append("priority")
             menu_options += ["overview", "summary"]
             return self.async_show_menu(step_id="init", menu_options=menu_options)
-        return self.async_show_menu(
-            step_id="init", menu_options=["settings", "overview"]
-        )
+        menu_options = ["settings", "overview"]
+        if self.config_entry.data.get(CONF_DEVICE_TYPE) in (
+            DEVICE_TYPE_HOT_WATER_TANK, DEVICE_TYPE_ROOM_THERMOSTAT
+        ):
+            menu_options.append("change_type")
+        return self.async_show_menu(step_id="init", menu_options=menu_options)
 
     async def async_step_overview(
         self, user_input: dict[str, Any] | None = None
@@ -324,8 +341,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 return await self.async_step_plug()
             if device_type == DEVICE_TYPE_HOT_WATER_TANK:
                 return await self.async_step_hot_water_tank()
+            if device_type == DEVICE_TYPE_ROOM_THERMOSTAT:
+                return await self.async_step_room_thermostat()
             if device_type == DEVICE_TYPE_POWER_STATION:
                 return await self.async_step_power_station()
+            if device_type == DEVICE_TYPE_SG_READY:
+                return await self.async_step_sg_ready()
+            if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+                return await self.async_step_variable_load()
             return await self.async_step_charger()
         if entry_type == ENTRY_TYPE_GROUP:
             return await self.async_step_group()
@@ -368,7 +391,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
     async def async_step_inverter_core(
         self, user_input: dict[str, Any] | None = None
     ) -> config_entries.FlowResult:
-        """The inverter's AC side: capacity, topology, per-phase output."""
+        """The inverter's AC side: capacity, per-phase output and input."""
         return await self._async_edit_page(
             user_input,
             step_id="inverter_core",
@@ -376,7 +399,14 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
                 dict(_build_hub_inverter_schema(self.hass, defaults))
             ),
             entity_keys=_INVERTER_ENTITY_KEYS,
-            unit_map=_INVERTER_OUTPUT_UNIT_MAP,
+            unit_map=_INVERTER_AC_UNIT_MAP,
+            validate=lambda data, errors: _validate_inverter_input(
+                self.hass,
+                self.config_entry.entry_id,
+                self._defaults.get(CONF_HUB_ENTRY_ID),
+                data,
+                errors,
+            ),
             finalize=_normalize_inverter_power_caps,
         )
 
@@ -397,8 +427,6 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             validate=lambda data, errors: _validate_forecast_devices(
                 self.hass, data, errors
             ),
-            # The device selection replaces any legacy sensor list.
-            finalize=lambda data: data.update({CONF_SOLAR_FORECAST_ENTITY_IDS: []}),
         )
 
     async def async_step_inverter_battery(
@@ -411,7 +439,12 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             schema=lambda defaults: vol.Schema(
                 dict(_build_inverter_battery_schema(self.hass, defaults))
             ),
-            entity_keys=[CONF_BATTERY_SOC_ENTITY_ID, CONF_BATTERY_POWER_ENTITY_ID],
+            entity_keys=[
+                CONF_BATTERY_SOC_ENTITY_ID,
+                CONF_BATTERY_POWER_ENTITY_ID,
+                CONF_BATTERY_CAPACITY_ENTITY_ID,
+                CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
+            ],
             unit_map=_BATTERY_UNIT_MAP,
         )
 
@@ -445,8 +478,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
 
         def _require_battery_when_offgrid(data, errors) -> None:
             validate_offgrid_battery_requirement(
-                data, self._defaults, errors,
-                hass=self.hass, hub_entry_id=self.config_entry.entry_id,
+                data, errors, self.hass, self.config_entry.entry_id
             )
 
         return await self._async_edit_page(
@@ -482,6 +514,8 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             schema=lambda defaults: _hub_section_schema(
                 self.hass, defaults, HUB_POLICY_KEYS
             ),
+            entity_keys=_PACING_ENTITY_KEYS,
+            unit_map=_PACING_UNIT_MAP,
         )
 
     async def async_step_hub_timing(
@@ -646,7 +680,7 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
         ocpp_device_id = self._data.get(CONF_OCPP_DEVICE_ID) or get_entry_value(
             self.config_entry, CONF_OCPP_DEVICE_ID, None
         )
-        detected_unit = await _detect_charge_rate_unit(self.hass, ocpp_device_id)
+        detected_unit = await detect_charge_rate_unit(self.hass, ocpp_device_id)
 
         return await self._async_edit_page(
             user_input,
@@ -674,6 +708,67 @@ class LoadJugglerOptionsFlow(config_entries.OptionsFlow):
             step_id="hot_water_tank",
             schema=_hot_water_tank_schema,
             entity_keys=_TANK_ENTITY_KEYS,
+        )
+
+    async def async_step_room_thermostat(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        return await self._async_edit_page(
+            user_input,
+            step_id="room_thermostat",
+            schema=_hot_water_tank_schema,
+            entity_keys=_TANK_ENTITY_KEYS,
+        )
+
+    async def async_step_change_type(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        """Switch a hot water tank to a room thermostat or back. Both run on the same entities,
+        so nothing is lost: the entity ids, their history and every setting stay, and only
+        the labels, the setpoint defaults and what Load Insights learns from it change."""
+        is_room = self.config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_ROOM_THERMOSTAT
+        return self.async_show_menu(
+            step_id="change_type",
+            menu_options=["change_type_confirm", "init"],
+            description_placeholders={
+                "now": "room thermostat" if is_room else "hot water tank",
+                "then": "hot water tank" if is_room else "room thermostat",
+            },
+        )
+
+    async def async_step_change_type_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        new_type = (
+            DEVICE_TYPE_HOT_WATER_TANK
+            if self.config_entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_ROOM_THERMOSTAT
+            else DEVICE_TYPE_ROOM_THERMOSTAT
+        )
+        self.hass.config_entries.async_update_entry(
+            self.config_entry, data={**self.config_entry.data, CONF_DEVICE_TYPE: new_type}
+        )
+        return self.async_create_entry(title="", data=dict(self.config_entry.options))
+
+    async def async_step_sg_ready(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        return await self._async_edit_page(
+            user_input,
+            step_id="sg_ready",
+            schema=_sg_ready_schema,
+            entity_keys=_SG_READY_ENTITY_KEYS,
+        )
+
+    async def async_step_variable_load(
+        self, user_input: dict[str, Any] | None = None
+    ) -> config_entries.FlowResult:
+        hub_phases = _hub_phase_count(self.hass, self.config_entry.data.get(CONF_HUB_ENTRY_ID))
+        return await self._async_edit_page(
+            user_input,
+            step_id="variable_load",
+            schema=lambda defaults: _variable_load_schema(defaults, hub_phases),
+            entity_keys=_VL_ENTITY_KEYS,
+            validate=lambda data, errors: _check_variable_load(data, errors, hub_phases),
         )
 
     async def async_step_power_station(

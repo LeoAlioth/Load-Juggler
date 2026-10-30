@@ -25,13 +25,15 @@ from ..const import (
     CONF_AUTO_DETECT_PHASE_MAPPING,
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_NOMINAL_VOLTAGE,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_BATTERY_SOC_FULL,
     CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -44,6 +46,7 @@ from ..const import (
     CONF_CHARGE_LIMIT_NORMAL,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_CHARGE_PAUSE_DURATION,
+    CONF_PAUSE_PROFILE_VALIDITY,
     CONF_CHARGE_RATE_UNIT,
     CONF_CLIMATE_ENTITY_ID,
     CONF_CONNECTED_TO_PHASE,
@@ -54,10 +57,18 @@ from ..const import (
     CONF_EXCESS_HYSTERESIS,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_FORECAST_SOC_FLOOR,
+    CONF_GENERATOR_RATING,
     CONF_GRID_EXPORT_LIMIT,
+    CONF_GRID_EXPORT_LIMIT_PER_PHASE,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_HEATING_ELEMENT_POWER,
     CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_ENTITY_ID,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
@@ -75,6 +86,10 @@ from ..const import (
     CONF_PLUG_MAX_CURRENT,
     CONF_PLUG_POWER_MONITOR_ENTITY_ID,
     CONF_PLUG_POWER_RATING,
+    CONF_PLUG_RESTART_AFTER,
+    CONF_PLUG_RESTART_ON_NO_DRAW,
+    CONF_PLUG_FINISH_BELOW_W,
+    CONF_PLUG_FINISH_FOR,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_PROFILE_VALIDITY_MODE,
     # The Filters page: its keys, and the constants that are its defaults.
@@ -103,6 +118,22 @@ from ..const import (
     SOC_LIMIT_SEMANTICS_FLOOR,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_SOLAR_GRACE_PERIOD,
+    CONF_MANUAL_OVERRIDE_TIMEOUT,
+    CONF_FORECAST_CLIP_EARLY_ENABLED,
+    CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_EXCESS_SOC,
+    CONF_FORECAST_EXCESS_SOC_SOURCE,
+    CONF_OUTAGE_ENTITY_ID,
+    CONF_OUTAGE_HOLD_HOURS,
+    CONF_OUTAGE_LEAD_HOURS,
+    CONF_PACE_OVER_HORIZON,
+    CONF_CATCH_UP_ENABLED,
+    CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_STACK_LEVEL,
     CONF_STATION_AC_INPUT_ENTITY_ID,
@@ -116,15 +147,15 @@ from ..const import (
     CONF_STATION_RESERVE_ENTITY_ID,
     CONF_STATION_STORM_RESERVE,
     CONF_TANK_POWER_ENTITY_ID,
+    CONF_TANK_OFF_OPERATION_MODE,
     CONF_TANK_PRIORITIZE_BELOW_NORMAL,
     CONF_UPDATE_FREQUENCY,
-    CONF_WIRING_TOPOLOGY,
     DEFAULT_BASE_CONSUMPTION,
     DEFAULT_BATTERY_CAPACITY_KWH,
     DEFAULT_BATTERY_MAX_POWER,
     DEFAULT_BATTERY_NOMINAL_VOLTAGE,
-    DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_BATTERY_SOC_HYSTERESIS,
+    DEFAULT_BATTERY_SOC_FREEZE_FLOOR,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_CONTROL_DEADBAND_W,
     DEFAULT_CHARGE_CONTROL_INTERVAL,
@@ -132,10 +163,13 @@ from ..const import (
     DEFAULT_CHARGE_LIMIT_NORMAL,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DEFAULT_CHARGE_PAUSE_DURATION,
+    DEFAULT_PAUSE_PROFILE_VALIDITY,
     DEFAULT_EXCESS_HYSTERESIS,
     DEFAULT_EXCESS_TRIGGER_MARGIN,
     DEFAULT_FORECAST_SOC_FLOOR,
+    DEFAULT_GENERATOR_RATING,
     DEFAULT_GRID_EXPORT_LIMIT,
+    DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE,
     DEFAULT_HEATING_ELEMENT_POWER,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_MAX_CHARGE_CURRENT,
@@ -145,9 +179,24 @@ from ..const import (
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_PLUG_MAX_CURRENT,
     DEFAULT_PLUG_POWER_RATING,
+    DEFAULT_PLUG_RESTART_AFTER,
+    DEFAULT_PLUG_FINISH_BELOW_W,
+    DEFAULT_PLUG_FINISH_FOR,
+    DEFAULT_PLUG_RESTART_ON_NO_DRAW,
     DEFAULT_PROFILE_VALIDITY_MODE,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_SOLAR_GRACE_PERIOD,
+    DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+    DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD,
+    DEFAULT_FORECAST_CLIP_EARLY_ENABLED,
+    DEFAULT_FORECAST_EXCESS_ENABLED,
+    DEFAULT_FORECAST_EXCESS_SOC,
+    DEFAULT_FORECAST_EXCESS_SOC_SOURCE,
+    DEFAULT_OUTAGE_HOLD_HOURS,
+    DEFAULT_OUTAGE_LEAD_HOURS,
+    DEFAULT_PACE_OVER_HORIZON,
+    DEFAULT_CATCH_UP_ENABLED,
+    FORECAST_EXCESS_SOC_SOURCES,
     DEFAULT_STACK_LEVEL,
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_MIN_CHARGE_POWER,
@@ -155,24 +204,64 @@ from ..const import (
     DEFAULT_STATION_STORM_RESERVE,
     DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL,
     DEFAULT_UPDATE_FREQUENCY,
-    DEFAULT_WIRING_TOPOLOGY,
     FIELD_OCPP_DEVICE,
     OCPP_INTEGRATION_DOMAIN,
     PROFILE_VALIDITY_MODE_ABSOLUTE,
     PROFILE_VALIDITY_MODE_RELATIVE,
     STATION_CHARGE_POWER_MAX,
     STATION_CHARGE_POWER_STEP,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
     CONF_INVERTER_FEATURES,
     INVERTER_FEATURE_SOLAR,
     INVERTER_FEATURES,
 )
+from ..const.sg_ready import (
+    CONF_SG_MAX_BLOCK_TIME,
+    CONF_SG_MAX_BLOCKS_PER_DAY,
+    CONF_SG_MIN_STATE_TIME,
+    CONF_SG_NOMINAL_POWER,
+    CONF_SG_POWER_ENTITY_ID,
+    CONF_SG_RELAY_1_ENTITY_ID,
+    CONF_SG_RELAY_2_ENTITY_ID,
+    DEFAULT_SG_MAX_BLOCK_TIME,
+    DEFAULT_SG_MAX_BLOCKS_PER_DAY,
+    DEFAULT_SG_MIN_STATE_TIME,
+    DEFAULT_SG_NOMINAL_POWER,
+)
+from ..const.variable_load import (
+    CONF_VL_BIAS,
+    CONF_VL_CHARGING_ENTITY_ID,
+    CONF_VL_CONNECTED_ENTITY_ID,
+    CONF_VL_CURRENT_L1_ENTITY_ID,
+    CONF_VL_CURRENT_L2_ENTITY_ID,
+    CONF_VL_CURRENT_L3_ENTITY_ID,
+    CONF_VL_FALLBACK_SETPOINT,
+    CONF_VL_MAX,
+    CONF_VL_MIN,
+    CONF_VL_PHASE_MIN_INTERVAL,
+    CONF_VL_PHASE_MULTI_ABOVE,
+    CONF_VL_PHASE_SINGLE_BELOW,
+    CONF_VL_POWER_ENTITY_ID,
+    CONF_VL_RESEND_INTERVAL,
+    CONF_VL_SETPOINT_ENTITY_ID,
+    CONF_VL_SETPOINT_UNIT,
+    DEFAULT_VL_BIAS,
+    DEFAULT_VL_MAX,
+    DEFAULT_VL_MIN,
+    DEFAULT_VL_PHASE_MIN_INTERVAL,
+    DEFAULT_VL_PHASE_MULTI_ABOVE,
+    DEFAULT_VL_PHASE_SINGLE_BELOW,
+    DEFAULT_VL_RESEND_INTERVAL,
+    DEFAULT_VL_SETPOINT_UNIT,
+    VL_UNIT_AMPS,
+    VL_UNIT_WATTS,
+)
 from ..helpers import normalize_optional_entity
+from ..units import minutes_of
 from .helpers import (
     _CURRENT_UNITS,
     _POWER_UNITS,
     _SOC_UNITS,
+    _ENERGY_UNITS,
     _VOLTAGE_UNITS,
 )
 
@@ -270,6 +359,17 @@ def _num(key, defaults, default, lo, hi, step, unit, mode="box", required=False)
     return marker(key, default=defaults.get(key, default)), selector({"number": number})
 
 
+def _override_duration(defaults, default):
+    """The manual override timeout as hours and minutes (Home Assistant's
+    duration input), stored as minutes (helpers._normalize_optional_inputs).
+    0 never hands the load over (the owner, 2026-10-30)."""
+    minutes = int(round(minutes_of(defaults.get(CONF_MANUAL_OVERRIDE_TIMEOUT, default))))
+    return (
+        vol.Required(CONF_MANUAL_OVERRIDE_TIMEOUT, default={"hours": minutes // 60, "minutes": minutes % 60}),
+        selector({"duration": {"enable_second": False}}),
+    )
+
+
 def _identity_fields(defaults: dict, name: str, entity_id: str) -> list[tuple]:
     """The name and entity-id prefix every create page opens with."""
     return [
@@ -306,6 +406,20 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
             ),
             bool,
         ),
+        # JUG-13: the sensors above read a backup generator on the inverter's AC
+        # input, not a grid. Off-grid, with the generator one more supply capped
+        # at its own rating; nothing can be exported to it.
+        (
+            vol.Required(
+                CONF_GRID_INPUT_IS_GENERATOR,
+                default=defaults.get(CONF_GRID_INPUT_IS_GENERATOR, False),
+            ),
+            bool,
+        ),
+        _num(
+            CONF_GENERATOR_RATING, defaults, DEFAULT_GENERATOR_RATING,
+            1, 200, 1, "A",
+        ),
         (
             vol.Required(
                 CONF_ENABLE_MAX_IMPORT_POWER,
@@ -328,6 +442,10 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
         # and the PV clipping forecast integrates above it. 0 = no
         # limit: grid-side Excess never triggers, forecast off.
         _num(CONF_GRID_EXPORT_LIMIT, defaults, DEFAULT_GRID_EXPORT_LIMIT, 0, 50000, 100, "W"),
+        # Optional second ceiling, per phase: only the curtailment test reads it.
+        _num(
+            CONF_GRID_EXPORT_LIMIT_PER_PHASE, defaults, DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE, 0, 20000, 100, "W",
+        ),
         _num(
             CONF_EXCESS_TRIGGER_MARGIN, defaults, DEFAULT_EXCESS_TRIGGER_MARGIN,
             0, 5000, 50, "W",
@@ -359,10 +477,89 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
             CONF_BATTERY_SOC_HYSTERESIS, defaults, DEFAULT_BATTERY_SOC_HYSTERESIS,
             1, 10, 1, "%", mode="slider",
         ),
+        _num(
+            CONF_BATTERY_SOC_FREEZE_FLOOR, defaults, DEFAULT_BATTERY_SOC_FREEZE_FLOOR,
+            0, 50, 1, "%", mode="slider",
+        ),
         _num(CONF_BASE_CONSUMPTION, defaults, DEFAULT_BASE_CONSUMPTION, 0, 10000, 50, "W"),
+        (
+            _optional_entity_field(CONF_BASE_CONSUMPTION_ENTITY_ID, defaults),
+            _entity_sel(hass, {None, "power"}, _POWER_UNITS, ["sensor", "input_number"]),
+        ),
         _num(
             CONF_FORECAST_SOC_FLOOR, defaults, DEFAULT_FORECAST_SOC_FLOOR,
             0, 90, 1, "%", mode="slider",
+        ),
+        # Pacing: the energy a paced Excess load may still use, and when the
+        # time to use it ends (a load opts in on its own settings page).
+        (
+            _optional_entity_field(CONF_PACING_ENERGY_ENTITY_ID, defaults),
+            _entity_sel(hass, {"energy", None}, _ENERGY_UNITS, ["sensor", "input_number"]),
+        ),
+        (
+            _optional_entity_field(CONF_PACING_HORIZON_ENTITY_ID, defaults),
+            _entity_sel(hass, {"timestamp"}, None),
+        ),
+        # Forecast-driven Excess: start Excess before the battery is full, on
+        # the pacing energy above, once the SOC reaches the chosen source.
+        (
+            vol.Required(
+                CONF_FORECAST_EXCESS_ENABLED,
+                default=defaults.get(
+                    CONF_FORECAST_EXCESS_ENABLED, DEFAULT_FORECAST_EXCESS_ENABLED
+                ),
+            ),
+            bool,
+        ),
+        # JUG-18: the same early start, counted back from the PV clipping window
+        # instead of the next full charge.
+        (
+            vol.Required(
+                CONF_FORECAST_CLIP_EARLY_ENABLED,
+                default=defaults.get(
+                    CONF_FORECAST_CLIP_EARLY_ENABLED, DEFAULT_FORECAST_CLIP_EARLY_ENABLED
+                ),
+            ),
+            bool,
+        ),
+        (
+            _optional_entity_field(CONF_FORECAST_EXCESS_FULL_ENTITY_ID, defaults),
+            _entity_sel(hass, {"timestamp"}, None),
+        ),
+        (
+            vol.Required(
+                CONF_FORECAST_EXCESS_SOC_SOURCE,
+                default=defaults.get(
+                    CONF_FORECAST_EXCESS_SOC_SOURCE, DEFAULT_FORECAST_EXCESS_SOC_SOURCE
+                ),
+            ),
+            selector(
+                {
+                    "select": {
+                        "options": FORECAST_EXCESS_SOC_SOURCES,
+                        "mode": "dropdown",
+                        "translation_key": CONF_FORECAST_EXCESS_SOC_SOURCE,
+                    }
+                }
+            ),
+        ),
+        _num(
+            CONF_FORECAST_EXCESS_SOC, defaults, DEFAULT_FORECAST_EXCESS_SOC,
+            0, 100, 1, "%", mode="slider",
+        ),
+        # JUG-23: a calendar or binary_sensor saying when the grid will be lost;
+        # the battery is pre-charged ahead of and through it.
+        (
+            _optional_entity_field(CONF_OUTAGE_ENTITY_ID, defaults),
+            selector({"entity": {"domain": ["calendar", "binary_sensor"]}}),
+        ),
+        _num(
+            CONF_OUTAGE_LEAD_HOURS, defaults, DEFAULT_OUTAGE_LEAD_HOURS,
+            0, 48, 0.5, "h",
+        ),
+        _num(
+            CONF_OUTAGE_HOLD_HOURS, defaults, DEFAULT_OUTAGE_HOLD_HOURS,
+            0, 24, 0.5, "h",
         ),
     ]
 
@@ -423,16 +620,15 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
         key: defaults.get(key) or 0
         for key in (CONF_INVERTER_MAX_POWER, CONF_INVERTER_MAX_POWER_PER_PHASE)
     }
-    topology_options = [
-        {
-            "value": WIRING_TOPOLOGY_PARALLEL,
-            "label": "Parallel (AC-coupled / no battery)",
-        },
-        {"value": WIRING_TOPOLOGY_SERIES, "label": "Series (Hybrid / battery)"},
-    ]
     return [
         _num(CONF_INVERTER_MAX_POWER, caps, 0, 0, 50000, 100, "W"),
         _num(CONF_INVERTER_MAX_POWER_PER_PHASE, caps, 0, 0, 20000, 100, "W"),
+        (
+            _optional_entity_field(CONF_INVERTER_MAX_POWER_ENTITY_ID, defaults),
+            _entity_sel(
+                hass, {None, "power"}, _POWER_UNITS, ["sensor", "input_number"]
+            ),
+        ),
         (
             vol.Required(
                 CONF_INVERTER_SUPPORTS_ASYMMETRIC,
@@ -448,12 +644,20 @@ def _build_hub_inverter_schema(hass, defaults: dict | None = None) -> list[tuple
                 CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
             )
         ),
+        *(
+            (_optional_entity_field(key, defaults), current_power)
+            for key in (
+                CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+                CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+                CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+            )
+        ),
         (
-            vol.Required(
-                CONF_WIRING_TOPOLOGY,
-                default=defaults.get(CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY),
+            vol.Optional(
+                CONF_INVERTER_INPUT_IS_GRID,
+                default=defaults.get(CONF_INVERTER_INPUT_IS_GRID, False),
             ),
-            selector({"select": {"options": topology_options, "mode": "dropdown"}}),
+            bool,
         ),
     ]
 
@@ -483,12 +687,20 @@ def _build_inverter_battery_schema(hass, defaults: dict | None = None) -> list[t
             0, 50000, 100, "W",
         ),
         _num(
-            CONF_BATTERY_SOC_FULL, defaults, DEFAULT_BATTERY_SOC_FULL,
-            50, 100, 1, "%", mode="slider",
-        ),
-        _num(
             CONF_BATTERY_CAPACITY_KWH, defaults, DEFAULT_BATTERY_CAPACITY_KWH,
             0, 1000, 0.1, "kWh",
+        ),
+        (
+            _optional_entity_field(CONF_BATTERY_CAPACITY_ENTITY_ID, defaults),
+            _entity_sel(
+                hass, {None, "energy_storage"}, _ENERGY_UNITS, ["sensor", "input_number"]
+            ),
+        ),
+        (
+            # Where this battery is meant to end the day: the clipping reserve is carved
+            # below it. Unlike the ceiling source on the control page it is never written.
+            _optional_entity_field(CONF_BATTERY_CHARGE_TARGET_ENTITY_ID, defaults),
+            selector({"entity": {"domain": ["input_number", "number", "sensor"]}}),
         ),
     ]
 
@@ -684,20 +896,35 @@ HUB_CONNECTION_KEYS = (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_INVERT_PHASES,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_MAIN_BREAKER_RATING,
+    CONF_GENERATOR_RATING,
     CONF_PHASE_VOLTAGE,
     CONF_ENABLE_MAX_IMPORT_POWER,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
 )
 HUB_EXPORT_KEYS = (
     CONF_GRID_EXPORT_LIMIT,
+    CONF_GRID_EXPORT_LIMIT_PER_PHASE,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_EXCESS_HYSTERESIS,
 )
 HUB_POLICY_KEYS = (
     CONF_BATTERY_SOC_HYSTERESIS,
+    CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BASE_CONSUMPTION,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
     CONF_FORECAST_SOC_FLOOR,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
+    CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_CLIP_EARLY_ENABLED,
+    CONF_FORECAST_EXCESS_SOC_SOURCE,
+    CONF_FORECAST_EXCESS_SOC,
+    CONF_OUTAGE_ENTITY_ID,
+    CONF_OUTAGE_LEAD_HOURS,
+    CONF_OUTAGE_HOLD_HOURS,
 )
 HUB_TIMING_KEYS = (
     CONF_SITE_UPDATE_FREQUENCY,
@@ -816,9 +1043,28 @@ def _charger_current_schema(
     Only shows L2/L3 phase mapping fields when the hub has 2+/3+ phases.
     """
     defaults = defaults or {}
-    # One site phase per charger LEG - not a phase mask. L1/L2/L3 each land on
-    # exactly one phase, so the multi-phase combinations that the load pickers
-    # offer (PHASE_MASK_OPTIONS) would be meaningless here.
+    return vol.Schema(
+        dict(
+            [
+                _num(
+                    CONF_EVSE_MINIMUM_CHARGE_CURRENT, defaults, DEFAULT_MIN_CHARGE_CURRENT,
+                    6, 80, 1, "A", required=True,
+                ),
+                _num(
+                    CONF_EVSE_MAXIMUM_CHARGE_CURRENT, defaults, DEFAULT_MAX_CHARGE_CURRENT,
+                    6, 80, 1, "A", required=True,
+                ),
+                *_leg_fields(defaults, hub_phases),
+            ]
+        )
+    )
+
+
+def _leg_fields(defaults: dict, hub_phases: int) -> list[tuple]:
+    """The L1..L3 → site phase fields of a charger (or a variable load), as many
+    as the site has phases. One site phase per LEG - not a phase mask: L1/L2/L3
+    each land on exactly one phase, so the multi-phase combinations that the
+    load pickers offer (PHASE_MASK_OPTIONS) would be meaningless here."""
     leg_phase = selector(
         {
             "select": {
@@ -835,24 +1081,21 @@ def _charger_current_schema(
         (CONF_CHARGER_L2_PHASE, "B"),
         (CONF_CHARGER_L3_PHASE, "C"),
     )
-    return vol.Schema(
-        dict(
-            [
-                _num(
-                    CONF_EVSE_MINIMUM_CHARGE_CURRENT, defaults, DEFAULT_MIN_CHARGE_CURRENT,
-                    6, 80, 1, "A", required=True,
-                ),
-                _num(
-                    CONF_EVSE_MAXIMUM_CHARGE_CURRENT, defaults, DEFAULT_MAX_CHARGE_CURRENT,
-                    6, 80, 1, "A", required=True,
-                ),
-                *(
-                    (vol.Required(key, default=defaults.get(key, phase)), leg_phase)
-                    for key, phase in legs[: max(hub_phases, 1)]
-                ),
-            ]
+
+    def _leg_field(key, phase):
+        # L1 is the first leg and always set. L2/L3 are optional: blank means
+        # the leg is unused (a 1-/2-phase device). A suggested value, not a
+        # default - a default would come back after the user clears the field.
+        if key == CONF_CHARGER_L1_PHASE:
+            return vol.Required(key, default=defaults.get(key, phase))
+        return vol.Optional(
+            key, description={"suggested_value": defaults.get(key, phase)}
         )
-    )
+
+    return [
+        (_leg_field(key, phase), leg_phase)
+        for key, phase in legs[: max(hub_phases, 1)]
+    ]
 
 
 def _charger_timing_schema(
@@ -922,12 +1165,34 @@ def _charger_timing_schema(
                     0, 10, 1, "min", required=True,
                 ),
                 _num(
+                    CONF_PAUSE_PROFILE_VALIDITY, defaults, DEFAULT_PAUSE_PROFILE_VALIDITY,
+                    1, 1440, 1, "min", required=True,
+                ),
+                _num(
                     CONF_STACK_LEVEL, defaults, DEFAULT_STACK_LEVEL,
                     0, 10, 1, None, required=True,
                 ),
                 _num(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
+                ),
+                (
+                    vol.Required(
+                        CONF_PACE_OVER_HORIZON,
+                        default=defaults.get(
+                            CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+                        ),
+                    ),
+                    bool,
+                ),
+                (
+                    vol.Required(
+                        CONF_CATCH_UP_ENABLED,
+                        default=defaults.get(
+                            CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED
+                        ),
+                    ),
+                    bool,
                 ),
             ]
         )
@@ -974,6 +1239,58 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                     _optional_entity_field(CONF_PLUG_POWER_MONITOR_ENTITY_ID, defaults),
                     selector({"entity": {"domain": ["sensor", "input_number"]}}),
                 ),
+                (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "power"},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    vol.Required(
+                        CONF_PLUG_RESTART_ON_NO_DRAW,
+                        default=defaults.get(
+                            CONF_PLUG_RESTART_ON_NO_DRAW,
+                            DEFAULT_PLUG_RESTART_ON_NO_DRAW,
+                        ),
+                    ),
+                    selector({"boolean": {}}),
+                ),
+                _num(
+                    CONF_PLUG_RESTART_AFTER, defaults, DEFAULT_PLUG_RESTART_AFTER,
+                    1, 120, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_PLUG_FINISH_BELOW_W, defaults, DEFAULT_PLUG_FINISH_BELOW_W,
+                    0, 5000, 1, "W", required=True,
+                ),
+                _num(
+                    CONF_PLUG_FINISH_FOR, defaults, DEFAULT_PLUG_FINISH_FOR,
+                    1, 120, 1, "min", required=True,
+                ),
                 _num(
                     CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,
                     5, 300, 1, "s", required=True,
@@ -982,6 +1299,105 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
+                (
+                    vol.Required(
+                        CONF_CATCH_UP_ENABLED,
+                        default=defaults.get(
+                            CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED
+                        ),
+                    ),
+                    bool,
+                ),
+            ]
+        )
+    )
+
+
+def _sg_ready_schema(defaults: dict | None = None) -> vol.Schema:
+    """Build schema for an SG Ready heat pump: its two relays, the extra power it
+    adds above Normal, the optional power sensor, and the timing limits."""
+    defaults = defaults or {}
+    power_selector = selector(
+        {
+            "entity": {
+                "domain": ["sensor", "input_number"],
+                "filter": [
+                    {"domain": "sensor", "device_class": "power"},
+                    {"domain": "input_number"},
+                ],
+            }
+        }
+    )
+    return vol.Schema(
+        dict(
+            [
+                (
+                    vol.Required(
+                        CONF_SG_RELAY_1_ENTITY_ID,
+                        default=defaults.get(CONF_SG_RELAY_1_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": "switch"}}),
+                ),
+                (
+                    vol.Required(
+                        CONF_SG_RELAY_2_ENTITY_ID,
+                        default=defaults.get(CONF_SG_RELAY_2_ENTITY_ID),
+                    ),
+                    selector({"entity": {"domain": "switch"}}),
+                ),
+                _num(
+                    CONF_SG_NOMINAL_POWER, defaults, DEFAULT_SG_NOMINAL_POWER,
+                    100, 25000, 100, "W", required=True,
+                ),
+                (
+                    vol.Required(
+                        CONF_CONNECTED_TO_PHASE,
+                        default=defaults.get(CONF_CONNECTED_TO_PHASE, "A"),
+                    ),
+                    selector({"select": {"options": PHASE_MASK_OPTIONS, "mode": "dropdown"}}),
+                ),
+                _num(
+                    CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY,
+                    1, 10, 1, None, required=True,
+                ),
+                (
+                    _optional_entity_field(CONF_SG_POWER_ENTITY_ID, defaults),
+                    power_selector,
+                ),
+                _num(
+                    CONF_SG_MIN_STATE_TIME, defaults, DEFAULT_SG_MIN_STATE_TIME,
+                    1, 60, 1, "min", required=True,
+                ),
+                _num(
+                    CONF_SG_MAX_BLOCK_TIME, defaults, DEFAULT_SG_MAX_BLOCK_TIME,
+                    10, 480, 5, "min", required=True,
+                ),
+                _num(
+                    CONF_SG_MAX_BLOCKS_PER_DAY, defaults, DEFAULT_SG_MAX_BLOCKS_PER_DAY,
+                    1, 10, 1, None, required=True,
+                ),
+                (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    power_selector,
+                ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
             ]
         )
     )
@@ -1045,6 +1461,45 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                         }
                     ),
                 ),
+                (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "power"},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # A water heater's own word for "off" (Vaillant: stand_by) -
+                    # every integration has its own, so it is typed, not picked.
+                    vol.Optional(
+                        CONF_TANK_OFF_OPERATION_MODE,
+                        description={"suggested_value": defaults.get(CONF_TANK_OFF_OPERATION_MODE, "")},
+                    ),
+                    selector({"text": {}}),
+                ),
                 _num(
                     CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY,
                     5, 300, 1, "s", required=True,
@@ -1053,6 +1508,7 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
             ]
         )
     )
@@ -1104,6 +1560,36 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                     _optional_entity_field(CONF_STATION_AC_OUTPUT_ENTITY_ID, defaults),
                     selector({"entity": {"domain": ["sensor", "input_number"]}}),
                 ),
+                (
+                    # Energy sensors only: Load Insights' "Room to absorb today"
+                    _optional_entity_field(CONF_EARLY_ROOM_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": ["energy", "energy_storage"]},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
+                (
+                    # Power sensors: Load Insights' "Absorption rate"
+                    _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
+                    selector(
+                        {
+                            "entity": {
+                                "domain": ["sensor", "input_number"],
+                                "filter": [
+                                    {"domain": "sensor", "device_class": "power"},
+                                    {"domain": "input_number"},
+                                ],
+                            }
+                        }
+                    ),
+                ),
                 _num(
                     CONF_STATION_MIN_CHARGE_POWER, defaults, DEFAULT_STATION_MIN_CHARGE_POWER,
                     0, STATION_CHARGE_POWER_MAX, STATION_CHARGE_POWER_STEP, "W",
@@ -1140,6 +1626,102 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                 _num(
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
+                ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
+                (
+                    vol.Required(
+                        CONF_PACE_OVER_HORIZON,
+                        default=defaults.get(
+                            CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON
+                        ),
+                    ),
+                    bool,
+                ),
+                (
+                    vol.Required(
+                        CONF_CATCH_UP_ENABLED,
+                        default=defaults.get(
+                            CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED
+                        ),
+                    ),
+                    bool,
+                ),
+            ]
+        )
+    )
+
+
+def _variable_load_schema(defaults: dict | None = None, hub_phases: int = 3) -> vol.Schema:
+    """Build schema for a Variable Load (JUG-30) - one page, the readings optional.
+
+    The setpoint entity is optional too: without it the device only publishes
+    its allowance. Its bounds and bias are in the setpoint unit (amps per leg,
+    or watts over its legs).
+    """
+    defaults = defaults or {}
+
+    def _entity(key, domains, device_class=None):
+        filters = [{"domain": d} for d in domains]
+        if device_class:
+            filters = [
+                {"domain": "sensor", "device_class": device_class},
+                *(f for f in filters if f["domain"] != "sensor"),
+            ]
+        return (
+            _optional_entity_field(key, defaults),
+            selector({"entity": {"domain": domains, "filter": filters}}),
+        )
+
+    return vol.Schema(
+        dict(
+            [
+                _entity(CONF_VL_SETPOINT_ENTITY_ID, ["number", "input_number"]),
+                (
+                    vol.Required(
+                        CONF_VL_SETPOINT_UNIT,
+                        default=defaults.get(CONF_VL_SETPOINT_UNIT, DEFAULT_VL_SETPOINT_UNIT),
+                    ),
+                    selector({"select": {"options": [
+                        {"value": VL_UNIT_AMPS, "label": "Amperes per leg (A)"},
+                        {"value": VL_UNIT_WATTS, "label": "Watts (W)"},
+                    ], "mode": "dropdown"}}),
+                ),
+                _num(CONF_VL_MIN, defaults, DEFAULT_VL_MIN, 0, 100000, 0.1, None, required=True),
+                _num(CONF_VL_MAX, defaults, DEFAULT_VL_MAX, 0, 100000, 0.1, None, required=True),
+                *_leg_fields(defaults, hub_phases),
+                _num(CONF_LOAD_PRIORITY, defaults, DEFAULT_LOAD_PRIORITY, 1, 10, 1, None, required=True),
+                _entity(CONF_VL_CURRENT_L1_ENTITY_ID, ["sensor"]),
+                _entity(CONF_VL_CURRENT_L2_ENTITY_ID, ["sensor"]),
+                _entity(CONF_VL_CURRENT_L3_ENTITY_ID, ["sensor"]),
+                _entity(CONF_VL_POWER_ENTITY_ID, ["sensor", "input_number"]),
+                _entity(CONF_VL_CONNECTED_ENTITY_ID, ["binary_sensor"]),
+                _entity(CONF_VL_CHARGING_ENTITY_ID, ["binary_sensor"]),
+                _num(CONF_UPDATE_FREQUENCY, defaults, DEFAULT_UPDATE_FREQUENCY, 5, 300, 1, "s", required=True),
+                _num(CONF_VL_RESEND_INTERVAL, defaults, DEFAULT_VL_RESEND_INTERVAL, 0, 3600, 1, "s", required=True),
+                _num(CONF_VL_BIAS, defaults, DEFAULT_VL_BIAS, -10000, 10000, 0.1, None, required=True),
+                (
+                    # Optional and clearable; 0 is a real value, so not _optional_entity_field.
+                    vol.Optional(
+                        CONF_VL_FALLBACK_SETPOINT,
+                        description={"suggested_value": defaults.get(CONF_VL_FALLBACK_SETPOINT)}
+                        if defaults.get(CONF_VL_FALLBACK_SETPOINT) is not None else None,
+                    ),
+                    selector({"number": {"min": -100000, "max": 100000, "step": 0.1, "mode": "box"}}),
+                ),
+                _num(CONF_VL_PHASE_MULTI_ABOVE, defaults, DEFAULT_VL_PHASE_MULTI_ABOVE, 0, 50000, 100, "W", required=True),
+                _num(CONF_VL_PHASE_SINGLE_BELOW, defaults, DEFAULT_VL_PHASE_SINGLE_BELOW, 0, 50000, 100, "W", required=True),
+                _num(CONF_VL_PHASE_MIN_INTERVAL, defaults, DEFAULT_VL_PHASE_MIN_INTERVAL, 0, 120, 1, "min", required=True),
+                _entity(CONF_EARLY_ROOM_ENTITY_ID, ["sensor", "input_number"], ["energy", "energy_storage"]),
+                _entity(CONF_EARLY_RATE_ENTITY_ID, ["sensor", "input_number"], "power"),
+                _num(CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD, 0, 30, 1, "min", required=True),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD),
+                (
+                    vol.Required(CONF_PACE_OVER_HORIZON, default=defaults.get(CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON)),
+                    bool,
+                ),
+                (
+                    vol.Required(CONF_CATCH_UP_ENABLED, default=defaults.get(CONF_CATCH_UP_ENABLED, DEFAULT_CATCH_UP_ENABLED)),
+                    bool,
                 ),
             ]
         )

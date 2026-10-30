@@ -1,4 +1,6 @@
-# AGENTS.md
+# Dynamic OCPP EVSE (Load Juggler)
+
+> **Setup note for agents:** this file holds this folder's instructions. Tools that read `AGENTS.md` (Codex and others) need nothing more. A tool with its own file name needs a file of that name here containing only a pointer to this file, if the folder does not already have one: Claude Code reads `CLAUDE.md` and needs the line `@AGENTS.md`; Gemini CLI reads `GEMINI.md`. Never copy this file's content into it.
 
 This file provides guidance to LLM Agents when working with code in this repository.
 
@@ -16,9 +18,9 @@ Load Juggler is a Home Assistant custom component for intelligent load managemen
 - Symmetric and asymmetric inverter support
 - Off-grid support (no grid CTs required - infers phases from inverter output)
 
-**Versioning** - `manifest.json` carries the version being worked on, not the last one released: the first change after a release opens its `RELEASE_NOTES.md` section and bumps the manifest to match in the same commit, so every pre-release built from `dev` is named after the release it leads to (`2.1.4-dev.<timestamp>`, never `2.1.3-dev` after 2.1.3 shipped). A merge to `main` then releases that version (Anze, 2026-09-25).
+**Versioning** - `manifest.json` carries the version being worked on, not the last one released: the first change after a release opens its `RELEASE_NOTES.md` section and bumps the manifest to match in the same commit, so every pre-release built from `dev` is named after the release it leads to (`2.1.4-dev.<timestamp>`, never `2.1.3-dev` after 2.1.3 shipped). A merge to `main` then releases that version (2026-09-25).
 
-**Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 5); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
+**Backwards compatibility** - stored config entries migrate via the step chain in `async_migrate_entry` (`__init__.py`, currently minor version 10); any change to stored keys/values needs a new idempotent step there plus a bump of `MINOR_VERSION` in `config_flow/flow.py`, covered by tests in `test_config_flow_e2e.py`. Published entity ids, unique_ids, attribute names and service fields are user-facing API - keep them stable unless a break is deliberate and called out in `RELEASE_NOTES.md`.
 
 **Improvement Ideas** `dev/IMPROVEMENTS.md` List of ideas for future imporovements and changes. Developer will prompt Claude to discuss and refine them.
 
@@ -43,14 +45,23 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   edit path; no reconfigure flow. Options menu: settings / overview / summary)
 │   ├── flow.py                    # LoadJugglerConfigFlow - the initial-setup step methods
 │   ├── options.py                 # LoadJugglerOptionsFlow - the "Configure" edit steps
+│   ├── groups.py / sections.py    # Which setup fields sit under which heading (plain data per step id, shared by the
+│   │                              #   wizard and the Configure pages) and the mixin that nests a form into form
+│   │                              #   sections and flattens the input back - handlers and stored options stay flat.
+│   │                              #   A section key must differ from every field key of its step; labels live under
+│   │                              #   ``sections.<key>`` in the translations; an error is keyed by the SECTION (the
+│   │                              #   frontend shows none under a field inside one). sections.py is a hand-kept copy
+│   │                              #   of Load Insights' - change both
 │   ├── schemas.py                 # Every voluptuous schema builder, as module functions - no handler
 │   │                              #   state; `hass` is a parameter only where a form offers entity selectors
 │   ├── pages.py                   # Overview / "How it decides" read-only page text builders
 │   └── helpers.py                 # Everything both handlers share: unit validation, the optional-entity
 │                                  #   key groups and their normalizers, entity auto-detection, priority
-│                                  #   ordering, the OCPP capability probes, phase count
+│                                  #   ordering, the OCPP capability probes, phase count, and the Energy
+│                                  #   dashboard suggestions (_energy_site, _inverter_suggestions,
+│                                  #   _grid_meter_suggestion, _fill_empty - create flow only)
 ├── const/                         # Constants per area: common, hub, evse, plug, hot_water_tank, group,
-│                                  #   inverter, modes, power_station
+│                                  #   inverter, modes, power_station, sg_ready, variable_load
 ├── engine/                        # HA → SiteContext bridge (reads HA states, drives the calculation)
 │   ├── hub_calculation.py         # Main entry point - run_hub_calculation() builds SiteContext, calls engine
 │   │                              #   Keeps the core cycle: _apply_feedback_loop(), the SOC/Excess latches,
@@ -58,13 +69,17 @@ custom_components/dynamic_ocpp_evse/
 │   ├── readers.py                 # HA-state edge: _read_entity() (returns _UNAVAILABLE sentinel),
 │   │                              #   _smooth() (EMA) + _stale_guard() (holdover), _coerce(),
 │   │                              #   grid/inverter/fleet-member reading
-│   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank]_load(),
+│   ├── load_builders.py           # _build_[evse|plug|power_station|hot_water_tank|sg_ready]_load(),
+│   │                              #   _build_variable_load(),
 │   │                              #   _add_loads_to_site(), _build_circuit_groups()
 │   ├── readout_watch.py           # Pure: judges an EVSE's reported draw STUCK - it claims more than
 │   │                              #   the limit in force for 2x its learned reporting gap, OR the
 │   │                              #   reconstructed household steps with our commands to it (both
 │   │                              #   ways, repeatedly) while it reads nothing; load_builders then
-│   │                              #   controls it blind (assumed draw = the accepted command)
+│   │                              #   controls it blind (assumed draw = the accepted command).
+│   │                              #   The same assumption, with no verdict, while the reading was
+│   │                              #   last reported before the limit in force last changed (the
+│   │                              #   connector entering Charging, or a command that moved it)
 │   ├── hub_result.py              # _compute_forecast_advice(), _build_hub_result() (the published dict)
 │   ├── fleet.py                   # Multi-inverter fleet aggregation (solar_total, weighted_soc, inverter_limits)
 │   ├── auto_detect.py             # Grid CT inversion + phase mapping auto-detection
@@ -72,9 +87,43 @@ custom_components/dynamic_ocpp_evse/
 ├── calculations/                  # Core calculation logic (PURE PYTHON - no HA dependencies)
 │   ├── models.py                  # Data models (SiteContext, LoadContext, CircuitGroup, PhaseConstraints, PhaseValues)
 │   ├── target_calculator.py       # Main calculation engine
-│   ├── forecast.py                # Forecast-based charging advice
-│   ├── calibration.py             # Forecast calibration (level-bias gain, peakiness)
-│   └── utils.py                   # Utility functions (is_number, compute_household_per_phase)
+│   ├── pacing.py                  # Pacing: per-load cap = energy x 1000 / hours left, off under the minimum,
+│   │                              #   restart margin (applied in _source_limit; entities read in engine/readers.py)
+│   ├── forecast_excess.py         # Forecast-driven Excess verdict latch and pool top-up (gate SOC, planned
+│   │                              #   energy > 0.2 kWh, paced rate); the engine latches it, the calculator reads it
+│   │                              #   The early-start group starts at 1.1 x and holds to 0.9 x its power, and a due
+│   │                              #   group's fixed-power loads keep their permit (owner, 2026-10-20)
+│   │                              #   The early-start group rule (``early_group``/``early_blocker``) has two energy
+│   │                              #   sources, both latched in engine/hub_calculation._apply_forecast_excess: the
+│   │                              #   planned energy counted back from the next full charge, and (hub option
+│   │                              #   ``forecast_clip_early_enabled``) the forecast clip the battery cannot take counted
+│   │                              #   back from the clipping window - published into hub_runtime["_clip_early"] by
+│   │                              #   engine/hub_result._compute_forecast_advice, read the NEXT cycle; per-load energy:
+│   │                              #   ``clip_load_room_kwh``
+│   ├── sg_ready.py                # SG Ready heat pump state machine (JUG-24): Block / Normal / Recommended / Force, the
+│   │                              #   10-minute rule, Block limits (rolling 24 h), release rule; engine/hub_calculation.
+│   │                              #   _apply_sg_ready feeds it (grant + Excess latch -> Force, early-start source,
+│   │                              #   SOC, target_calculator.grid_headroom_w -> Block). FOLLOW_CLIP_EARLY is the one flag
+│   │                              #   for following the PV-clipping early start
+│   ├── variable_load.py           # Variable Load (JUG-30), pure: bounds in amps from the setpoint unit, the
+│   │                              #   setpoint for an allowance (bias, entity step/min/max), the published allowance
+│   │                              #   figures, the phase advice (thresholds, hysteresis, minimum time between changes)
+│   ├── outage_window.py           # Expected grid loss window (JUG-23): ``precharge_window`` reads a calendar /
+│   │                              #   binary_sensor state + attributes (lead time, hold after, memory returned for
+│   │                              #   hub_runtime["_outage_hold"]); on, the engine (hub_calculation._apply_outage_
+│   │                              #   precharge) raises the SOC target to full (``precharge_target``), hub_result
+│   │                              #   stands the clipping ceiling/charge cap down, the early starts and catch-up stand
+│   │                              #   down, and control/inverter.send_inverter_soc_limit(lift=True) puts the slots at
+│   │                              #   full (hub_data["outage_precharge"]). Grid-tied + battery only; never touches
+│   │                              #   a Storm Reserve switch
+│   ├── catch_up.py                # Per-load catch-up: a Solar Only / Solar Priority load may start below the target
+│                                  #   SOC when its max power can't keep up with the pacing energy (rate >= max W,
+│                                  #   latched per load); the engine sets LoadContext.catch_up_active
+│   ├── forecast.py                # Forecast-based charging advice (+ ``clip_window_span`` and ``unavoidable_clip_kwh``,
+│   │                              #   what the early start on forecast clipping reads, JUG-18)
+│   ├── calibration.py             # Forecast calibration (level-bias gain - ``applied_gain`` / ``scale_series`` bias each array's
+│                                  #   series for the clip integral in hub_result, never first_production_at - and peakiness, observe-only)
+│   └── utils.py                   # Utility functions (is_number, household_per_phase)
 ├── control/                       # Actuation layer (imports only const/helpers/units - never entities or engine)
 │   ├── ocpp.py                    # OCPP charging-profile service calls
 │   ├── compliance.py              # Charger compliance checks, escalating resets
@@ -82,6 +131,10 @@ custom_components/dynamic_ocpp_evse/
 │   ├── plug.py                    # Smart plug switching
 │   ├── power_station.py           # Power station control
 │   ├── hot_water_tank.py          # Tank climate control
+│   ├── sg_ready.py                # SG Ready heat pump: the two relays, one per call through the mildest state, verified
+│   │                              #   against the relay states (a mismatch -> fault -> Normal)
+│   ├── variable_load.py           # Variable Load: publishes the allowance (runtime "vl_outputs") and writes the
+│   │                              #   setpoint entity when there is one (output-only without); never a phase switch
 │   ├── smoothing.py               # Output smoothing (EMA / Schmitt trigger / ramp limits)
 │   └── status.py                  # Charging status determination
 ├── entities/                      # Entity classes shared by the platform files (ALL push-driven - nothing polls)
@@ -101,6 +154,13 @@ custom_components/dynamic_ocpp_evse/
 │                                  #   copy: canonical in Load Insights (insights/phases.py), synced by hand -
 │                                  #   never edit it here; LI's tests/test_phases.py checks this copy
 │                                  #   byte-for-byte when both repos sit side by side
+├── energy_prefs.py                # Pure, stdlib only: HA's Energy dashboard preferences as a SiteModel
+│                                  #   (PowerSpec, Device, SiteModel.from_prefs); read by config_flow/helpers.py
+│                                  #   to pre-fill the INITIAL setup forms only (never an options page; the prefs
+│                                  #   are read, never written). A VERBATIM copy: canonical in Load Insights
+│                                  #   (insights/model.py), synced by hand - never edit it here; LI's
+│                                  #   tests/test_model.py checks this copy byte-for-byte when both repos sit
+│                                  #   side by side
 ├── helpers.py                     # get_entry_value() and misc helpers
 ├── ocpp_discovery.py              # The ONE OCPP registry derivation, at the package root so BOTH the
 │                                  #   flows and engine/ can reach it (engine must not import config_flow).
@@ -185,7 +245,7 @@ The calculation engine follows a 5-step process (see `target_calculator.py`):
 - Solar: solar_production_total (derived via `engine/fleet.py` `solar_total()`, or from dedicated entity), solar_is_derived, household_consumption_total
 - Derived: total_export_current, total_export_power (computed properties)
 - Battery: battery_soc, battery_soc_min, battery_soc_target, battery_max_charge/discharge_power
-- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, wiring_topology, inverter_output_per_phase
+- Inverter: inverter_max_power, inverter_max_power_per_phase, inverter_supports_asymmetric, inverter_net_per_phase
 - Charging: distribution_mode, loads[], circuit_groups[]
 
 **LoadContext** (`calculations/models.py`) - Represents a single managed load (EVSE or smart plug):
@@ -211,7 +271,8 @@ The `calculations/` directory is pure Python and can be imported/tested independ
    - `_coerce()` (`readers.py`): converts `_UNAVAILABLE` back to safe defaults for non-smoothed values
    - Solar derivation: `engine/fleet.py` (`solar_total()` / `member_solar()`) - uses inverter output when available, falls back to grid export + battery
    - Off-grid: when no grid CTs are configured, phases with inverter output entities are zeroed (not None), making the site behave like a grid site with 0A grid current
-2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order - strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write - after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work - smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor. Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Load sensors: allocated current, available current, charging status.
+   - Generator on the grid input (JUG-13, hub `grid_input_is_generator` + `generator_rating`): `_read_site_phases` ignores the CTs (the site stays off-grid, `is_off_grid` True, every export gate stays off) and `_read_generator` reads the same phase sensors apart into `SiteContext.generator_current` (None while unreadable - the generator is off, not held); `_calculate_grid_limit` then gives an off-grid site a grid half of `generator_rating - generator_current` per phase instead of zeros
+2. **Hub coordinator (sensor.py) + entities/load.py + control/**: ONE `DataUpdateCoordinator` per hub entry (`hass.data[DOMAIN]["hub_coordinators"]`) runs the engine once per `site_update_frequency`, publishes the trimmed result via `entities/hub.py:publish_hub_data`, then awaits each registered load processor sequentially (`hass.data[DOMAIN]["load_processors"]`, entry_id order - strict serialization for OCPP), then each async cycle worker (`SITE_CYCLE_WORKERS`, e.g. the inverter charge-limit write - after publish, order-insignificant), and finally notifies the push-reader sensors (`site_cycle_listeners`, rebound every tick so hub-only reloads can't strand them). `LoadJugglerDeviceSensor.async_process(hub_data)` does the per-load work - smoothing (`control/smoothing.py`), grace/pause state machines, then dispatch: OCPP charging profiles via `control/ocpp.py`, plug/tank/station actuation via their `control/` modules. Per-load `update_frequency` gates command sends inside the processor; a cut that keeps an EVSE running goes out at once (`control/smoothing.cut_now`). Hub sensors (`entities/hub.py`) are pure readers of hub_data: Site Available Power, Hub Status, per-metric data sensors. Load sensors: allocated current, available current, charging status.
 3. **Platform files** (button.py, number.py, select.py, etc.): Thin wiring that exposes the `entities/` classes and controls to the HA UI
 
 ### Asymmetric vs Symmetric Inverters
@@ -254,7 +315,10 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 4. **Logging**: Use `_LOGGER.debug()` extensively for troubleshooting
 5. **Test First**: Run relevant tests before and after changes
 6. **Helper Functions**: Prefer helper functions over inline logic for maintainability
-7. **General naming**: When something concerns more than one device type, name it by the general concept - `load`, never `charger`, for the generic managed-device idea. The generic rename is done: `charger` now survives ONLY where the thing can only ever be an EVSE (OCPP discovery and profiles, `CONF_CHARGER_ID`/`CONF_CHARGER_L1..L3_PHASE`, the `charger_*` config-flow steps, `validate_charger_settings`, compliance, the `*_ocpp_evse` service). If a plug, tank or power station can flow through it, it is a `load`. Two deliberate exceptions, both documented in place: the published `charger_priority` entity attribute (public API since 2.0.5) and the EVSE phase-mapping notification text.
+7. **General naming**: When something concerns more than one device type, name it by the general concept - `load`, never `charger`, for the generic managed-device idea. The generic rename is done: `charger` now survives ONLY where the thing can only ever be an EVSE (OCPP discovery and profiles, `CONF_CHARGER_ID`/`CONF_CHARGER_L1..L3_PHASE`, the `charger_*` config-flow steps, `validate_charger_settings`, compliance, the `*_ocpp_evse` service). If a plug, tank or power station can flow through it, it is a `load`. Two deliberate exceptions, both documented in place: the published `charger_priority` entity attribute (public API since 2.0.5) and the EVSE phase-mapping notification text. When a file is touched for another reason, fix nearby poorly-named identifiers too if that is low-risk.
+8. **Release notes**: user-facing changes only, in plain language, under the open version's section. Before listing a fix, check it shipped: releases live on `origin/pre-release` (version tags such as `2.0.5`); a bug that never shipped is omitted. When work completes, remove it from `dev/TODO.md`; completed items collapse to one line under "Recently completed".
+9. **Winners ship as defaults**: a change that measurably beats the current behaviour is built in unconditionally, with no user toggle and no leftover code dial. A dial exists only while measuring.
+10. **Slovenian UI strings** (the owner reviews every one): never "sončno polje" for a PV array; use "sončna elektrarna (PV)" or plain "PV". Keep labels terse, and reuse terms already in `sl.json` before inventing one.
 
 ### Adding New Features
 
@@ -272,10 +336,18 @@ Four distribution modes for multi-load setups: **Shared** (equal split), **Prior
 5. **Phase assignment defaults**: Don't default to "A" - only set when explicitly specified
 6. **Legacy code**: legacy compatibility should be removed as users are expected to reconfigure the integration
 7. **Grid CT consumption includes load draws**: Grid current sensors measure TOTAL site import, which includes managed-load power. `engine/hub_calculation.py` (`_apply_feedback_loop()`) subtracts each load's l1/l2/l3_current from `site.consumption` before calling the engine (step 0). Without this, the engine double-counts load power as both "consumption" and "load demand", leading to under-allocation or false pauses. Hub sensor display values intentionally show the raw (unadjusted) grid readings.
+8. **Config keys mean what their UI says**: before changing what a key gates or its precedence, read its label and `data_description` in `strings.json` (and `sl.json`), not the key name. A flag that only creates a slider does not switch off the sensor that overrides it. An unticked box beside a configured sensor is the normal setup, not a leftover.
+
+## Standing rules
+
+- **Private project, not Ixtlan work.** Skip the work-context logging for this repo; never add entries for it to `/Volumes/Razvijam/work-context.md` or `open-tickets.md`.
+- **Git.** Commit each benched or run version locally as a checkpoint before running it; `dev` is fine. Never push `dev` unless the owner asks: a push to `dev` deploys to both live sites automatically. No new branches, worktrees or detached checkouts without asking. A push that fails with "Authentication failed" from the shell often works on one retry.
+- **Plans.** `docs/plans/2026-10-12/` holds the approved batch (its README gives the order and the owner's decisions). Run none of it until the owner says so; check plan usage first, and keep installs to Home and Kozolec.
+- **Deliberate behaviour that looks like a bug** is listed in `docs/design-decisions.md`. Check it before changing anything there, and re-ask the owner before changing a settled decision.
 
 ## Testing and Debugging
 
-**Test procedure**: Do not combine multiple shell commands to one line. Always run one test at a time.
+**Test procedure**: Do not combine multiple shell commands to one line. Always run one test at a time. Ask the owner before running tests (his standing rule).
 
 Every test - unit, HA integration and each YAML scenario - runs under plain pytest from the
 project root (`pip install -r requirements_dev.txt`; `pytest.ini` puts the root on the path):
@@ -348,6 +420,7 @@ pytest run as everything else. The one local way to run it is the uv venv in `de
 - `test_init.py` - Setup, teardown, migration (v1->v2, v2.0->v2.1)
 - `test_config_flow.py` - Config flow step navigation and validation
 - `test_config_flow_e2e.py` - Full hub/load creation flows, options flow, discovery, entry migration
+- `test_energy_prefill.py` - The Energy dashboard suggestions on the setup forms (hub grid, the first inverter), never on Configure pages, never written
 - `test_ocpp_discovery.py` - The OCPP charger scan against a mocked device+entity registry, the OCPP
   device pickers on both edit paths (create wizard and options charger page), and the runtime
   connector-status resolution
@@ -363,6 +436,8 @@ pytest run as everything else. The one local way to run it is the uv venv in `de
 
 ## Useful Resources
 
+- `docs/live-sites.md`: the live sites, their settings that differ from defaults, and measured behaviour (dated). Read it before interpreting live behaviour.
+- `docs/design-decisions.md`: deliberate behaviour that looks like a bug (solar modes, Solar Only from the battery above target, config flag meaning).
 - Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
 - Distribution Modes Guide: `DISTRIBUTION_MODES_GUIDE.md`
 - Release notes: `RELEASE_NOTES.md`

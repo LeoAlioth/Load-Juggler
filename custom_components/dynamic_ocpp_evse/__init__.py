@@ -72,6 +72,8 @@ from .const import (
     DEFAULT_UPDATE_FREQUENCY,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
+    DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DISTRIBUTION_MODES,
     DOMAIN,
     ENTRY_TYPE,
@@ -86,12 +88,19 @@ from .const import (
 )
 from .helpers import (
     get_entry_value,
+    stored_legs,
+    unuse_repeated_legs,
+    LEGACY_WIRING_TOPOLOGY,
     infer_inverter_features,
+    legacy_topology_to_input,
+    strip_hub_inverter_fields,
     strip_unfeatured_inverter_options,
 )
 from . import units
+from .control.sg_ready import release_relays
+from .control.variable_load import write_fallback
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
-from .registry import follow_renames
+from .registry import follow_renames, own_entity_id
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -385,6 +394,43 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             )
         _LOGGER.info("Updated minor version to 8")
 
+    # 2.9: the wiring-topology setting is gone. What it answered is now the
+    # inverter's own input (grid side): Series -> "the grid flows through this
+    # inverter" (one per hub, the lowest entry_id - see
+    # helpers.legacy_topology_to_input), Parallel -> no input. Inverter-scoped
+    # and idempotent: an entry without the legacy key is only version-bumped.
+    # A hub entry keeps its legacy key untouched - the inverter import reads it
+    # off the hub (strip_hub_inverter_fields) and converts it there.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 9:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        if data.get(ENTRY_TYPE) == ENTRY_TYPE_INVERTER:
+            if LEGACY_WIRING_TOPOLOGY in data:
+                options.setdefault(LEGACY_WIRING_TOPOLOGY, data[LEGACY_WIRING_TOPOLOGY])
+            legacy_topology_to_input(
+                hass, data.get(CONF_HUB_ENTRY_ID), entry.entry_id, options
+            )
+            data.pop(LEGACY_WIRING_TOPOLOGY, None)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=9
+        )
+        _LOGGER.info("Updated minor version to 9")
+
+    # 2.10: a charger's phase count is the number of legs that are SET - an
+    # unused leg is None. A leg that repeated an earlier leg's phase (the old
+    # way to mark it unused) becomes None; the phase mask is unchanged.
+    if entry.version == 2 and getattr(entry, "minor_version", 0) < 10:
+        data = dict(entry.data)
+        options = dict(entry.options)
+        if data.get(ENTRY_TYPE) == ENTRY_TYPE_LOAD and unuse_repeated_legs(
+            data, options
+        ):
+            _LOGGER.info("%s: repeated charger legs stored as unused", entry.title)
+        hass.config_entries.async_update_entry(
+            entry, data=data, options=options, minor_version=10
+        )
+        _LOGGER.info("Updated minor version to 10")
+
     return True
 
 
@@ -410,16 +456,7 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
         except (TypeError, ValueError):
             _LOGGER.debug("Ignoring non-numeric %s: %r", CONF_PHASES, configured)
 
-    mapped = {
-        get_entry_value(entry, key, None)
-        for key in (
-            CONF_CHARGER_L1_PHASE,
-            CONF_CHARGER_L2_PHASE,
-            CONF_CHARGER_L3_PHASE,
-        )
-    }
-    mapped.discard(None)
-    return max(1, len(mapped))
+    return max(1, len(stored_legs(entry)))
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
@@ -471,7 +508,12 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 "target": {},
                 "data": {"devid": ocpp_device_id}
             },
-            {"delay": {"seconds": 10}},
+            # Short: until the baseline lands the charger holds no profile and
+            # runs on its own default. The third site's go-eCharger (2026-10-08) took
+            # a charging car to its 16 A fallback within the 10 s this used to
+            # be, the jump read as house load ahead of its next meter value,
+            # and the reset itself paused the car.
+            {"delay": {"seconds": 1}},
             {
                 "action": "ocpp.set_charge_rate",
                 "target": {},
@@ -504,6 +546,42 @@ async def async_setup(hass: HomeAssistant, config: dict):
         script = Script(hass, sequence, "Reset OCPP EVSE", DOMAIN)
         await script.async_run(context=call.context)
 
+        # The charger's reporting intervals, set to this load's update
+        # frequency: MeterValueSampleInterval paces the meter values of a
+        # transaction, ClockAlignedDataInterval the ones a charger sends
+        # without one (the go-eCharger of the 2026-10-03 field case runs no
+        # transaction: 120 s between readings). The ocpp integration writes
+        # its own Meter interval / Idle interval options to these two keys on
+        # every connect, so a reset re-applies Load Juggler's. Its configure
+        # reads the key first and writes only a different value. Each key on
+        # its own: one the charger does not know or refuses, or a charger that
+        # is offline, is logged and the reset carries on.
+        interval = str(int(get_entry_value(
+            entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
+        )))
+        for key in ("MeterValueSampleInterval", "ClockAlignedDataInterval"):
+            try:
+                response = await hass.services.async_call(
+                    "ocpp",
+                    "configure",
+                    {"devid": ocpp_device_id, "ocpp_key": key, "value": interval},
+                    blocking=True,
+                    return_response=True,
+                )
+            except Exception as err:
+                _LOGGER.warning(
+                    "%s: could not set the charger's %s to %s s: %s",
+                    entry.title, key, interval, err,
+                )
+                continue
+            _LOGGER.info(
+                "%s: sent the charger %s = %s s%s",
+                entry.title, key, interval,
+                " (the charger needs a reboot to apply it)"
+                if isinstance(response, dict) and response.get("reboot_required")
+                else "",
+            )
+
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
 
     def _own_entity(entry_id: str, platform: str, suffix: str):
@@ -512,11 +590,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         Its unique_id is the entry's entity-id prefix plus ``suffix``.
         """
         entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is None:
-            return None
-        return er.async_get(hass).async_get_entity_id(
-            platform, DOMAIN, f"{entry.data.get(CONF_ENTITY_ID)}{suffix}"
-        )
+        return own_entity_id(hass, entry, platform, suffix) if entry else None
 
     # How each platform's entity is set: its service, and that service's value key.
     setters = {"select": ("select_option", "option"), "number": ("set_value", "value")}
@@ -748,22 +822,16 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
         if load_data.get("hub_entry_id") == entry.entry_id
     ]
 
-    # Check if entities need migration
-    await _migrate_hub_entities_if_needed(hass, entry)
-    
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_HUB])
-
-    # Trigger discovery for unconfigured OCPP chargers
-    await _discover_and_notify_chargers(hass, entry.entry_id)
-
     # Auto-import: a hub still carrying legacy hub-level HARDWARE config
     # (inverter, battery or PV entities and capacities - bare charge/discharge
     # defaults don't count) gets it moved onto a standalone inverter entry.
-    # The trigger is the presence of a field, so a release that moves one
-    # more field onto the inverter converges on the next restart; blanking
-    # removes the trigger, making it self-terminating.
-    # Until the import lands the engine keeps treating the hub's fields as one
-    # implicit fleet member, so nothing is lost or double-counted in between.
+    # The trigger is the presence of a field, and blanking removes it, so it
+    # is self-terminating. Awaited here, BEFORE the platforms are set up: the
+    # engine reads inverter settings only from inverter entries, so the hub
+    # must not start computing while its inverter still sits on the hub.
+    # (The new entry's own setup runs inside this await - the hub is already
+    # in hass.data, which is all an inverter waits for - and no update
+    # listener is registered yet, so blanking the hub reloads nothing.)
     if any(
         get_entry_value(entry, key, None)
         for key in (
@@ -778,13 +846,24 @@ async def _setup_hub_entry(hass: HomeAssistant, entry: ConfigEntry):
             CONF_INVERTER_MAX_POWER_PER_PHASE,
         )
     ):
-        hass.async_create_task(
-            hass.config_entries.flow.async_init(
-                DOMAIN,
-                context={"source": SOURCE_IMPORT},
-                data={"hub_entry_id": entry.entry_id},
-            )
+        await hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": SOURCE_IMPORT},
+            data={"hub_entry_id": entry.entry_id},
         )
+    else:
+        # No hardware to import, but settings an old hub may still carry
+        # (the v2 migration's charge/discharge defaults, SOC Full, wiring
+        # topology...): nothing reads them off a hub, so drop them.
+        strip_hub_inverter_fields(hass, entry)
+
+    # Check if entities need migration
+    await _migrate_hub_entities_if_needed(hass, entry)
+    
+    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS[ENTRY_TYPE_HUB])
+
+    # Trigger discovery for unconfigured OCPP chargers
+    await _discover_and_notify_chargers(hass, entry.entry_id)
 
     return True
 
@@ -927,6 +1006,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):
         domain_data["hubs"].pop(entry.entry_id, None)
 
     elif entry_type == ENTRY_TYPE_LOAD:
+        if entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_SG_READY:
+            # leave the heat pump in Normal
+            await release_relays(hass, entry, domain_data["loads"].get(entry.entry_id))
+        elif entry.data.get(CONF_DEVICE_TYPE) == DEVICE_TYPE_VARIABLE_LOAD:
+            await write_fallback(hass, entry, domain_data["loads"].get(entry.entry_id))
         # Remove load from hub's list
         hub_entry_id = entry.data.get(CONF_HUB_ENTRY_ID)
         if hub_entry_id in domain_data["hubs"]:

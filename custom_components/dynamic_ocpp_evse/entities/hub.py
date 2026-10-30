@@ -398,6 +398,8 @@ _HUB_REPUBLISH_KEYS = frozenset(
     "total_export_power",
     "excess_available",
     "excess_margin_power",
+    "forecast_excess",
+    "outage_precharge",
     "inverters",
     # Fleet forecast advice - no hub sensor anymore (the per-battery sensors
     # live on the inverter entries) but kept in hub_data for automations.
@@ -417,6 +419,9 @@ _HUB_REPUBLISH_KEYS = frozenset(
     "draw_estimated",
     "load_targets",
     "load_available",
+    # A Variable Load's per-leg current on all its legs while it runs on fewer
+    # (calculations.target_calculator._set_potential_current) - its phase advice.
+    "load_potential",
     "forecast_window_tomorrow",
     "forecast_accuracy_pct",
     "forecast_clipped_actual_yesterday_kwh",

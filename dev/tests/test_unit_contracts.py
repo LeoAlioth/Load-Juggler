@@ -33,12 +33,14 @@ _PROBES = {
     units.DOMAIN_WATTS: {"W": 1380.0, "kW": 1.38, "A": 6.0, "mA": 6000.0},
     units.DOMAIN_VOLTS: {"V": 51.2, "mV": 51200.0},
     units.DOMAIN_PERCENT: {"%": 75.0},
+    units.DOMAIN_KWH: {"kWh": 61.9, "Wh": 61900.0},
 }
 _EXPECTED = {
     units.DOMAIN_AMPS: 6.0,
     units.DOMAIN_WATTS: 1380.0,
     units.DOMAIN_VOLTS: 51.2,
     units.DOMAIN_PERCENT: 75.0,
+    units.DOMAIN_KWH: 61.9,
 }
 _VOLTAGE = 230.0
 
@@ -50,6 +52,8 @@ def _convert(value, unit, domain):
         return units.to_watts(value, unit, _VOLTAGE)
     if domain == units.DOMAIN_VOLTS:
         return units.to_volts(value, unit)
+    if domain == units.DOMAIN_KWH:
+        return units.to_kwh(value, unit)
     return value  # percentages are unit-free by construction
 
 
@@ -90,6 +94,7 @@ def test_config_flow_unit_validation_matches_the_declared_contracts():
         "_POWER_UNITS": units.POWER_UNITS,
         "_SOC_UNITS": units.SOC_UNITS,
         "_VOLTAGE_UNITS": units.VOLTAGE_UNITS,
+        "_ENERGY_UNITS": units.ENERGY_UNITS,
     }
     seen = 0
     for match in pattern.finditer(source):

@@ -41,7 +41,7 @@ scenarios:
       solar_production_direct: true
       phase_a_consumption: 4.35   # household ≈ 1000 W
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Only"
@@ -68,7 +68,7 @@ scenarios:
       solar_production_direct: true
       phase_a_consumption: 4.35   # household ≈ 1000 W
       inverter_output_sensors: true
-      wiring_topology: parallel
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Only"
@@ -93,7 +93,7 @@ scenarios:
       solar_production_direct: true
       phase_a_consumption: 4.35   # household ≈ 1000 W
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Priority"
@@ -118,7 +118,7 @@ scenarios:
       solar_production_direct: true
       phase_a_consumption: 4.35   # household ≈ 1000 W
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Excess"
@@ -146,7 +146,7 @@ scenarios:
       phase_a_consumption: 4.35   # household ≈ 1000 W
       inverter_max_power: 3000
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Only"
@@ -176,7 +176,7 @@ scenarios:
       inverter_max_power: 9000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Only"
@@ -203,7 +203,7 @@ scenarios:
       solar_production_direct: true
       phase_a_consumption: 6.52   # household ≈ 1500 W
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Only"
@@ -228,7 +228,7 @@ scenarios:
       solar_production_direct: true
       phase_a_consumption: 6.52   # household ≈ 1500 W
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Priority"
@@ -254,7 +254,7 @@ scenarios:
       solar_production: 1500
       phase_a_consumption: 6.52   # household ≈ 1500 W
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Standard"

@@ -19,7 +19,11 @@ other's handler class.
 import logging
 import re
 import voluptuous as vol
-from homeassistant.helpers.device_registry import async_get as async_get_device_registry
+from homeassistant.components.energy.data import async_get_manager
+from homeassistant.helpers.device_registry import (
+    async_entries_for_config_entry as dr_async_entries_for_config_entry,
+    async_get as async_get_device_registry,
+)
 from homeassistant.helpers.entity_registry import (
     async_entries_for_device as er_async_entries_for_device,
     async_get as async_get_entity_registry,
@@ -27,8 +31,28 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.selector import selector
 from .. import units
 from ..const import (
+    CONF_MANUAL_OVERRIDE_TIMEOUT,
+    CONF_VL_CHARGING_ENTITY_ID,
+    CONF_VL_CONNECTED_ENTITY_ID,
+    CONF_VL_CURRENT_L1_ENTITY_ID,
+    CONF_VL_CURRENT_L2_ENTITY_ID,
+    CONF_VL_CURRENT_L3_ENTITY_ID,
+    CONF_VL_FALLBACK_SETPOINT,
+    CONF_VL_MAX,
+    CONF_VL_MIN,
+    CONF_VL_PHASE_MULTI_ABOVE,
+    CONF_VL_PHASE_SINGLE_BELOW,
+    CONF_VL_POWER_ENTITY_ID,
+    CONF_VL_SETPOINT_ENTITY_ID,
+    DEFAULT_VL_MAX,
+    DEFAULT_VL_MIN,
+    DEFAULT_VL_PHASE_MULTI_ABOVE,
+    DEFAULT_VL_PHASE_SINGLE_BELOW,
+    CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
@@ -37,12 +61,25 @@ from ..const import (
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_CHARGE_LIMIT_UNIT,
     CONF_HUB_ENTRY_ID,
+    CONF_INVERT_PHASES,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_ENTITY_ID,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
+    CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
+    CONF_OUTAGE_ENTITY_ID,
     CONF_NAME,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
@@ -59,8 +96,6 @@ from ..const import (
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_TANK_POWER_ENTITY_ID,
     CHARGE_LIMIT_UNIT_AMPS,
-    CHARGE_RATE_UNIT_AMPS,
-    CHARGE_RATE_UNIT_WATTS,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CHARGE_LIMIT_UNIT,
     DEFAULT_STATION_MAX_CHARGE_POWER,
@@ -71,11 +106,32 @@ from ..const import (
     CONF_INVERTER_FEATURES,
     INVERTER_FEATURE_BATTERY,
     INVERTER_FEATURE_BATTERY_CONTROL,
+    INVERTER_FEATURE_SOLAR,
+)
+from ..const.sg_ready import (
+    CONF_SG_MAX_BLOCK_TIME,
+    CONF_SG_MAX_BLOCKS_PER_DAY,
+    CONF_SG_MIN_STATE_TIME,
+    CONF_SG_NOMINAL_POWER,
+    CONF_SG_POWER_ENTITY_ID,
+    CONF_SG_RELAY_1_ENTITY_ID,
+    CONF_SG_RELAY_2_ENTITY_ID,
+    DEFAULT_SG_MAX_BLOCK_TIME,
+    DEFAULT_SG_MAX_BLOCKS_PER_DAY,
+    DEFAULT_SG_MIN_STATE_TIME,
+    DEFAULT_SG_NOMINAL_POWER,
 )
 from ..detection_patterns import PHASE_PATTERNS
-from ..helpers import get_entry_value, normalize_optional_entity, ocpp_config_value
+from ..energy_prefs import SiteModel
+from ..helpers import (
+    get_entry_value,
+    normalize_optional_entity,
+    ocpp_config_value,
+    validate_charger_settings,
+)
 from ..phases import beside, match_meter_entities
 from ..registry import get_inverters_for_hub
+from ..units import minutes_of
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -85,13 +141,14 @@ _CURRENT_UNITS = units.CURRENT_UNITS
 _POWER_UNITS = units.POWER_UNITS
 _SOC_UNITS = units.SOC_UNITS
 _VOLTAGE_UNITS = units.VOLTAGE_UNITS
+_ENERGY_UNITS = units.ENERGY_UNITS
 
 # The field→accepted-units maps _validate_entity_units is called with, one
 # declaration per FIELD GROUP rather than per page. A page validates the
 # groups it shows, composing them with ``|``:
 #
 #   hub grid (create + options)   _GRID_UNIT_MAP
-#   inverter config (create)      _INVERTER_OUTPUT_UNIT_MAP | _SOLAR_UNIT_MAP
+#   inverter config (create)      _INVERTER_AC_UNIT_MAP | _SOLAR_UNIT_MAP
 #   inverter battery (create)     _BATTERY_UNIT_MAP
 #   inverter control (create)     _write_control_unit_map(data)
 #   inverter (options, per page)  the matching one of the above
@@ -106,10 +163,18 @@ _GRID_UNIT_MAP = {
     CONF_PHASE_C_CURRENT_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
     CONF_MAX_IMPORT_POWER_ENTITY_ID: _POWER_UNITS,
 }
-_INVERTER_OUTPUT_UNIT_MAP = {
+_PACING_UNIT_MAP = {
+    CONF_BASE_CONSUMPTION_ENTITY_ID: _POWER_UNITS,
+    CONF_PACING_ENERGY_ENTITY_ID: _ENERGY_UNITS,
+}
+_INVERTER_AC_UNIT_MAP = {
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_MAX_POWER_ENTITY_ID: _POWER_UNITS,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID: _CURRENT_UNITS | _POWER_UNITS,
 }
 _SOLAR_UNIT_MAP = {
     CONF_SOLAR_PRODUCTION_ENTITY_ID: _POWER_UNITS,
@@ -117,6 +182,8 @@ _SOLAR_UNIT_MAP = {
 _BATTERY_UNIT_MAP = {
     CONF_BATTERY_POWER_ENTITY_ID: _POWER_UNITS,
     CONF_BATTERY_SOC_ENTITY_ID: _SOC_UNITS,
+    CONF_BATTERY_CAPACITY_ENTITY_ID: _ENERGY_UNITS,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID: _SOC_UNITS,
 }
 _WRITE_CONTROL_UNIT_MAP = {
     # The charge-limit register is NOT here: it is written in whatever unit the
@@ -218,25 +285,58 @@ _BATTERY_ENTITY_KEYS = [
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
+]
+_INVERTER_INPUT_KEYS = [
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
 ]
 _INVERTER_ENTITY_KEYS = [
+    CONF_INVERTER_MAX_POWER_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+    *_INVERTER_INPUT_KEYS,
 ]
-_PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID]
-_TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID]
+_PACING_ENTITY_KEYS = [
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
+    CONF_OUTAGE_ENTITY_ID,
+]
+_PLUG_ENTITY_KEYS = [CONF_PLUG_POWER_MONITOR_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
+_TANK_ENTITY_KEYS = [CONF_TANK_POWER_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
+_SG_READY_ENTITY_KEYS = [CONF_SG_POWER_ENTITY_ID, CONF_EARLY_ROOM_ENTITY_ID, CONF_EARLY_RATE_ENTITY_ID]
+_VL_ENTITY_KEYS = [
+    CONF_VL_SETPOINT_ENTITY_ID,
+    CONF_VL_CURRENT_L1_ENTITY_ID,
+    CONF_VL_CURRENT_L2_ENTITY_ID,
+    CONF_VL_CURRENT_L3_ENTITY_ID,
+    CONF_VL_POWER_ENTITY_ID,
+    CONF_VL_CONNECTED_ENTITY_ID,
+    CONF_VL_CHARGING_ENTITY_ID,
+    CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
+    # Not an entity, but optional the same way: a cleared field is None.
+    CONF_VL_FALLBACK_SETPOINT,
+]
 _STATION_ENTITY_KEYS = [
     CONF_STATION_CHARGE_LIMIT_ENTITY_ID,
     CONF_STATION_AC_INPUT_ENTITY_ID,
     CONF_STATION_AC_OUTPUT_ENTITY_ID,
+    CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
 ]
 
 
 def _normalize_optional_inputs(
     data: dict, step_entity_keys: list[str] | None = None
 ) -> dict:
-    """Normalize optional entity inputs.
+    """Normalize optional entity inputs - and the manual override timeout,
+    entered as hours and minutes, to the minutes it is stored as.
 
     Args:
         data: The user_input from the form step.
@@ -248,11 +348,16 @@ def _normalize_optional_inputs(
         _GRID_ENTITY_KEYS
         + _BATTERY_ENTITY_KEYS
         + _INVERTER_ENTITY_KEYS
+        + _PACING_ENTITY_KEYS
         + _PLUG_ENTITY_KEYS
         + _TANK_ENTITY_KEYS
+        + _SG_READY_ENTITY_KEYS
+        + _VL_ENTITY_KEYS
     ):
         if key in normalized:
             normalized[key] = normalize_optional_entity(normalized.get(key))
+    if isinstance(normalized.get(CONF_MANUAL_OVERRIDE_TIMEOUT), dict):
+        normalized[CONF_MANUAL_OVERRIDE_TIMEOUT] = int(round(minutes_of(normalized[CONF_MANUAL_OVERRIDE_TIMEOUT])))
     # Entity selectors omit unselected fields - explicitly clear them
     if step_entity_keys:
         for key in step_entity_keys:
@@ -374,6 +479,27 @@ def _power_beside(hass, triple: dict[str, str | None]) -> dict[str, str | None]:
     return watts if all(watts.values()) else triple
 
 
+def _count(triple: dict) -> int:
+    return sum(1 for eid in triple.values() if eid)
+
+
+def _meter_triple(hass, device_id: str) -> tuple[str, dict[str, str | None]]:
+    """A device's per-phase readings as a grid connection's
+    (phases.match_meter_entities, role "grid" - only that device's rows):
+    ``("power" | "current", {phase_a, phase_b, phase_c})``, the kind that
+    covers more phases, power on a tie."""
+    meter = match_meter_entities(
+        _device_rows(hass, async_get_entity_registry(hass), device_id), "grid"
+    )
+    return max(
+        (
+            (kind, {slot: meter.get(f"{kind}_{slot[-1]}") for slot in _PHASE_SLOTS})
+            for kind in ("power", "current")
+        ),
+        key=lambda kt: _count(kt[1]),
+    )
+
+
 def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> dict[str, str | None]:
     """No pattern set matched all three phases, or the one that did was on a
     device its test turns down (_device_rejects): the first complete set left
@@ -404,14 +530,124 @@ def _same_device_fill(hass, entity_ids: list[str], pattern_sets: list[dict]) -> 
     entry = entity_registry.async_get(next(eid for eid in found.values() if eid))
     if entry is None or entry.device_id is None:
         return found
-    meter = match_meter_entities(_device_rows(hass, entity_registry, entry.device_id), "grid")
+    _, best = _meter_triple(hass, entry.device_id)
+    return best if _count(best) >= _count(found) else found
 
-    def count(triple):
-        return sum(1 for eid in triple.values() if eid)
 
-    best = max(({slot: meter.get(f"{kind}_{slot[-1]}") for slot in _PHASE_SLOTS}
-                for kind in ("power", "current")), key=count)  # power on a tie
-    return best if count(best) >= count(found) else found
+# --- Suggestions from the Energy dashboard (the initial setup forms only) ---
+#
+# The dashboard is READ, never written: its preferences name the site's PV,
+# battery and grid meter, and a create form opens with them in its empty
+# fields. A value already in the form always wins (_fill_empty), and the
+# options pages never call any of this - a field cleared there is cleared on
+# purpose. The dashboard's sign convention is Load Juggler's (positive =
+# import / discharge), so a sensor is offered as it is, never flipped.
+
+_FORECAST_DOMAIN = "open_meteo_solar_forecast"
+
+
+async def _energy_site(hass) -> SiteModel:
+    """The Energy dashboard as a SiteModel; an empty one when it cannot be
+    read (store not loaded, odd shape) - setup is never blocked by it."""
+    try:
+        return SiteModel.from_prefs((await async_get_manager(hass)).data)
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Energy dashboard preferences not readable: %s", err)
+        return SiteModel()
+
+
+def _forecast_devices(hass, entry_ids) -> list[str]:
+    """The Open-Meteo Solar Forecast devices of the dashboard's forecast
+    config entries (its ``config_entry_solar_forecast`` holds entry ids, the
+    form takes device ids). Other providers have no ``watts`` series."""
+    device_registry = async_get_device_registry(hass)
+    devices: list[str] = []
+    for entry_id in entry_ids:
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if entry is None or entry.domain != _FORECAST_DOMAIN:
+            continue
+        for device in dr_async_entries_for_config_entry(device_registry, entry_id):
+            if device.id not in devices:
+                devices.append(device.id)
+    return devices
+
+
+def _inverter_suggestions(hass, site: SiteModel, first: bool) -> dict:
+    """What the dashboard offers a NEW inverter entry. Only the hub's first
+    inverter gets any: on a fleet the dashboard's single battery or array
+    cannot be attributed to one inverter. A sensor with no state is not offered."""
+    if not first:
+        return {}
+
+    def known(entity_id):
+        return entity_id if entity_id and hass.states.get(entity_id) is not None else None
+
+    out: dict = {}
+    features = [
+        feature
+        for feature, present in (
+            (INVERTER_FEATURE_SOLAR, site.solar),
+            (INVERTER_FEATURE_BATTERY, site.battery_out),
+        )
+        if present
+    ]
+    if features:
+        out[CONF_INVERTER_FEATURES] = features
+    # One total sensor only: several arrays would need a summing helper.
+    if len(site.solar) == 1 and len(site.solar_power) == 1:
+        out[CONF_SOLAR_PRODUCTION_ENTITY_ID] = known(site.solar_power[0])
+    if devices := _forecast_devices(hass, site.solar_forecast_entries):
+        out[CONF_SOLAR_FORECAST_DEVICE_IDS] = devices
+    # The capacity sum and the SOC are per battery: exactly one.
+    if len(site.battery_out) == 1:
+        if len(site.battery_power) == 1:
+            out[CONF_BATTERY_POWER_ENTITY_ID] = known(site.battery_power[0].rate)
+        if len(site.battery_soc) == 1:
+            out[CONF_BATTERY_SOC_ENTITY_ID] = known(site.battery_soc[0])
+        if site.battery_capacity_kwh:
+            out[CONF_BATTERY_CAPACITY_KWH] = site.battery_capacity_kwh
+    return {k: v for k, v in out.items() if v is not None}
+
+
+def _grid_meter_suggestion(hass, site: SiteModel) -> dict:
+    """The hub's grid CTs from the dashboard's grid meter: the per-phase
+    readings of the DEVICE of its raw power sensor, and ``invert_phases``
+    when the dashboard declares that meter inverted and the readings are its
+    watts (a meter's per-phase amps are import-positive whatever its watts
+    do). ``{}`` unless there is exactly one grid power source with a device
+    that yields at least one phase."""
+    try:
+        if len(site.grid_power) != 1:
+            return {}
+        spec = site.grid_power[0]
+        registry = async_get_entity_registry(hass)
+        # Never ``stat_rate`` itself when a raw sensor exists: it is HA's own
+        # or a template's derived sensor, without a device.
+        for entity_id in (spec.rate_inverted, spec.rate_from, spec.rate):
+            entry = registry.async_get(entity_id) if entity_id else None
+            if entry is None or entry.device_id is None:
+                continue
+            kind, triple = _meter_triple(hass, entry.device_id)
+            if not _count(triple):
+                return {}
+            return {
+                CONF_PHASE_A_CURRENT_ENTITY_ID: triple["phase_a"],
+                CONF_PHASE_B_CURRENT_ENTITY_ID: triple["phase_b"],
+                CONF_PHASE_C_CURRENT_ENTITY_ID: triple["phase_c"],
+                CONF_INVERT_PHASES: kind == "power" and entity_id == spec.rate_inverted,
+            }
+    except Exception as err:  # noqa: BLE001
+        _LOGGER.debug("Grid meter suggestion failed: %s", err)
+    return {}
+
+
+def _fill_empty(defaults: dict, suggestions: dict) -> dict:
+    """``defaults`` with each suggestion that fills a key that is missing,
+    None, "" or [] - a value already there always wins."""
+    return {
+        **defaults,
+        **{k: v for k, v in suggestions.items() if defaults.get(k) in (None, "", [])},
+    }
 
 
 def _auto_detect_entity(
@@ -518,29 +754,6 @@ def _apply_priority_order(hass, devices: list, chosen: list) -> None:
         )
 
 
-async def _detect_charge_rate_unit(hass, ocpp_device_id: str) -> str | None:
-    """The charge rate unit the charger accepts: "A", "W", or None if unknown.
-
-    From its ChargingScheduleAllowedChargingRateUnit; a charger that takes
-    both is driven in amps.
-    """
-    value = await ocpp_config_value(
-        hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
-    )
-    if not value:
-        return None
-    value = str(value).strip()
-    _LOGGER.info("OCPP ChargingScheduleAllowedChargingRateUnit = %s", value)
-    if "current" in value.lower():
-        return CHARGE_RATE_UNIT_AMPS
-    if "power" in value.lower():
-        return CHARGE_RATE_UNIT_WATTS
-    _LOGGER.warning(
-        "Unrecognised ChargingScheduleAllowedChargingRateUnit value: %s", value
-    )
-    return None
-
-
 async def _detect_meter_value_interval(hass, ocpp_device_id: str) -> int | None:
     """The charger's MeterValueSampleInterval in seconds, clamped to 5-300.
 
@@ -566,14 +779,26 @@ def _check_power_window(data: dict, errors: dict) -> None:
         errors[CONF_STATION_MAX_CHARGE_POWER] = "station_max_below_min"
 
 
+def _check_variable_load(data: dict, errors: dict, hub_phases: int) -> None:
+    """A variable load's legs (as a charger's), its bounds and its phase
+    advice band. Fills the unused legs in place first."""
+    _fill_hidden_legs(data, hub_phases)
+    validate_charger_settings(data, errors)
+    if data.get(CONF_VL_MIN, DEFAULT_VL_MIN) > data.get(CONF_VL_MAX, DEFAULT_VL_MAX):
+        errors[CONF_VL_MAX] = "vl_min_exceeds_max"
+    if data.get(CONF_VL_PHASE_SINGLE_BELOW, DEFAULT_VL_PHASE_SINGLE_BELOW) > data.get(
+        CONF_VL_PHASE_MULTI_ABOVE, DEFAULT_VL_PHASE_MULTI_ABOVE
+    ):
+        errors[CONF_VL_PHASE_SINGLE_BELOW] = "vl_advice_band"
+
+
 def _fill_hidden_legs(data: dict, hub_phases: int) -> None:
-    """Map the charger legs a site with fewer phases hides onto L1's phase -
-    in place - so the stored mask matches the phases the charger can use."""
-    l1 = data.get(CONF_CHARGER_L1_PHASE, "A")
-    if hub_phases < 2:
-        data[CONF_CHARGER_L2_PHASE] = l1
-    if hub_phases < 3:
-        data[CONF_CHARGER_L3_PHASE] = l1
+    """Store every unused charger leg as None - in place. A leg is unused when
+    the form left it blank or the site has too few phases to show it; the
+    stored None (not a missing key) is what overrides an earlier mapping."""
+    for number, key in ((2, CONF_CHARGER_L2_PHASE), (3, CONF_CHARGER_L3_PHASE)):
+        if hub_phases < number or not data.get(key):
+            data[key] = None
 
 
 def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
@@ -581,11 +806,10 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
 
     A site phase exists when it has a grid CT or an inverter output sensor
     (mirrors ``run_hub_calculation``'s phase derivation). The inverter output
-    entities may live on the hub's own legacy fields OR - after the one-time
-    auto-import - on any of its inverter child entries, so the whole fleet is
-    consulted. Without that, an off-grid 3-phase site collapses to 1 phase
-    post-import, hiding the L2/L3 mapping fields and force-mapping every
-    charger leg onto L1's phase.
+    entities live on the hub's inverter child entries, so the whole fleet is
+    consulted. Without that, an off-grid 3-phase site collapses to 1 phase,
+    hiding the L2/L3 mapping fields and force-mapping every charger leg onto
+    L1's phase.
     """
     if not hub_entry_id:
         return 3  # Default to 3 if unknown
@@ -605,10 +829,9 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
     )
     if count > 0:
         return count
-    # Off-grid fallback: infer from the inverter output entities of the whole
-    # fleet - the hub's own (pre-import) fields plus every inverter child
-    # entry. A phase counts once, no matter how many members feed it.
-    sources = [opts] + [
+    # Off-grid fallback: infer from the inverter output entities of every
+    # inverter child entry. A phase counts once, no matter how many feed it.
+    sources = [
         {**inverter.data, **inverter.options}
         for inverter in get_inverters_for_hub(hass, hub_entry_id)
     ]
@@ -622,6 +845,40 @@ def _hub_phase_count(hass, hub_entry_id: str | None) -> int:
         if any(source.get(key) for source in sources)
     )
     return max(count, 1)
+
+
+def _validate_inverter_input(
+    hass, entry_id, hub_entry_id, data: dict, errors: dict
+) -> None:
+    """An inverter's input (grid side) is the grid meter or sensors, not both,
+    taken from the grid meter by at most one inverter per hub, and only beside
+    output sensors (the household adds ``output - input``, so an input alone
+    says nothing). ``entry_id`` is this inverter's own entry (None while it is
+    being created), skipped when looking at its siblings."""
+    sensors = [key for key in _INVERTER_INPUT_KEYS if data.get(key)]
+    is_grid = bool(data.get(CONF_INVERTER_INPUT_IS_GRID))
+    if is_grid and sensors:
+        errors[CONF_INVERTER_INPUT_IS_GRID] = "input_grid_and_sensors"
+        return
+    if is_grid and any(
+        inverter.entry_id != entry_id
+        and get_entry_value(inverter, CONF_INVERTER_INPUT_IS_GRID, False)
+        for inverter in get_inverters_for_hub(hass, hub_entry_id)
+    ):
+        errors[CONF_INVERTER_INPUT_IS_GRID] = "input_grid_taken"
+        return
+    has_output = any(
+        data.get(key)
+        for key in (
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
+        )
+    )
+    if (sensors or is_grid) and not has_output:
+        errors[sensors[0] if sensors else CONF_INVERTER_INPUT_IS_GRID] = (
+            "input_without_output"
+        )
 
 
 def _validate_inverter_features(data: dict, errors: dict) -> None:

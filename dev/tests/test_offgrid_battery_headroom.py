@@ -15,7 +15,7 @@ Everything here runs the REAL site cycle - engine, the load processor with its
 smoothing, command-interval gate and charge pause, and the OCPP command it
 sends - against a small off-grid world:
 
-  * a series hybrid (the hub's own inverter fields) and a 5 kW battery behind
+  * a series hybrid (the hub's inverter entry) and a 5 kW battery behind
     it, covering whatever the site draws beyond solar;
   * three sites. At night (1 kW house, no sun) read through the inverter's AC
     output sensor, and by day (2.6 kW house, 1.5 kW sun) read through a
@@ -37,6 +37,8 @@ from types import SimpleNamespace
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from .conftest import INPUT_GRID, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
@@ -64,14 +66,12 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PROFILE_VALIDITY_MODE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_UPDATE_FREQUENCY,
-    CONF_WIRING_TOPOLOGY,
     DEAD_BAND,
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_LOAD,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .closed_loop import clocked
@@ -173,7 +173,7 @@ def site(hass, request):
         if sensors == "output"
         else {CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.solar_production"}
     )
-    hub_entry = MockConfigEntry(
+    hub_entry = with_inverter(hass, MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="Hub",
         data={CONF_NAME: "Hub", CONF_ENTITY_ID: "hub", ENTRY_TYPE: ENTRY_TYPE_HUB},
         options={
@@ -181,13 +181,13 @@ def site(hass, request):
             CONF_MAIN_BREAKER_RATING: 40,
             **reading,
             CONF_INVERTER_MAX_POWER: inverter_w,
-            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+            **input_options(INPUT_GRID),
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
             CONF_BATTERY_MAX_DISCHARGE_POWER: DISCHARGE_W,
             CONF_BATTERY_MAX_CHARGE_POWER: 5000,
         },
-    )
+    ))
     evse = MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="evse",
         data={

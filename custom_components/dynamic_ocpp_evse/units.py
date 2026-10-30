@@ -34,14 +34,24 @@ from .const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
+    CONF_INVERTER_MAX_POWER_ENTITY_ID,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
     CONF_BATTERY_POWER_ENTITY_ID,
     CONF_BATTERY_SOC_ENTITY_ID,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_VOLTAGE_ENTITY_ID,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_EARLY_ROOM_ENTITY_ID,
+    CONF_EARLY_RATE_ENTITY_ID,
 )
 
 # Units the pickers offer and the validator accepts, per physical domain.
@@ -49,12 +59,14 @@ CURRENT_UNITS = frozenset({"A", "mA"})
 POWER_UNITS = frozenset({"W", "kW"})
 VOLTAGE_UNITS = frozenset({"V", "mV"})
 SOC_UNITS = frozenset({"%"})
+ENERGY_UNITS = frozenset({"Wh", "kWh"})
 
 # Canonical domains - what the engine wants a value in, whatever it arrived as.
 DOMAIN_AMPS = "A"
 DOMAIN_WATTS = "W"
 DOMAIN_VOLTS = "V"
 DOMAIN_PERCENT = "%"
+DOMAIN_KWH = "kWh"
 
 # conf key → (units the field accepts, canonical domain the engine uses)
 ENTITY_UNIT_CONTRACTS: dict[str, tuple[frozenset, str]] = {
@@ -67,12 +79,22 @@ ENTITY_UNIT_CONTRACTS: dict[str, tuple[frozenset, str]] = {
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: (CURRENT_UNITS | POWER_UNITS, DOMAIN_AMPS),
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID: (CURRENT_UNITS | POWER_UNITS, DOMAIN_AMPS),
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID: (CURRENT_UNITS | POWER_UNITS, DOMAIN_AMPS),
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: (CURRENT_UNITS | POWER_UNITS, DOMAIN_AMPS),
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID: (CURRENT_UNITS | POWER_UNITS, DOMAIN_AMPS),
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID: (CURRENT_UNITS | POWER_UNITS, DOMAIN_AMPS),
     CONF_MAX_IMPORT_POWER_ENTITY_ID: (POWER_UNITS, DOMAIN_WATTS),
+    CONF_INVERTER_MAX_POWER_ENTITY_ID: (POWER_UNITS, DOMAIN_WATTS),
     CONF_SOLAR_PRODUCTION_ENTITY_ID: (POWER_UNITS, DOMAIN_WATTS),
     CONF_BATTERY_POWER_ENTITY_ID: (POWER_UNITS, DOMAIN_WATTS),
     CONF_BATTERY_SOC_ENTITY_ID: (SOC_UNITS, DOMAIN_PERCENT),
+    CONF_BATTERY_CAPACITY_ENTITY_ID: (ENERGY_UNITS, DOMAIN_KWH),
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID: (SOC_UNITS, DOMAIN_PERCENT),
     CONF_BATTERY_VOLTAGE_ENTITY_ID: (VOLTAGE_UNITS, DOMAIN_VOLTS),
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID: (SOC_UNITS, DOMAIN_PERCENT),
+    CONF_PACING_ENERGY_ENTITY_ID: (ENERGY_UNITS, DOMAIN_KWH),
+    CONF_BASE_CONSUMPTION_ENTITY_ID: (POWER_UNITS, DOMAIN_WATTS),
+    CONF_EARLY_ROOM_ENTITY_ID: (ENERGY_UNITS, DOMAIN_KWH),
+    CONF_EARLY_RATE_ENTITY_ID: (POWER_UNITS, DOMAIN_WATTS),
 }
 
 
@@ -162,8 +184,8 @@ def read_number(hass, entity_id, unit=None, voltage: float = 0.0):
 
     None for an empty ``entity_id`` as well, so an optional config value can be
     handed over as it is. ``unit`` is the canonical domain wanted - DOMAIN_AMPS,
-    DOMAIN_WATTS (``voltage`` for the A↔W step) or DOMAIN_VOLTS; None reads the
-    raw number. Duck-typed like the rest of this module: only
+    DOMAIN_WATTS (``voltage`` for the A↔W step), DOMAIN_VOLTS or DOMAIN_KWH;
+    None reads the raw number. Duck-typed like the rest of this module: only
     ``hass.states.get`` and the state's ``.state`` / ``.attributes`` are used.
     """
     if not entity_id:
@@ -183,6 +205,8 @@ def read_number(hass, entity_id, unit=None, voltage: float = 0.0):
             value = to_watts(value, entity_unit, voltage)
         elif unit == DOMAIN_VOLTS:
             value = to_volts(value, entity_unit)
+        elif unit == DOMAIN_KWH:
+            value = to_kwh(value, entity_unit)
     return None if is_unusable_number(value) else value
 
 
@@ -231,3 +255,27 @@ def to_volts(value: float, unit) -> float:
     if normalize(unit) == "MV":
         return value / 1000.0
     return value
+
+
+def to_kwh(value: float, unit) -> float:
+    """Kilowatt-hours, from kilowatt-hours or watt-hours."""
+    if normalize(unit) == "WH":
+        return value / 1000.0
+    return value
+
+
+def minutes_of(value) -> float:
+    """Minutes, from a number of minutes or from Home Assistant's duration
+    input ({"days", "hours", "minutes", "seconds"}, any of them); 0 for
+    anything else. The manual override timeout is entered as hours and
+    minutes and stored as minutes (config_flow.helpers._normalize_optional_inputs)."""
+    if isinstance(value, dict):
+        try:
+            return (float(value.get("days") or 0) * 1440.0 + float(value.get("hours") or 0) * 60.0
+                    + float(value.get("minutes") or 0) + float(value.get("seconds") or 0) / 60.0)
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0

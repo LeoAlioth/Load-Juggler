@@ -11,6 +11,8 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
 from .entities.mixins import HubEntityMixin, LoadEntityMixin
 from .const import (
+    thermostat_defaults,
+    behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT, ROOM_TEMPERATURE_RANGE, DEFAULT_ROOM_AWAY_TEMPERATURE, DEFAULT_ROOM_NORMAL_TEMPERATURE, DEFAULT_ROOM_BOOST_TEMPERATURE,
     CONF_CLIMATE_ENTITY_ID,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
@@ -27,11 +29,15 @@ from .const import (
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_BATTERY_SOC_MIN,
     DEFAULT_BATTERY_SOC_TARGET,
+    CONF_BATTERY_SOC_FULL,
+    DEFAULT_BATTERY_SOC_FULL,
     CONF_DEVICE_TYPE,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     CONF_STATION_MIN_CHARGE_POWER,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_NORMAL_RESERVE,
@@ -57,7 +63,7 @@ from .const import (
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_PHASE_VOLTAGE,
 )
-from .helpers import get_entry_value, hub_has_battery
+from .helpers import get_entry_value, get_inverters_for_hub, hub_has_battery
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -102,14 +108,26 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         else:
             _LOGGER.info("Max import power: no sensor and no slider - unlimited")
 
-        # Only create battery entities if any battery is on the fleet (hub
-        # legacy fields or an inverter entry).
+        # Only create battery entities if any inverter entry has a battery.
         #   SOC Target - Eco: below it charge at minimum rate, at/above it at
         #     solar rate or full speed. Solar: below it do not charge.
         #   SOC Min - below it no load charges in any mode: the absolute floor
         #     that protects the home battery.
+        #   SOC Full - at/above it the battery counts as full (Excess plugs
+        #     run, no charge allowance); starts at the inverter setting it
+        #     replaced.
         if hub_has_battery(hass, config_entry):
+            full = next(
+                (
+                    v for v in (
+                        get_entry_value(e, CONF_BATTERY_SOC_FULL, None)
+                        for e in get_inverters_for_hub(hass, config_entry.entry_id)
+                    ) if v
+                ),
+                DEFAULT_BATTERY_SOC_FULL,
+            )
             rows += [
+                (HubSlider, "Home Battery SOC Full", "home_battery_soc_full", "battery_soc_full", 50, 100, 1, full, "%", "mdi:battery-high"),
                 (HubSlider, "Home Battery SOC Target", "home_battery_soc_target", "battery_soc_target", 0, 100, 1, DEFAULT_BATTERY_SOC_TARGET, "%", "mdi:battery-charging-80"),
                 (HubSlider, "Home Battery SOC Min", "home_battery_soc_min", "battery_soc_min", 0, 95, 1, DEFAULT_BATTERY_SOC_MIN, "%", "mdi:battery-alert-variant-outline"),
             ]
@@ -118,7 +136,8 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             _LOGGER.info(f"No battery configured - skipping battery number entities")
 
     elif entry_type == ENTRY_TYPE_LOAD:
-        device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        raw_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        device_type = behaviour_type(raw_type)
         if device_type == DEVICE_TYPE_PLUG:
             power = conf(CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING)
             rows = [
@@ -126,12 +145,20 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
             ]
         elif device_type == DEVICE_TYPE_HOT_WATER_TANK:
             power = conf(CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER)
+            room = raw_type == DEVICE_TYPE_ROOM_THERMOSTAT
+            low, high = ROOM_TEMPERATURE_RANGE if room else (10, 90)
+            away_d, normal_d, boost_d = thermostat_defaults(raw_type)
+            icon = "mdi:thermometer" if room else "mdi:thermometer-water"
             rows = [
-                (TankTemperatureSlider, "Away Temperature", "tank_away_temperature", "tank_away_temperature", 10, 90, 1, conf(CONF_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_AWAY_TEMPERATURE), "°C", "mdi:thermometer-water"),
-                (TankTemperatureSlider, "Normal Temperature", "tank_normal_temperature", "tank_normal_temperature", 10, 90, 1, conf(CONF_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE), "°C", "mdi:thermometer-water"),
-                (TankTemperatureSlider, "Boost Temperature", "tank_boost_temperature", "tank_boost_temperature", 10, 90, 1, conf(CONF_TANK_BOOST_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE), "°C", "mdi:thermometer-water"),
+                (TankTemperatureSlider, "Away Temperature", "tank_away_temperature", "tank_away_temperature", low, high, 1, conf(CONF_TANK_AWAY_TEMPERATURE, away_d), "°C", icon),
+                (TankTemperatureSlider, "Normal Temperature", "tank_normal_temperature", "tank_normal_temperature", low, high, 1, conf(CONF_TANK_NORMAL_TEMPERATURE, normal_d), "°C", icon),
+                (TankTemperatureSlider, "Boost Temperature", "tank_boost_temperature", "tank_boost_temperature", low, high, 1, conf(CONF_TANK_BOOST_TEMPERATURE, boost_d), "°C", icon),
                 (LoadPowerSlider, "Element Power", "device_power", "device_power", 10, max(power, 30000), 10, power, "W", "mdi:flash"),
             ]
+        elif device_type in (DEVICE_TYPE_SG_READY, DEVICE_TYPE_VARIABLE_LOAD):
+            # No sliders: SG Ready follows the site; a variable load's bounds
+            # are in its setpoint unit and set on its settings page.
+            rows = []
         elif device_type == DEVICE_TYPE_POWER_STATION:
             # The charge-power bounds hold what the engine may allocate,
             # deliberately configured rather than read from the device - a
@@ -271,10 +298,12 @@ class TankTemperatureSlider(LoadSlider):
     """Slider for a hot water tank setpoint temperature (away / normal / boost).
 
     The only place these are set: the setup and settings pages no longer ask
-    (Anze, 2026-09-25) - an entry from before keeps its saved value as the
+    (2026-09-25) - an entry from before keeps its saved value as the
     starting one. Bounded by the thermostat's own min_temp / max_temp, which
     both climate and water_heater entities publish, and moved into them when
-    they change; 10-90 °C until the thermostat reports.
+    they change; 10-90 °C until the thermostat reports. Load Juggler itself
+    lowers one, through its set service, to a target the device does not keep
+    (control/hot_water_tank._adopt_kept_target).
     """
 
     def __init__(self, hass, config_entry, *args):

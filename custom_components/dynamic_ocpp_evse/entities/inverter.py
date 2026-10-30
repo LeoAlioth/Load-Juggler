@@ -213,6 +213,9 @@ class LoadJugglerInverterDataSensor(
             return None
         return {
             "gain": own.get("forecast_gain"),
+            # What the clip integral actually multiplies this array's forecast
+            # by: the gain once it spans enough days, exactly 1.0 before.
+            "gain_applied": own.get("forecast_gain_applied"),
             "gain_hourly": own.get("forecast_gain_hourly") or {},
             "gain_days": own.get("forecast_gain_days"),
             "gain_blocks": own.get("forecast_gain_blocks"),
@@ -508,7 +511,12 @@ class LoadJugglerInverterSocControlSensor(
         """
         advice_soc = self._inverter_section(hub_data).get("forecast_battery_max_soc")
         await send_inverter_soc_limit(
-            self.hass, self.config_entry, advice_soc, time.monotonic()
+            self.hass,
+            self.config_entry,
+            advice_soc,
+            time.monotonic(),
+            # A planned outage is near or running: slots to full (JUG-23).
+            lift=bool((hub_data or {}).get("outage_precharge")),
         )
         self._read_control_status()
 

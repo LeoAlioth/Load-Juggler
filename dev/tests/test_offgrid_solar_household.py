@@ -26,6 +26,8 @@ the house - 21.74 A - on every cycle.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import INPUT_GRID, INPUT_NONE, input_options, with_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -37,12 +39,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_NAME,
     CONF_PHASE_VOLTAGE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
-    CONF_WIRING_TOPOLOGY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .closed_loop import (
@@ -70,7 +69,7 @@ def _hub(slug, topology, *, solar=True, battery_power=True):
         CONF_MAIN_BREAKER_RATING: 40,
         CONF_SOLAR_PRODUCTION_ENTITY_ID: SOLAR,
         CONF_INVERTER_MAX_POWER: int(RATING_W),
-        CONF_WIRING_TOPOLOGY: topology,
+        **input_options(topology),
         CONF_BATTERY_SOC_ENTITY_ID: SOC,
         CONF_BATTERY_POWER_ENTITY_ID: BATTERY,
         # A large pack, so the inverter's rating binds and not the battery.
@@ -97,7 +96,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200):
     settled on the household alone; then the car plugs in and slews toward its
     last command at ``car_ramp_a_s``. One row per cycle.
     """
-    hub = _hub(slug, topology)
+    hub = with_inverter(hass, _hub(slug, topology))
     hass.states.async_set(SOC, "80", BATTERY_PCT)
     hass.states.async_set(STATUS, "Available")
     hass.states.async_set(SOLAR, f"{SOLAR_W:.1f}", WATTS)
@@ -119,7 +118,7 @@ async def _run(hass, slug, topology, car_ramp_a_s, cycles=200):
                             at="2026-09-24 12:00:00+00:00", hub_data=SOC_BOUNDS)
 
 
-@pytest.mark.parametrize("topology", [WIRING_TOPOLOGY_SERIES, WIRING_TOPOLOGY_PARALLEL])
+@pytest.mark.parametrize("topology", [INPUT_GRID, INPUT_NONE])
 @pytest.mark.parametrize("car_ramp_a_s", [1.0, 100.0], ids=["car-1A/s", "step"])
 async def test_a_charger_gets_the_inverter_rating_less_the_house(
     hass, car_ramp_a_s, topology
@@ -195,8 +194,8 @@ async def test_solar_remaining_is_unknown_with_nothing_to_measure_the_house(
     )
 
     slug = f"unmeasured_{solar}_{battery_power}"
-    hub = _hub(slug, WIRING_TOPOLOGY_SERIES, solar=solar,
-               battery_power=battery_power != "unconfigured")
+    hub = with_inverter(hass, _hub(slug, INPUT_GRID, solar=solar,
+               battery_power=battery_power != "unconfigured"))
     evse = evse_entry(hub, "ogs_evse")
     hass.states.async_set(SOC, "80", BATTERY_PCT)
     hass.states.async_set(STATUS, "Charging")

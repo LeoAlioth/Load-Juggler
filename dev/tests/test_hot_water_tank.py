@@ -7,10 +7,21 @@ the three setpoints, the element power and the hub state, it picks which
 setpoint (away / normal / boost) the climate entity should target.
 """
 
+import asyncio
+
 from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (
     resolve_tank_setpoint,
+    send_hot_water_tank_command,
 )
 from custom_components.dynamic_ocpp_evse.const import (
+    BEHAVIOR_BINARY_EXCESS,
+    CONF_BINARY_MIN_OFF_TIME,
+    CONF_CLIMATE_ENTITY_ID,
+    CONF_SOLAR_GRACE_PERIOD,
+    CONF_TANK_AWAY_TEMPERATURE,
+    CONF_TANK_BOOST_TEMPERATURE,
+    CONF_TANK_NORMAL_TEMPERATURE,
+    DOMAIN,
     TANK_MODE_FREEZE_PROTECTION,
     TANK_MODE_NORMAL,
     TANK_MODE_SOLAR_PRIORITY,
@@ -20,6 +31,12 @@ from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     tank_boost_is_opportunistic,
     TANK_SURPLUS_URGENCY_TIER,
 )
+from custom_components.dynamic_ocpp_evse.engine.load_builders import (
+    _build_hot_water_tank_load,
+)
+from custom_components.dynamic_ocpp_evse.entities.load import min_off_hold
+
+from .test_water_heater_tank import FakeEntry, FakeHass, FakeSensor, FakeState
 
 AWAY, NORMAL, BOOST = 30.0, 45.0, 65.0
 ELEMENT_POWER = 2000.0
@@ -41,9 +58,10 @@ def _hub(soc=None, soc_min=20, soc_target=80, export=0, excess=False):
     }
 
 
-# --- Freeze Protection: away, raised to boost on surplus ---
-#   Surplus means the hub reported excess (its absorption capacity is used up),
-#   or the battery is over its target SOC. The element's own draw is NOT a test.
+# --- Freeze Protection: away, raised to boost on the hub's excess verdict ---
+#   Excess means the site's absorption capacity is used up (a full battery, or
+#   one taking all it may). Over the target SOC alone is not excess, and the
+#   element's own draw is NOT a test.
 
 def test_freeze_protection_no_surplus_is_away():
     for hub in (_hub(), _hub(soc=10), _hub(soc=50, export=0)):
@@ -53,12 +71,22 @@ def test_freeze_protection_no_surplus_is_away():
         assert result == (AWAY, "away")
 
 
-def test_freeze_protection_over_target_soc_is_boost():
-    result = resolve_tank_setpoint(
-        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=85, soc_target=80, export=0),
-    )
-    assert result == (BOOST, "boost")
+def test_over_target_soc_alone_does_not_boost_freeze_protection_or_normal():
+    """Their boost is powered from the Excess pool only, so a boost label on
+    the SOC being over target alone flicked the setpoint up for a cycle and
+    then sat 'Waiting for Power' (kozolec, 2026-10-10: the bee room heater at
+    24 C for a minute with the battery at 54 % over a 42 % target)."""
+    over = _hub(soc=85, soc_target=80, export=0)
+    assert resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, over
+    ) == (AWAY, "away")
+    assert resolve_tank_setpoint(
+        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, over
+    ) == (NORMAL, "normal")
+    over_with_excess = _hub(soc=85, soc_target=80, export=0, excess=True)
+    assert resolve_tank_setpoint(
+        TANK_MODE_FREEZE_PROTECTION.key, AWAY, NORMAL, BOOST, ELEMENT_POWER, over_with_excess
+    ) == (BOOST, "boost")
 
 
 def test_freeze_protection_hub_excess_is_boost():
@@ -198,14 +226,6 @@ def test_normal_export_without_excess_is_normal():
         assert result == (NORMAL, "normal")
 
 
-def test_normal_soc_over_target_is_boost():
-    result = resolve_tank_setpoint(
-        TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=85, soc_target=80, export=0),
-    )
-    assert result == (BOOST, "boost")
-
-
 def test_normal_no_battery_low_export_is_normal():
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
@@ -223,10 +243,11 @@ def test_normal_no_battery_excess_is_boost():
 
 
 def test_normal_offgrid_full_battery_boosts_without_export():
-    """Off-grid: export is always ~0; the SOC > target clause carries boost."""
+    """Off-grid: export is always ~0; the hub's excess verdict (the battery at
+    its full SOC) carries boost."""
     result = resolve_tank_setpoint(
         TANK_MODE_NORMAL.key, AWAY, NORMAL, BOOST, ELEMENT_POWER,
-        _hub(soc=90, soc_target=80, export=0),
+        _hub(soc=90, soc_target=80, export=0, excess=True),
     )
     assert result == (BOOST, "boost")
 
@@ -396,3 +417,339 @@ def test_an_unknown_temperature_is_never_opportunistic():
     # A missing reading must not be what gates a must-run element.
     assert tank_boost_is_opportunistic(FREEZE, "boost", None, 30.0) is False
     assert tank_boost_is_opportunistic(FREEZE, "boost", 35.0, None) is False
+
+
+# ---------------------------------------------------------------------------
+# The setpoint holds: a flipping verdict must not flip the thermostat
+# ---------------------------------------------------------------------------
+#
+# Kozolec, 3 Oct 2026: the tank followed the Excess verdict cycle by cycle, so
+# a verdict sitting at its edge wrote 75 -> 42 -> 75 C on nearly every 5 s
+# cycle - 113 setpoint changes that day, the element's relay switching every
+# 5-20 s. A label change now holds for the tank's minimum off time, and leaving
+# boost is ridden through its solar grace period like any solar load's dip.
+
+CLIMATE = "climate.kozolec_boiler"
+CYCLE_S = 5.0
+HOLD_S = 5 * 60.0  # the tank's binary_min_off_time and solar_grace_period
+
+
+def _kozolec_tank():
+    """The Kozolec tank: Solar Priority, 42 / 75 C, 5 min hold and grace."""
+    hass = FakeHass({CLIMATE: FakeState(
+        "heat", current_temperature=64.2, temperature=42.0, min_temp=7, max_temp=80,
+    )})
+    hass.data[DOMAIN]["loads"]["tank"]["operating_mode"] = TANK_MODE_SOLAR_PRIORITY.key
+    entry = FakeEntry({CONF_CLIMATE_ENTITY_ID: CLIMATE})
+    entry.options = {
+        CONF_TANK_AWAY_TEMPERATURE: 15.0,
+        CONF_TANK_NORMAL_TEMPERATURE: 42.0,
+        CONF_TANK_BOOST_TEMPERATURE: 75.0,
+        CONF_BINARY_MIN_OFF_TIME: 5.0,
+        CONF_SOLAR_GRACE_PERIOD: 5.0,
+    }
+    return hass, FakeSensor(hass, entry)
+
+
+def _setpoints(verdicts, soc=16.0):
+    """Drive the command path once per 5 s cycle with ``verdicts``; returns
+    ``[(t, setpoint written)]``."""
+    hass, sensor = _kozolec_tank()
+    written = []
+    for i, excess in enumerate(verdicts):
+        t = i * CYCLE_S
+        hass.services.calls.clear()
+        hub = _hub(soc=soc, soc_min=10, soc_target=88, excess=excess)
+        asyncio.run(send_hot_water_tank_command(sensor, 8.3, hub, t))
+        for domain, service, data in hass.services.calls:
+            if service == "set_temperature":
+                written.append((t, data["temperature"]))
+    return written
+
+
+def _changes(written):
+    return [
+        (t, sp) for (t, sp), (_, prev) in zip(written[1:], written) if sp != prev
+    ]
+
+
+def test_a_verdict_flipping_every_cycle_moves_the_setpoint_at_most_once_per_hold():
+    """Twenty minutes of a verdict flipping on every cycle: one change at most,
+    and never two inside one hold window. It used to be 239."""
+    written = _setpoints([i % 2 == 0 for i in range(240)])
+    changes = _changes(written)
+    assert len(changes) <= 20 * 60 / HOLD_S
+    for (t1, _), (t2, _) in zip(changes, changes[1:]):
+        assert t2 - t1 >= HOLD_S
+
+
+def test_a_sustained_change_still_goes_through_after_the_hold():
+    """Boost from the start; the verdict then drops for good at 10 min, and
+    returns for good at 20 min. Boost rides the dip for the grace period and
+    then goes to normal; normal holds for the minimum time and then boosts."""
+    verdicts = [True] * 120 + [False] * 120 + [True] * 120
+    written = _setpoints(verdicts)
+    assert written[0] == (0.0, 75.0)
+    assert _changes(written) == [
+        (600.0 + HOLD_S, 42.0),            # dip ridden through the grace
+        (600.0 + 2 * HOLD_S, 75.0),        # back up once normal has held
+    ]
+
+
+def _boost_written(early_start_ok, surplus_on=False):
+    hass, sensor = _kozolec_tank()
+    rt = hass.data[DOMAIN]["loads"]["tank"]
+    rt["early_start_ok"], rt["excess_surplus_on"] = early_start_ok, surplus_on
+    hub = _hub(soc=16, soc_min=10, soc_target=88, excess=True)
+    hub["forecast_excess"] = True        # the forecast verdict is why Excess is on
+    asyncio.run(send_hot_water_tank_command(sensor, 8.3, hub, 0.0))
+    return [d["temperature"] for _, s, d in hass.services.calls if s == "set_temperature"]
+
+
+def test_a_tank_boosts_on_the_forecast_verdict_only_when_it_is_its_turn():
+    """Kozolec, 18 Oct: one small load being due turned the hub's verdict on, and
+    the boiler, which heats the moment its setpoint says boost, followed at once.
+    Its setpoint now reads the per-load early start; the surplus verdict is still
+    everyone's."""
+    assert _boost_written(early_start_ok=True) == [75.0]
+    assert _boost_written(early_start_ok=False) == [42.0]
+    assert _boost_written(early_start_ok=False, surplus_on=True) == [75.0]
+
+
+def test_the_minimum_soc_floor_is_never_held():
+    """The away setpoint below the battery's minimum SOC protects the house's
+    reserve, not surplus: it acts on the cycle it happens, mid-hold or not."""
+    hass, sensor = _kozolec_tank()
+    calls = hass.services.calls
+    asyncio.run(send_hot_water_tank_command(
+        sensor, 8.3, _hub(soc=16, soc_min=10, soc_target=88, excess=True), 0.0))
+    calls.clear()
+    asyncio.run(send_hot_water_tank_command(
+        sensor, 8.3, _hub(soc=9, soc_min=10, soc_target=88, excess=True), CYCLE_S))
+    assert ("climate", "set_temperature",
+            {"entity_id": CLIMATE, "temperature": 15.0}) in calls
+
+
+# ---------------------------------------------------------------------------
+# Leaving boost goes straight to the floor, never through away or off
+# ---------------------------------------------------------------------------
+#
+# the third site, 4 Oct 2026: water_heater.tc (Normal mode, 42 / 46 C) went
+# 46 -> 40 at 13:49 and 40 -> 42 at 13:54 - its lowest target for five minutes
+# between boost and normal - and 46 -> 40 -> 46 -> 40 through 11:21-12:13. Home's
+# workshop boiler went 80 heat -> off -> 80 heat -> off. The label held at boost,
+# so the allocator still sized the tank as opportunistic and withdrew its power
+# with the surplus, and a tank denied power was switched off however warm it was.
+
+TICK_S = 15.0
+
+
+def _tank(entity_id, mode, temp, away, normal, boost, min_temp, **attrs):
+    device = FakeState(
+        "off" if entity_id.startswith("climate.") else "auto",
+        current_temperature=temp, temperature=normal, min_temp=min_temp, max_temp=80,
+        **attrs,
+    )
+    hass = FakeHass({entity_id: device})
+    hass.data[DOMAIN]["loads"]["tank"]["operating_mode"] = mode
+    entry = FakeEntry({CONF_CLIMATE_ENTITY_ID: entity_id})
+    entry.options = {
+        CONF_TANK_AWAY_TEMPERATURE: away,
+        CONF_TANK_NORMAL_TEMPERATURE: normal,
+        CONF_TANK_BOOST_TEMPERATURE: boost,
+        CONF_BINARY_MIN_OFF_TIME: 5.0,
+        CONF_SOLAR_GRACE_PERIOD: 5.0,
+    }
+    return hass, device, FakeSensor(hass, entry)
+
+
+def _replay(entity_id, surplus, mode=TANK_MODE_NORMAL.key, temp=44.0,
+            away=40.0, normal=42.0, boost=46.0, min_temp=40, **attrs):
+    """One 15 s cycle per ``surplus`` verdict: the builder sizes the tank from
+    the label last written, the allocator grants a must-run tank its rating and
+    an opportunistic one its rating only on the surplus, the minimum off time
+    holds a shed permit, and the command path writes. Returns what the device
+    was set to, change by change - a temperature, or "off" - and the labels."""
+    hass, device, sensor = _tank(entity_id, mode, temp, away, normal, boost, min_temp, **attrs)
+    off_since, shown, labels = None, [], []
+    for i, excess in enumerate(surplus):
+        t = i * TICK_S
+        load = _build_hot_water_tank_load(hass, sensor.config_entry, 230.0, "tank_1", 1)
+        granted = (
+            0.0 if load.mode_behavior == BEHAVIOR_BINARY_EXCESS and not excess
+            else load.max_current
+        )
+        permit, off_since, _ = min_off_hold(granted, off_since, t, 300.0)
+        hass.services.calls.clear()
+        asyncio.run(send_hot_water_tank_command(
+            sensor, permit, {"excess_available": excess}, t))
+        for _domain, service, data in hass.services.calls:
+            if service == "set_temperature":
+                device.attributes["temperature"] = data["temperature"]
+            elif service == "set_hvac_mode":
+                device.state = data["hvac_mode"]
+        now = "off" if device.state == "off" else device.attributes["temperature"]
+        if not shown or shown[-1] != now:
+            shown.append(now)
+        labels.append(hass.data[DOMAIN]["loads"]["tank"]["tank_setpoint_label"])
+    return shown, labels
+
+
+# lj-7 fix B. The third site, 11 Oct 2026 20:05-20:35 UTC: a MELCloud heat pump
+# (water_heater.tc, Normal, 40 / 42 / 45 C, min_temp 40) idle at 40 C under its 42 C
+# target, its permit flickering 0 / 1.3 A every 2-30 s with two cars charging. Each
+# shed was held 5 min (min off time), the target went 42 -> 40 -> 42 -> 40 ... - 72
+# cloud writes a day, for a heater that draws nothing either way.
+PERMITS_3RD_SITE = [
+    (1, 1.3), (147, 0), (149, 1.3), (175, 0), (201, 1.3), (213, 0), (231, 1.3), (237, 0),
+    (247, 1.3), (273, 0), (291, 1.3), (305, 0), (307, 1.3), (333, 0), (343, 1.3), (365, 0),
+    (369, 1.3), (393, 0), (401, 1.3), (523, 0), (529, 1.3), (551, 0), (561, 1.3), (579, 0),
+    (591, 1.3), (609, 0), (621, 1.3), (933, 0), (937, 1.3), (963, 0), (983, 1.3), (987, 0),
+    (993, 1.3), (995, 0), (999, 1.3), (1025, 0), (1027, 1.3), (1055, 0), (1057, 1.3),
+    (1085, 0), (1089, 1.3), (1115, 0), (1123, 1.3), (1145, 0), (1153, 1.3), (1175, 0),
+    (1183, 1.3), (1205, 0), (1223, 1.3), (1239, 0), (1245, 1.3), (1265, 0), (1283, 1.3),
+    (1295, 0), (1313, 1.3), (1329, 0), (1345, 1.3), (1355, 0), (1373, 1.3), (1385, 0),
+    (1403, 1.3), (1415, 0), (1433, 1.3), (1619, 0), (1621, 1.3),
+]
+
+
+class _Permits:
+    """The site ticks every 2 s running ``min_off_hold`` on the permit, as
+    entities/load.py does; the tank is built and commanded every 15 s. The
+    surplus verdict stays off, so the label stays normal."""
+
+    def __init__(self, status, temp):
+        self.hass, self.device, self.sensor = _tank(
+            "water_heater.tc", TANK_MODE_NORMAL.key, temp, 40.0, 42.0, 45.0, 40, status=status)
+        self.off_since, self.permit, self.shown = None, 0.0, [42.0]
+
+    def tick(self, t, granted, status=None, temp=None):
+        if status is not None:
+            self.device.attributes["status"] = status
+        if temp is not None:
+            self.device.attributes["current_temperature"] = temp
+        self.permit, self.off_since, _ = min_off_hold(granted, self.off_since, float(t), 300.0)
+        if t % 15:
+            return
+        _build_hot_water_tank_load(self.hass, self.sensor.config_entry, 230.0, "tank_1", 1)
+        self.hass.services.calls.clear()
+        asyncio.run(send_hot_water_tank_command(
+            self.sensor, self.permit, {"excess_available": False}, float(t)))
+        for _domain, service, data in self.hass.services.calls:
+            if service == "set_temperature":
+                self.device.attributes["temperature"] = data["temperature"]
+                if self.shown[-1] != data["temperature"]:
+                    self.shown.append(data["temperature"])
+
+
+def test_a_denied_heat_pump_idle_at_its_normal_target_is_left_there():
+    """Half an hour of the recorded permit flicker: the heat pump idles at 40 C
+    under its 42 C target, so it stays at 42 and nothing is written."""
+    run, i, granted = _Permits("idle", 40.0), 0, 0.0
+    for t in range(0, 1800, 2):
+        while i < len(PERMITS_3RD_SITE) and PERMITS_3RD_SITE[i][0] <= t:
+            granted = PERMITS_3RD_SITE[i][1]
+            i += 1
+        run.tick(t, granted)
+    assert run.shown == [42.0]
+
+
+def test_a_denied_heat_pump_that_starts_heating_is_still_set_to_its_lowest_target():
+    """It heats while denied (status heat_water at 37.5 C): lowered to 40 once. Back
+    to idle at 40.5 C it is not raised while still denied, and when the permit
+    returns it gets 42."""
+    run = _Permits("heat_water", 37.5)
+    for t in range(0, 30, 2):
+        run.tick(t, 0.0)
+    assert run.shown == [42.0, 40.0]
+    for t in range(30, 330, 2):                      # idle at 40.5 C, still denied
+        run.tick(t, 0.0, status="idle", temp=40.5)
+    assert run.shown == [42.0, 40.0]
+    for t in range(330, 930, 2):                     # the permit returns
+        run.tick(t, 1.3)
+    assert run.shown == [42.0, 40.0, 42.0]
+
+
+MIN = 60 / TICK_S  # cycles a minute
+
+
+def _minutes(*spans):
+    return [v for minutes, v in spans for _ in range(int(minutes * MIN))]
+
+
+def test_a_water_heater_leaving_boost_goes_straight_to_normal():
+    shown, _ = _replay("water_heater.tc", _minutes((10, True), (15, False)))
+    assert shown == [46.0, 42.0]
+
+
+def test_a_thermostat_leaving_boost_goes_straight_to_normal_not_off():
+    shown, _ = _replay("climate.workshop_boiler", _minutes((10, True), (15, False)),
+                       temp=60.0, away=10.0, boost=80.0, min_temp=7)
+    assert shown == [80.0, 42.0]
+
+
+def test_a_dip_inside_the_grace_comes_back_to_boost_without_passing_away():
+    # The label rides the dip at boost; the device waits at its floor - the
+    # surplus it was boosting on is gone - and boosts again once it is back.
+    shown, labels = _replay("water_heater.tc",
+                            _minutes((10, True), (2, False), (10, True)))
+    assert shown == [46.0, 42.0, 46.0]
+    assert set(labels) == {"boost"}
+
+
+def test_a_denied_tank_the_device_says_heats_is_not_held_at_its_floor():
+    """Above its normal floor on the last poll, but the heat pump says it heats
+    (cooled past its own hysteresis since): denied, it goes to its lowest
+    target, not to a floor target it would heat to."""
+    def denied(status):
+        hass, device, sensor = _tank("water_heater.tc", TANK_MODE_NORMAL.key, 44.0,
+                                     40.0, 42.0, 46.0, 40, status=status)
+        _build_hot_water_tank_load(hass, sensor.config_entry, 230.0, "tank_1", 1)
+        asyncio.run(send_hot_water_tank_command(sensor, 0.0, {"excess_available": False}, 0.0))
+        return [d["temperature"] for _, s, d in hass.services.calls if s == "set_temperature"]
+    assert denied("idle") == []            # at its floor, already set to it
+    assert denied("heat_water") == [40]    # heating at the floor target: its lowest
+
+
+def test_freeze_protection_leaves_boost_for_its_own_floor_away():
+    shown, _ = _replay("climate.workshop_boiler", _minutes((10, True), (15, False)),
+                       mode=FREEZE, temp=60.0, away=30.0, boost=80.0, min_temp=7)
+    assert shown == [80.0, 30.0]
+
+
+def _denied(entity_id, temp, hub=None, mode=TANK_MODE_NORMAL.key):
+    hass, _device, sensor = _tank(entity_id, mode, temp, 30.0, 42.0, 65.0, 7)
+    asyncio.run(send_hot_water_tank_command(sensor, 0.0, hub or {}, 0.0))
+    return [(service, data) for _domain, service, data in hass.services.calls]
+
+
+def test_a_tank_denied_power_above_its_floor_waits_at_the_floor():
+    assert _denied("climate.tank", 50.0) == [
+        ("set_temperature", {"entity_id": "climate.tank", "temperature": 42.0}),
+        ("set_hvac_mode", {"entity_id": "climate.tank", "hvac_mode": "heat"}),
+    ]
+
+
+def test_a_tank_denied_power_below_its_floor_is_switched_off():
+    # Genuinely no power for a tank that would heat: it must stop drawing.
+    assert _denied("climate.tank", 38.0) == [
+        ("set_hvac_mode", {"entity_id": "climate.tank", "hvac_mode": "off"}),
+    ]
+    assert _denied("water_heater.tank", 38.0) == [
+        ("set_temperature", {"entity_id": "water_heater.tank", "temperature": 7}),
+    ]
+
+
+def test_a_tank_denied_power_with_no_temperature_is_switched_off():
+    # An unknown temperature must not be what keeps a denied element heating.
+    assert _denied("climate.tank", None) == [
+        ("set_hvac_mode", {"entity_id": "climate.tank", "hvac_mode": "off"}),
+    ]
+
+
+def test_solar_priority_below_the_minimum_soc_waits_at_away():
+    # The battery's minimum SOC is away's own condition: away, never normal.
+    calls = _denied("climate.tank", 50.0, _hub(soc=5, soc_min=10, soc_target=80),
+                    TANK_MODE_SOLAR_PRIORITY.key)
+    assert calls[0] == (
+        "set_temperature", {"entity_id": "climate.tank", "temperature": 30.0})

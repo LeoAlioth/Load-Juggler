@@ -18,6 +18,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import device_registry as dr
 
 from ..const import (
+    DEVICE_TYPE_ROOM_THERMOSTAT,
     DOMAIN,
     CONF_NAME,
     CONF_HUB_ENTRY_ID,
@@ -28,6 +29,8 @@ from ..const import (
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
 )
 from ..helpers import get_entry_value
 from .. import units
@@ -90,7 +93,7 @@ def via_device_id(hass, hub_entry_id):
     integration is created explicitly - they all exist because some entity's
     device_info created them. A child that set up first would otherwise
     resolve to None and land at the top level of the device page, silently,
-    until a reload (Anze's log, 2026-09-18).
+    until a reload (the owner's log, 2026-09-18).
 
     Both ``via_device_id`` and ``async_get_device_by_identifier`` arrived in
     HA 2026.8, which is why hacs.json asks for it; ``async_get_device`` is
@@ -466,7 +469,10 @@ class LoadEntityMixin(LoadJugglerEntity):
         return {
             DEVICE_TYPE_PLUG: "Smart Load",
             DEVICE_TYPE_HOT_WATER_TANK: "Hot Water Tank",
+            DEVICE_TYPE_ROOM_THERMOSTAT: "Room Thermostat",
             DEVICE_TYPE_POWER_STATION: "Power Station",
+            DEVICE_TYPE_SG_READY: "SG Ready Heat Pump",
+            DEVICE_TYPE_VARIABLE_LOAD: "Variable Load",
         }.get(self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE), "EV Charger")
 
     def _runtime(self) -> dict:
