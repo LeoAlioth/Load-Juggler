@@ -24,10 +24,10 @@ from .const import (
     CONF_STATION_CHARGE_SPEED_ENTITY_ID, CONF_STATION_RESERVE_ENTITY_ID,
     CONF_SG_RELAY_1_ENTITY_ID, CONF_SG_RELAY_2_ENTITY_ID, DEVICE_TYPE_SG_READY,
     CONF_VL_SETPOINT_ENTITY_ID, DEVICE_TYPE_VARIABLE_LOAD,
-    CONF_MANUAL_OVERRIDE_TIMEOUT, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
-    MIN_MANUAL_OVERRIDE_TIMEOUT,
+    CONF_MANUAL_OVERRIDE_TIMEOUT, manual_override_default,
 )
 from .control import manual_change
+from .units import minutes_of
 from .control.inverter import soc_targets
 from .helpers import get_entry_value, hub_has_battery
 
@@ -228,6 +228,11 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
             rt.pop("_commanded", None)
         self._publish(controlled)
 
+    def _timeout_minutes(self) -> float:
+        """The load's manual override timeout, minutes; 0 never hands it over."""
+        default = manual_override_default(self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
+        return max(0.0, minutes_of(get_entry_value(self.config_entry, CONF_MANUAL_OVERRIDE_TIMEOUT, default)))
+
     @callback
     def _device_changed(self, event):
         if not self.is_on or self._resumes_at:
@@ -235,7 +240,13 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
         change = manual_change(
             self._runtime(), event.data["old_state"], event.data["new_state"]
         )
-        if change:
+        if change and self._timeout_minutes() <= 0:
+            # 0: never handed over - the change is written over at the next command (the owner, 2026-10-30)
+            _LOGGER.info(
+                "%s changed outside Load Juggler (%s %s) - kept under control (manual override timeout 0)",
+                self.entity_id, event.data["entity_id"], change,
+            )
+        elif change:
             self._override()
             _LOGGER.info(
                 "%s operated outside Load Juggler (%s %s) - manual until %s",
@@ -244,12 +255,7 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
 
     def _override(self, until=None):
         """Hand the load to the user until ``until`` (now + its timeout)."""
-        minutes = max(
-            MIN_MANUAL_OVERRIDE_TIMEOUT,
-            get_entry_value(
-                self.config_entry, CONF_MANUAL_OVERRIDE_TIMEOUT, DEFAULT_MANUAL_OVERRIDE_TIMEOUT
-            ),
-        )
+        minutes = self._timeout_minutes()
         self._cancel_resume()
         self._resumes_at = until or dt_util.utcnow() + timedelta(minutes=minutes)
         self._unsub_resume = async_track_point_in_utc_time(

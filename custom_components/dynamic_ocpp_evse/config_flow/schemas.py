@@ -187,6 +187,7 @@ from ..const import (
     DEFAULT_SITE_UPDATE_FREQUENCY,
     DEFAULT_SOLAR_GRACE_PERIOD,
     DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
+    DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD,
     DEFAULT_FORECAST_CLIP_EARLY_ENABLED,
     DEFAULT_FORECAST_EXCESS_ENABLED,
     DEFAULT_FORECAST_EXCESS_SOC,
@@ -196,7 +197,6 @@ from ..const import (
     DEFAULT_PACE_OVER_HORIZON,
     DEFAULT_CATCH_UP_ENABLED,
     FORECAST_EXCESS_SOC_SOURCES,
-    MIN_MANUAL_OVERRIDE_TIMEOUT,
     DEFAULT_STACK_LEVEL,
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_MIN_CHARGE_POWER,
@@ -256,6 +256,7 @@ from ..const.variable_load import (
     VL_UNIT_WATTS,
 )
 from ..helpers import normalize_optional_entity
+from ..units import minutes_of
 from .helpers import (
     _CURRENT_UNITS,
     _POWER_UNITS,
@@ -356,6 +357,17 @@ def _num(key, defaults, default, lo, hi, step, unit, mode="box", required=False)
         number["unit_of_measurement"] = unit
     marker = vol.Required if required else vol.Optional
     return marker(key, default=defaults.get(key, default)), selector({"number": number})
+
+
+def _override_duration(defaults, default):
+    """The manual override timeout as hours and minutes (Home Assistant's
+    duration input), stored as minutes (helpers._normalize_optional_inputs).
+    0 never hands the load over (the owner, 2026-10-30)."""
+    minutes = int(round(minutes_of(defaults.get(CONF_MANUAL_OVERRIDE_TIMEOUT, default))))
+    return (
+        vol.Required(CONF_MANUAL_OVERRIDE_TIMEOUT, default={"hours": minutes // 60, "minutes": minutes % 60}),
+        selector({"duration": {"enable_second": False}}),
+    )
 
 
 def _identity_fields(defaults: dict, name: str, entity_id: str) -> list[tuple]:
@@ -1287,10 +1299,7 @@ def _plug_schema(defaults: dict | None = None) -> vol.Schema:
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
-                _num(
-                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
-                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
-                ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
                 (
                     vol.Required(
                         CONF_CATCH_UP_ENABLED,
@@ -1388,10 +1397,7 @@ def _sg_ready_schema(defaults: dict | None = None) -> vol.Schema:
                     _optional_entity_field(CONF_EARLY_RATE_ENTITY_ID, defaults),
                     power_selector,
                 ),
-                _num(
-                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
-                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
-                ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
             ]
         )
     )
@@ -1502,10 +1508,7 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
-                _num(
-                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
-                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
-                ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
             ]
         )
     )
@@ -1624,10 +1627,7 @@ def _power_station_schema(defaults: dict | None = None) -> vol.Schema:
                     CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD,
                     0, 30, 1, "min", required=True,
                 ),
-                _num(
-                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
-                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
-                ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT),
                 (
                     vol.Required(
                         CONF_PACE_OVER_HORIZON,
@@ -1714,10 +1714,7 @@ def _variable_load_schema(defaults: dict | None = None, hub_phases: int = 3) -> 
                 _entity(CONF_EARLY_ROOM_ENTITY_ID, ["sensor", "input_number"], ["energy", "energy_storage"]),
                 _entity(CONF_EARLY_RATE_ENTITY_ID, ["sensor", "input_number"], "power"),
                 _num(CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD, 0, 30, 1, "min", required=True),
-                _num(
-                    CONF_MANUAL_OVERRIDE_TIMEOUT, defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT,
-                    MIN_MANUAL_OVERRIDE_TIMEOUT, 1440, 1, "min", required=True,
-                ),
+                _override_duration(defaults, DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD),
                 (
                     vol.Required(CONF_PACE_OVER_HORIZON, default=defaults.get(CONF_PACE_OVER_HORIZON, DEFAULT_PACE_OVER_HORIZON)),
                     bool,

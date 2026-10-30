@@ -262,3 +262,20 @@ def to_kwh(value: float, unit) -> float:
     if normalize(unit) == "WH":
         return value / 1000.0
     return value
+
+
+def minutes_of(value) -> float:
+    """Minutes, from a number of minutes or from Home Assistant's duration
+    input ({"days", "hours", "minutes", "seconds"}, any of them); 0 for
+    anything else. The manual override timeout is entered as hours and
+    minutes and stored as minutes (config_flow.helpers._normalize_optional_inputs)."""
+    if isinstance(value, dict):
+        try:
+            return (float(value.get("days") or 0) * 1440.0 + float(value.get("hours") or 0) * 60.0
+                    + float(value.get("minutes") or 0) + float(value.get("seconds") or 0) / 60.0)
+        except (TypeError, ValueError):
+            return 0.0
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0

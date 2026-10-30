@@ -250,6 +250,9 @@
                             "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
                             "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
                             "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)"
+                        },
+                        "data_description": {
+                            "inverter_output_phase_a_entity_id": "Kar razsmernik odda na vsaki fazi. Ampere, vate ali kilovate: enoto prebere iz senzorja (senzor brez enote šteje kot ampere)."
                         }
                     },
                     "input": {
@@ -261,7 +264,7 @@
                             "inverter_input_is_grid": "Omrežje teče skozi ta razsmernik, naravnost z omrežnega števca"
                         },
                         "data_description": {
-                            "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Navaden PV razsmernik (brez baterije) ga nima: pustite prazno in šteje se ves njegov izhod. Hibridni PV razsmernik (z baterijo), skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
+                            "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Ampere, vate ali kilovate: enoto prebere iz senzorja (senzor brez enote šteje kot ampere). Navaden PV razsmernik (brez baterije) ga nima: pustite prazno in šteje se ves njegov izhod. Hibridni PV razsmernik (z baterijo), skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
                             "inverter_input_is_grid": "Za hibrid, skozi katerega teče omrežje, kadar med omrežnim števcem in razsmernikom ni ničesar - ne drugih porabnikov ne drugega razsmernika. Njegov vhod je tedaj enak odčitku omrežnega števca, zato ne potrebuje senzorjev vhoda. To ima lahko le en razsmernik."
                         }
                     },
@@ -447,7 +450,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                             "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                             "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                         }
                     }
@@ -541,7 +544,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
                             "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
                         }
                     }
                 }
@@ -607,7 +610,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto se bojler ponovno ovrednoti.",
                             "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                             "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                         }
                     }
@@ -806,7 +809,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
                             "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                             "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                         }
                     }
@@ -879,7 +882,7 @@
                             "manual_override_timeout": "Časovna omejitev ročnega upravljanja"
                         },
                         "data_description": {
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
                         }
                     }
                 }
@@ -988,7 +991,7 @@
                             "update_frequency": "Najkrajši čas med zapisi ciljne vrednosti. Znižanje, ki ga lokacija potrebuje, se pošlje takoj.",
                             "vl_resend_interval": "Ciljno vrednost zapiši znova po tem času, tudi če se ni spremenila - za napravo, ki se vrne na varno vrednost, ko ciljna vrednost ni osvežena. 0 zapiše samo ob spremembi.",
                             "solar_grace_period": "Kako dolgo naj naprava teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko njegovo ciljno vrednost spremenite mimo Load Jugglerja, preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko njegovo ciljno vrednost spremenite mimo Load Jugglerja, preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
                         }
                     }
                 }
@@ -1317,6 +1320,9 @@
                             "inverter_output_phase_a_entity_id": "Senzor izhoda razsmernika za fazo A (neobvezno)",
                             "inverter_output_phase_b_entity_id": "Senzor izhoda razsmernika za fazo B (neobvezno)",
                             "inverter_output_phase_c_entity_id": "Senzor izhoda razsmernika za fazo C (neobvezno)"
+                        },
+                        "data_description": {
+                            "inverter_output_phase_a_entity_id": "Kar razsmernik odda na vsaki fazi. Ampere, vate ali kilovate: enoto prebere iz senzorja (senzor brez enote šteje kot ampere)."
                         }
                     },
                     "input": {
@@ -1328,7 +1334,7 @@
                             "inverter_input_is_grid": "Omrežje teče skozi ta razsmernik, naravnost z omrežnega števca"
                         },
                         "data_description": {
-                            "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Navaden PV razsmernik (brez baterije) ga nima: pustite prazno in šteje se ves njegov izhod. Hibridni PV razsmernik (z baterijo), skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
+                            "inverter_input_phase_a_entity_id": "Kar razsmernik prejema na AC vhodu (omrežna stran), pozitivno, ko jemlje iz omrežja. Ampere, vate ali kilovate: enoto prebere iz senzorja (senzor brez enote šteje kot ampere). Navaden PV razsmernik (brez baterije) ga nima: pustite prazno in šteje se ves njegov izhod. Hibridni PV razsmernik (z baterijo), skozi katerega teče omrežje, ga ima. Poraba hiše je omrežni števec plus to, kar vsak razsmernik da ven, manj tega, kar vzame noter, zato se omrežje, ki ga le prepušča, ne šteje dvakrat.",
                             "inverter_input_is_grid": "Za hibrid, skozi katerega teče omrežje, kadar med omrežnim števcem in razsmernikom ni ničesar - ne drugih porabnikov ne drugega razsmernika. Njegov vhod je tedaj enak odčitku omrežnega števca, zato ne potrebuje senzorjev vhoda. To ima lahko le en razsmernik."
                         }
                     }
@@ -1498,7 +1504,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto se ponovno ovrednoti, ali naj bo naprava vklopljena ali izklopljena.",
                             "solar_grace_period": "V načinih Solar in Excess, koliko časa naj naprava ostane vklopljena na minimumu, ko pogoji niso več izpolnjeni, preden se izklopi. Nastavite na 0 za takojšnji izklop.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                             "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                         }
                     }
@@ -1585,7 +1591,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto naj se ponovno oceni hitrost polnjenja in rezerva postaje.",
                             "solar_grace_period": "Kako dolgo naj polnjenje teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba hitrosti polnjenja ali rezerve), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
                         }
                     }
                 }
@@ -1644,7 +1650,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto se bojler ponovno ovrednoti.",
                             "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                             "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                         }
                     }
@@ -1812,7 +1818,7 @@
                         "data_description": {
                             "update_frequency": "Kako pogosto se grelnik ponovno ovrednoti.",
                             "solar_grace_period": "V načinu Prednost sončne energije, kako dolgo ohraniti gretje na minimumu, ko pogoji niso več izpolnjeni, preden se ustavi.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (sprememba ciljne temperature ali načina termostata), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite.",
                             "binary_min_off_time": "Ko se porabnik izklopi, naj ostane izklopljen vsaj toliko časa, preden se spet vklopi, tudi če se razmere izboljšajo prej. Ščiti priključeno napravo pred hitrim preklapljanjem - pri električnem vozilu, ki mu polnjenje prekinemo med vzpostavljanjem povezave, se lahko vgrajeni polnilnik zaklene, kompresor pa potrebuje počitek pred ponovnim zagonom. Izklopa nikoli ne zavlačuje. 0 ga onemogoči."
                         }
                     }
@@ -1893,7 +1899,7 @@
                             "manual_override_timeout": "Časovna omejitev ročnega upravljanja"
                         },
                         "data_description": {
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko napravo upravljate mimo Load Jugglerja (vklop ali izklop njegovega stikala), preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
                         }
                     }
                 }
@@ -1995,7 +2001,7 @@
                             "update_frequency": "Najkrajši čas med zapisi ciljne vrednosti. Znižanje, ki ga lokacija potrebuje, se pošlje takoj.",
                             "vl_resend_interval": "Ciljno vrednost zapiši znova po tem času, tudi če se ni spremenila - za napravo, ki se vrne na varno vrednost, ko ciljna vrednost ni osvežena. 0 zapiše samo ob spremembi.",
                             "solar_grace_period": "Kako dolgo naj naprava teče na minimumu, ko pogoji Solar/Excess niso več izpolnjeni.",
-                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko njegovo ciljno vrednost spremenite mimo Load Jugglerja, preden ga Load Juggler spet prevzame. Najmanj 5 minut: vsak ročni poseg se konča. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
+                            "manual_override_timeout": "Kako dolgo je porabnik prepuščen vam, potem ko njegovo ciljno vrednost spremenite mimo Load Jugglerja, preden ga Load Juggler spet prevzame. V urah in minutah. Pri 0 vam ga nikoli ne prepusti: Load Juggler spremembo prepiše ob naslednjem ukazu - za napravo ali njeno integracijo, ki vrednost spremeni sama. Konča ga tudi izklop stikala Dynamic Control, ki pusti porabnik vam, dokler stikala spet ne vklopite."
                         }
                     }
                 }

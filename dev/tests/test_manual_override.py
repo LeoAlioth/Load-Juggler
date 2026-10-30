@@ -13,8 +13,6 @@ answering it, with a fresh one to play a hand on the device.
 
 from datetime import timedelta
 
-import pytest
-import voluptuous as vol
 from homeassistant.core import Context, HomeAssistant, State
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
@@ -25,7 +23,8 @@ from pytest_homeassistant_custom_component.common import (
     mock_restore_cache,
 )
 
-from custom_components.dynamic_ocpp_evse.config_flow.schemas import _plug_schema
+from custom_components.dynamic_ocpp_evse.config_flow.helpers import _normalize_optional_inputs
+from custom_components.dynamic_ocpp_evse.config_flow.schemas import _plug_schema, _variable_load_schema
 from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
@@ -42,6 +41,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_MANUAL_OVERRIDE_TIMEOUT,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_HOT_WATER_TANK,
+    DEVICE_TYPE_VARIABLE_LOAD,
+    manual_override_default,
 )
 from custom_components.dynamic_ocpp_evse.control import call_device
 from custom_components.dynamic_ocpp_evse.control.status import hands_off_status
@@ -387,16 +388,33 @@ async def test_an_off_without_an_end_stays_off(hass: HomeAssistant, mock_hub_ent
     assert hass.states.get(OURS).state == "off"
 
 
-async def test_the_timeout_is_never_under_five_minutes(hass: HomeAssistant, mock_hub_entry):
-    schema = _plug_schema()
-    field = next(v for k, v in schema.schema.items() if k == CONF_MANUAL_OVERRIDE_TIMEOUT)
-    for minutes in (0, 4):
-        with pytest.raises(vol.Invalid):
-            field(minutes)
-    assert field(5) == 5
+async def test_the_timeout_is_hours_and_minutes_and_0_never_hands_the_load_over(
+    hass: HomeAssistant, mock_hub_entry
+):
+    """The owner, 2026-10-30 (GitHub issue 21): entered as hours and minutes,
+    stored as minutes; 0 keeps the load Load Juggler's - a change it did not
+    ask for is written over at its next command. A Variable Load's default is
+    0, a plug's 120 minutes; no floor any more (it was five)."""
+    plug = _plug_schema()
+    marker = next(k for k in plug.schema if k == CONF_MANUAL_OVERRIDE_TIMEOUT)
+    assert marker.default() == {"hours": 2, "minutes": 0}
+    assert plug.schema[marker]({"hours": 1, "minutes": 30}) == {"hours": 1, "minutes": 30}
+    assert _normalize_optional_inputs({CONF_MANUAL_OVERRIDE_TIMEOUT: {"hours": 1, "minutes": 30}})[
+        CONF_MANUAL_OVERRIDE_TIMEOUT] == 90
+    assert _normalize_optional_inputs({CONF_MANUAL_OVERRIDE_TIMEOUT: 45})[CONF_MANUAL_OVERRIDE_TIMEOUT] == 45
+    vl = _variable_load_schema()
+    assert next(k for k in vl.schema if k == CONF_MANUAL_OVERRIDE_TIMEOUT).default() == {"hours": 0, "minutes": 0}
+    assert manual_override_default(DEVICE_TYPE_VARIABLE_LOAD) == 0
+    assert manual_override_default(DEVICE_TYPE_PLUG) == 120
 
-    # A stored value under it (none the form takes) is held at five.
+    # 0: pressed by hand, still Load Juggler's
+    rt = await _plug(hass, mock_hub_entry, timeout=0)
+    await _operated_by_hand(hass, rt)
+    _on_without_override(hass, rt)
+
+
+async def test_a_one_minute_timeout_is_one_minute(hass: HomeAssistant, mock_hub_entry):
     rt = await _plug(hass, mock_hub_entry, timeout=1)
     await _operated_by_hand(hass, rt)
     left = _resumes_at(hass) - dt_util.utcnow()
-    assert timedelta(minutes=4) < left <= timedelta(minutes=5)
+    assert timedelta(0) < left <= timedelta(minutes=1)

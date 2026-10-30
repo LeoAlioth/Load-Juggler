@@ -31,6 +31,7 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.selector import selector
 from .. import units
 from ..const import (
+    CONF_MANUAL_OVERRIDE_TIMEOUT,
     CONF_VL_CHARGING_ENTITY_ID,
     CONF_VL_CONNECTED_ENTITY_ID,
     CONF_VL_CURRENT_L1_ENTITY_ID,
@@ -130,6 +131,7 @@ from ..helpers import (
 )
 from ..phases import beside, match_meter_entities
 from ..registry import get_inverters_for_hub
+from ..units import minutes_of
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -333,7 +335,8 @@ _STATION_ENTITY_KEYS = [
 def _normalize_optional_inputs(
     data: dict, step_entity_keys: list[str] | None = None
 ) -> dict:
-    """Normalize optional entity inputs.
+    """Normalize optional entity inputs - and the manual override timeout,
+    entered as hours and minutes, to the minutes it is stored as.
 
     Args:
         data: The user_input from the form step.
@@ -353,6 +356,8 @@ def _normalize_optional_inputs(
     ):
         if key in normalized:
             normalized[key] = normalize_optional_entity(normalized.get(key))
+    if isinstance(normalized.get(CONF_MANUAL_OVERRIDE_TIMEOUT), dict):
+        normalized[CONF_MANUAL_OVERRIDE_TIMEOUT] = int(round(minutes_of(normalized[CONF_MANUAL_OVERRIDE_TIMEOUT])))
     # Entity selectors omit unselected fields - explicitly clear them
     if step_entity_keys:
         for key in step_entity_keys:

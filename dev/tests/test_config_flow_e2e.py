@@ -3123,11 +3123,12 @@ async def test_sg_ready_creation_flow(hass: HomeAssistant, mock_hub_entry, mock_
             CONF_SG_MIN_STATE_TIME: 10,
             CONF_SG_MAX_BLOCK_TIME: 90,
             CONF_SG_MAX_BLOCKS_PER_DAY: 2,
-            "manual_override_timeout": 30,
+            "manual_override_timeout": {"hours": 0, "minutes": 30},
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     entry = result["result"]
+    assert entry.options["manual_override_timeout"] == 30      # hours and minutes in, minutes stored
     assert entry.data[CONF_DEVICE_TYPE] == DEVICE_TYPE_SG_READY
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
     assert entry.data[CONF_HUB_ENTRY_ID] == mock_hub_entry.entry_id

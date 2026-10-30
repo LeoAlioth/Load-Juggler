@@ -250,6 +250,9 @@
                             "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
                             "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
                             "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)"
+                        },
+                        "data_description": {
+                            "inverter_output_phase_a_entity_id": "What this inverter puts out on each phase. Amps, watts or kilowatts: the unit is read from the sensor itself (a sensor without one is taken as amps)."
                         }
                     },
                     "input": {
@@ -261,7 +264,7 @@
                             "inverter_input_is_grid": "The grid flows through this inverter, straight from the grid meter"
                         },
                         "data_description": {
-                            "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
+                            "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. Amps, watts or kilowatts: the unit is read from the sensor itself (a sensor without one is taken as amps). A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
                             "inverter_input_is_grid": "For a hybrid the grid flows through, when nothing sits between the grid meter and the inverter - no other loads, no other inverter. Its input is then the same as the grid meter's reading, so it needs no input sensors. Only one inverter can have this."
                         }
                     },
@@ -447,7 +450,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
                             "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                             "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                         }
                     }
@@ -541,7 +544,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate the station's charging speed and reserve.",
                             "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its charge speed or backup reserve changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its charge speed or backup reserve changed) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
                         }
                     }
                 }
@@ -607,7 +610,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate the tank.",
                             "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                             "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                         }
                     }
@@ -806,7 +809,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate the tank.",
                             "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                             "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                         }
                     }
@@ -879,7 +882,7 @@
                             "manual_override_timeout": "Manual override timeout"
                         },
                         "data_description": {
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
                         }
                     }
                 }
@@ -988,7 +991,7 @@
                             "update_frequency": "The minimum time between setpoint writes. A cut that the site needs goes out at once.",
                             "vl_resend_interval": "Write the setpoint again after this long even when it has not changed, for a device that falls back to a safe value when its setpoint is not refreshed. 0 writes only on a change.",
                             "solar_grace_period": "How long to keep running at minimum when solar/excess conditions are no longer met.",
-                            "manual_override_timeout": "How long the load is left to you after you change its setpoint outside Load Juggler before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
+                            "manual_override_timeout": "How long the load is left to you after you change its setpoint outside Load Juggler before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
                         }
                     }
                 }
@@ -1317,6 +1320,9 @@
                             "inverter_output_phase_a_entity_id": "Inverter output sensor for phase A (optional)",
                             "inverter_output_phase_b_entity_id": "Inverter output sensor for phase B (optional)",
                             "inverter_output_phase_c_entity_id": "Inverter output sensor for phase C (optional)"
+                        },
+                        "data_description": {
+                            "inverter_output_phase_a_entity_id": "What this inverter puts out on each phase. Amps, watts or kilowatts: the unit is read from the sensor itself (a sensor without one is taken as amps)."
                         }
                     },
                     "input": {
@@ -1328,7 +1334,7 @@
                             "inverter_input_is_grid": "The grid flows through this inverter, straight from the grid meter"
                         },
                         "data_description": {
-                            "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
+                            "inverter_input_phase_a_entity_id": "What this inverter takes in at its AC input (grid side), positive while it draws from the grid. Amps, watts or kilowatts: the unit is read from the sensor itself (a sensor without one is taken as amps). A PV string inverter has none: leave it empty and its whole output counts. A hybrid the grid flows through has one. The house is the grid meter plus what each inverter puts out less what it takes in, so the grid it passes on is not counted twice.",
                             "inverter_input_is_grid": "For a hybrid the grid flows through, when nothing sits between the grid meter and the inverter - no other loads, no other inverter. Its input is then the same as the grid meter's reading, so it needs no input sensors. Only one inverter can have this."
                         }
                     }
@@ -1498,7 +1504,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate whether this plug should be turned on or off.",
                             "solar_grace_period": "In Solar and Excess modes, how long to keep the load on at minimum when conditions are no longer met before turning off. Set to 0 to turn off immediately.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                             "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                         }
                     }
@@ -1585,7 +1591,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate the station's charging speed and reserve.",
                             "solar_grace_period": "How long to keep charging at minimum when solar/excess conditions are no longer met.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its charge speed or backup reserve changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its charge speed or backup reserve changed) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
                         }
                     }
                 }
@@ -1644,7 +1650,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate the tank.",
                             "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                             "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                         }
                     }
@@ -1812,7 +1818,7 @@
                         "data_description": {
                             "update_frequency": "How often to re-evaluate the tank.",
                             "solar_grace_period": "In Solar Priority mode, how long to keep heating at minimum when conditions are no longer met before stopping.",
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its thermostat's target temperature or mode changed) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on.",
                             "binary_min_off_time": "Once this load is switched off, keep it off at least this long before switching it on again, even if conditions recover sooner. Protects whatever is plugged in from rapid power cycling - an EV cut mid-negotiation can lock its onboard charger out, and a compressor needs a rest before restarting. Never delays switching OFF. 0 disables it."
                         }
                     }
@@ -1893,7 +1899,7 @@
                             "manual_override_timeout": "Manual override timeout"
                         },
                         "data_description": {
-                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
+                            "manual_override_timeout": "How long the load is left to you after you operate the device outside Load Juggler (its switch turned on or off) before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
                         }
                     }
                 }
@@ -1995,7 +2001,7 @@
                             "update_frequency": "The minimum time between setpoint writes. A cut that the site needs goes out at once.",
                             "vl_resend_interval": "Write the setpoint again after this long even when it has not changed, for a device that falls back to a safe value when its setpoint is not refreshed. 0 writes only on a change.",
                             "solar_grace_period": "How long to keep running at minimum when solar/excess conditions are no longer met.",
-                            "manual_override_timeout": "How long the load is left to you after you change its setpoint outside Load Juggler before Load Juggler takes it back. At least 5 minutes: every override ends. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
+                            "manual_override_timeout": "How long the load is left to you after you change its setpoint outside Load Juggler before Load Juggler takes it back. In hours and minutes. 0 never hands it to you: Load Juggler writes over the change at its next command, for a device or its integration that changes the value by itself. Switching Dynamic Control off ends one too, and keeps the load yours until you switch it back on."
                         }
                     }
                 }
