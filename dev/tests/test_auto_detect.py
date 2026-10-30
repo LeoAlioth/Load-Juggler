@@ -8,7 +8,7 @@ from custom_components.dynamic_ocpp_evse.calculations.models import (
 )
 from custom_components.dynamic_ocpp_evse.engine.auto_detect import (
     check_inversion, check_phase_mapping,
-    _INV_WINDOW_SIZE, _INV_THRESHOLD, _INV_MIN_OBSERVATION_S,
+    _INV_HOLD_S,
     _PM_NOTIFY_SCORE, _PM_REMAP_SCORE,
 )
 
@@ -35,169 +35,83 @@ def _make_charger(**kwargs):
 # ===========================================================================
 
 class TestInversionDetection:
-    """Tests for check_inversion()."""
+    """check_inversion(): export on a phase where our loads draw while nothing
+    on the site generates, held for _INV_HOLD_S, is a reversed reading."""
 
-    def test_no_trigger_with_zero_draw(self):
-        """No charger activity → no notification."""
-        state = {}
-        charger = _make_charger(l1_current=0, l2_current=0, l3_current=0)
-        for _ in range(25):
-            result = check_inversion(state, [5.0, 3.0, 4.0], [charger],
-                                     "hub1", "Test Hub")
-            assert result is None
+    @staticmethod
+    def _night(grid, draw=(16.0, 16.0, 16.0), seconds=_INV_HOLD_S + 2, step=2.0,
+               state=None, **site):
+        """Run the check every ``step`` s for ``seconds`` against a constant
+        grid reading (A per phase) and a charger drawing ``draw``; returns
+        (the first notification or None, state)."""
+        state = {} if state is None else state
+        defaults = dict(solar_is_metered=True, solar_production_total=0.0)
+        defaults.update(site)
+        load_kw = {k: site.pop(k) for k in ("draw_blind", "dynamic_control") if k in site}
+        ctx = SiteContext(loads=[_make_charger(
+            l1_current=draw[0], l2_current=draw[1], l3_current=draw[2], **load_kw,
+        )], **{k: v for k, v in defaults.items() if k not in load_kw})
+        found, t = None, 1000.0
+        while t <= 1000.0 + seconds:
+            result = check_inversion(state, list(grid), ctx, "hub1", "Test Hub", now=t)
+            found = found or result
+            t += step
+        return found, state
 
-    def test_normal_correlation_no_trigger(self):
-        """Charger ramps up, grid import increases → normal, no notification."""
-        state = {}
-        base_grid = 5.0
-        for i in range(25):
-            draw = i * 1.5
-            charger = _make_charger(
-                l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
-            )
-            # Grid increases with charger draw (correct behavior)
-            smoothed = [base_grid + draw / 3] * 3
-            result = check_inversion(state, smoothed, [charger],
-                                     "hub1", "Test Hub")
-            assert result is None, f"False positive at cycle {i}"
+    def test_a_correctly_wired_site_at_night_never_fires(self):
+        """The grid imports the charger and the house - never export."""
+        found, _ = self._night((17.5, 16.8, 17.1), seconds=3600)
+        assert found is None
 
-    def test_inverted_correlation_triggers(self):
-        """Charger ramps up, grid decreases (inverted CTs) → notification fires.
-
-        The loop runs in microseconds, so the observation floor is back-dated
-        once the first sample has stamped it - the same way the stale-input
-        and SuspendedEV tests back-date their monotonic marks. The floor
-        itself is asserted in test_a_full_window_waits_out_the_observation_floor.
-        """
-        state = {}
-        notified = False
-        for i in range(25):
-            draw = i * 1.5  # ramp up 1.5A per cycle (>1.0A threshold)
-            charger = _make_charger(
-                l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
-            )
-            # Grid DECREASES as charger ramps up → inverted
-            smoothed = [10.0 - draw / 3] * 3
-            inv = state.get("inversion")
-            if inv and inv.get("first_sample_at") is not None:
-                inv["first_sample_at"] = time.monotonic() - _INV_MIN_OBSERVATION_S - 1
-            result = check_inversion(state, smoothed, [charger],
-                                     "hub1", "Test Hub")
-            if result is not None:
-                notified = True
-                assert "Inversion" in result["title"]
-                assert "notification_id" in result
-                break
-
-        assert notified, "Expected inversion notification but none fired"
+    def test_export_under_a_charging_car_at_night_fires_and_names_the_phases(self):
+        found, state = self._night((-17.5, -16.8, -17.1))
+        assert found is not None and "Inversion" in found["title"]
+        assert "phase A, B, C" in found["message"]
+        assert found["notification_id"] == "dynamic_ocpp_evse_grid_inversion_hub1"
         assert state["inversion"]["notified"] is True
 
-    def test_a_full_window_waits_out_the_observation_floor(self):
-        """15 samples of one ramp are one event seen 15 times, not 15 events.
+    def test_a_single_reversed_clamp_is_named(self):
+        found, _ = self._night((-17.5, 16.8, 17.1))
+        assert found is not None and "phase A " in found["message"]
+        assert "B" not in found["message"].split("for over")[0].split("phase ")[1]
 
-        On a 1 s site an EVSE ramp fills the window in 15 s, and 10 of 15 is
-        then reached on far less independent evidence than the same count at
-        a 10 s cadence. So a full window over threshold must still NOT fire
-        until _INV_MIN_OBSERVATION_S has passed since the first sample - and
-        the clock is what is holding it, nothing else: the count conditions
-        are asserted satisfied. Once the clock is served the very next
-        qualifying cycle fires, which is the "delay, never suppress" half.
-        """
+    def test_it_must_hold_for_the_whole_span(self):
+        found, _ = self._night((-17.5, -16.8, -17.1), seconds=_INV_HOLD_S - 4)
+        assert found is None
+        # Broken once in between, the count starts over.
         state = {}
-        for i in range(25):
-            draw = i * 1.5
-            charger = _make_charger(
-                l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
-            )
-            result = check_inversion(state, [10.0 - draw / 3] * 3, [charger],
-                                     "hub1", "Test Hub")
-            assert result is None, f"fired at cycle {i} inside the floor"
+        self._night((-17.5,) * 3, seconds=_INV_HOLD_S - 10, state=state)
+        self._night((17.5,) * 3, seconds=2, state=state)
+        found, _ = self._night((-17.5,) * 3, seconds=_INV_HOLD_S - 10, state=state)
+        assert found is None
 
-        inv = state["inversion"]
-        window = inv["window"]
-        assert len(window) >= _INV_WINDOW_SIZE, len(window)
-        assert sum(1 for s in window if s == 1) >= _INV_THRESHOLD, window
-        assert inv["notified"] is False
-        assert inv["first_sample_at"] is not None
+    def test_export_while_anything_generates_is_not_judged(self):
+        """Sun, a discharging battery, an unread battery, or solar worked out
+        from the grid meter itself: export may be real."""
+        grid = (-17.5, -16.8, -17.1)
+        assert self._night(grid, solar_production_total=2500.0)[0] is None
+        assert self._night(grid, battery_power=3000.0, battery_soc=60.0)[0] is None
+        assert self._night(grid, battery_power=None, battery_soc=60.0)[0] is None
+        assert self._night(grid, solar_is_metered=False)[0] is None
+        # A battery charging or idle generates nothing.
+        assert self._night(grid, battery_power=-500.0, battery_soc=60.0)[0] is not None
 
-        # Serve the clock; one more inverted step and it fires.
-        inv["first_sample_at"] = time.monotonic() - _INV_MIN_OBSERVATION_S - 1
-        draw = 25 * 1.5
-        charger = _make_charger(
-            l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
-        )
-        result = check_inversion(state, [10.0 - draw / 3] * 3, [charger],
-                                 "hub1", "Test Hub")
-        assert result is not None and "Inversion" in result["title"]
-        assert inv["notified"] is True
+    def test_too_little_draw_or_an_assumed_draw_is_not_evidence(self):
+        grid = (-17.5, -16.8, -17.1)
+        assert self._night((-1.0,) * 3, draw=(2.0, 2.0, 2.0))[0] is None
+        assert self._night(grid, draw_blind=True)[0] is None
+        assert self._night(grid, dynamic_control=False)[0] is None
+        # Export under half the draw is within what the readings' timing explains.
+        assert self._night((-7.0,) * 3)[0] is None
 
-    def test_the_observation_clock_starts_at_the_first_sample_not_the_first_call(self):
-        """An idle hour before the first qualifying sample buys nothing: the
-        clock measures observation of RELEVANT events, so it is stamped on
-        the first sample, and cycles with no significant delta leave it None."""
-        state = {}
-        charger = _make_charger(l1_current=0, l2_current=0, l3_current=0)
-        for _ in range(10):
-            check_inversion(state, [5.0, 5.0, 5.0], [charger], "hub1", "Test Hub")
-        assert state["inversion"]["first_sample_at"] is None
-        assert state["inversion"]["window"] == []
+    def test_off_grid_is_never_judged(self):
+        assert self._night((-17.5,) * 3, is_off_grid=True)[0] is None
 
-    def test_notification_fires_only_once(self):
-        """After notified=True, no more notifications."""
-        state = {"inversion": {
-            "prev_grid_total": None, "prev_load_total": None,
-            "window": [1] * _INV_WINDOW_SIZE,
-            "first_sample_at": time.monotonic() - 600, "notified": True,
-        }}
-        charger = _make_charger(l1_current=5, l2_current=5, l3_current=5)
-        result = check_inversion(state, [-5.0, -5.0, -5.0], [charger],
-                                 "hub1", "Test Hub")
-        assert result is None
-
-    def test_small_delta_does_not_pollute_window(self):
-        """Charger draw change below threshold doesn't grow window."""
-        state = {}
-        for i in range(25):
-            # Tiny draws - all below _INV_MIN_DELTA_A = 1.0A per cycle
-            draw = 0.05 * i
-            charger = _make_charger(
-                l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
-            )
-            smoothed = [5.0 - draw, 5.0 - draw, 5.0 - draw]
-            result = check_inversion(state, smoothed, [charger],
-                                     "hub1", "Test Hub")
-            assert result is None
-
-        # Window should still be empty
-        assert state.get("inversion", {}).get("window", []) == []
-
-    def test_mixed_signals_do_not_trigger(self):
-        """Alternating normal/inverted signals don't reach threshold."""
-        state = {}
-        for i in range(30):
-            if i % 2 == 0:
-                # Even cycles: charger up, grid up (normal)
-                draw = (i + 1) * 1.5
-                smoothed = [5.0 + draw / 3] * 3
-            else:
-                # Odd cycles: charger up more, grid down (inverted)
-                draw = (i + 1) * 1.5
-                smoothed = [5.0 - draw / 3] * 3
-
-            charger = _make_charger(
-                l1_current=draw / 3, l2_current=draw / 3, l3_current=draw / 3,
-            )
-            result = check_inversion(state, smoothed, [charger],
-                                     "hub1", "Test Hub")
-            assert result is None, f"Should not trigger with mixed signals at cycle {i}"
-
-    def test_no_chargers_no_crash(self):
-        """No chargers at all → no crash, no notification."""
-        state = {}
-        for _ in range(20):
-            result = check_inversion(state, [5.0, 3.0, 4.0], [],
-                                     "hub1", "Test Hub")
-            assert result is None
+    def test_it_fires_once(self):
+        found, state = self._night((-17.5,) * 3)
+        assert found is not None
+        again, _ = self._night((-17.5,) * 3, state=state)
+        assert again is None
 
 
 # ===========================================================================

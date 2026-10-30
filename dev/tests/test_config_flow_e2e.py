@@ -7,11 +7,14 @@ the final ConfigEntry structure.
 from unittest.mock import patch, AsyncMock
 
 import pytest
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .translation_steps import helps, labels
+from custom_components.dynamic_ocpp_evse.config_flow.sections import flat_fields
 from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
@@ -30,6 +33,8 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_MAIN_BREAKER_RATING,
     CONF_INVERT_PHASES,
+    CONF_GENERATOR_RATING,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
@@ -42,15 +47,23 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_BATTERY_CAPACITY_KWH,
     CONF_BASE_CONSUMPTION,
+    CONF_FORECAST_CLIP_EARLY_ENABLED,
+    CONF_FORECAST_EXCESS_ENABLED,
+    CONF_FORECAST_EXCESS_SOC,
+    CONF_FORECAST_EXCESS_SOC_SOURCE,
     CONF_FORECAST_SOC_FLOOR,
+    CONF_PACE_OVER_HORIZON,
+    CONF_CATCH_UP_ENABLED,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-    CONF_WIRING_TOPOLOGY,
-    DEFAULT_WIRING_TOPOLOGY,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
     CONF_LOAD_PRIORITY,
     CONF_EVSE_MINIMUM_CHARGE_CURRENT,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -177,6 +190,10 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
             CONF_GRID_EXPORT_LIMIT: 10500,
             CONF_SOLAR_GRACE_PERIOD: DEFAULT_SOLAR_GRACE_PERIOD,
             CONF_BATTERY_SOC_HYSTERESIS: 3,
+            # Forecast-driven Excess is on the one setup page too.
+            CONF_FORECAST_EXCESS_ENABLED: True,
+            CONF_FORECAST_EXCESS_SOC_SOURCE: "fixed",
+            CONF_FORECAST_EXCESS_SOC: 65,
         },
     )
     # Grid + site policy is the whole hub - no hardware pages at all.
@@ -201,6 +218,10 @@ async def test_hub_creation_full_flow(hass: HomeAssistant):
     assert hub_entry.data[CONF_NAME] == "My Solar Hub"
     assert hub_entry.data[CONF_ENTITY_ID] == "my_solar_hub"
     assert hub_entry.data[ENTRY_TYPE] == ENTRY_TYPE_HUB
+    stored = {**hub_entry.data, **hub_entry.options}
+    assert stored[CONF_FORECAST_EXCESS_ENABLED] is True
+    assert stored[CONF_FORECAST_EXCESS_SOC_SOURCE] == "fixed"
+    assert stored[CONF_FORECAST_EXCESS_SOC] == 65
 
 
 def _make_forecast_device(hass, slug, watts=True, name=None):
@@ -286,9 +307,7 @@ async def test_inverter_forecast_devices_validated(hass: HomeAssistant):
         },
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {
-        CONF_SOLAR_FORECAST_DEVICE_IDS: "forecast_device_no_watts"
-    }
+    assert result["errors"] == {"solar": "forecast_device_no_watts"}  # keyed by its section
     assert result["description_placeholders"] == {"entity": "Weather Station"}
 
     result = await hass.config_entries.flow.async_configure(
@@ -493,10 +512,12 @@ async def test_charger_discovery_creates_entry(
             CONF_OCPP_PROFILE_TIMEOUT: 120,
             CONF_CHARGE_PAUSE_DURATION: 3,
             CONF_STACK_LEVEL: 3,
+            CONF_CATCH_UP_ENABLED: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
     assert result["title"] == "Wallbox Pro Charger"
+    assert get_entry_value(result["result"], CONF_CATCH_UP_ENABLED, None) is True
 
     # Verify entry data
     entry = result["result"]
@@ -590,16 +611,12 @@ async def test_charger_discovery_duplicate_aborts(
 async def test_options_flow_hub_saves_changes(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
-    """Test that submitting hub options actually updates the config entry.
-
-    Setting the hub up auto-imports its legacy hardware (inverter, battery,
-    solar sensor, forecast devices) onto a standalone inverter entry, so the
-    options flow is a single page from then on: grid connection plus site
-    policy, then straight to save.
-    """
+    """Test that submitting hub options actually updates the config entry."""
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -655,11 +672,16 @@ async def test_options_flow_hub_saves_changes(
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.inverter_phase_a",
             CONF_MAIN_BREAKER_RATING: 25,
             CONF_INVERT_PHASES: False,
+            CONF_GRID_INPUT_IS_GENERATOR: True,
+            CONF_GENERATOR_RATING: 6,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_power_limit",
             CONF_PHASE_VOLTAGE: 230,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+    # JUG-13: additive optional keys, no migration - stored as given.
+    assert mock_hub_entry.options.get(CONF_GRID_INPUT_IS_GENERATOR) is True
+    assert mock_hub_entry.options.get(CONF_GENERATOR_RATING) == 6
 
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_export")
     result = await hass.config_entries.options.async_configure(
@@ -667,16 +689,58 @@ async def test_options_flow_hub_saves_changes(
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
+    # Pacing's two entities live on this page (a Load Insights planning sensor
+    # pair, here stand-ins), and are cleared by leaving them out.
+    hass.states.async_set(
+        "sensor.energy_to_use", "4.6",
+        {"device_class": "energy", "unit_of_measurement": "kWh"},
+    )
+    hass.states.async_set(
+        "sensor.horizon_end", "2026-10-17T17:00:00+00:00",
+        {"device_class": "timestamp"},
+    )
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_policy")
+    assert _schema_has(result["data_schema"], CONF_PACING_ENERGY_ENTITY_ID)
+    assert _schema_has(result["data_schema"], CONF_PACING_HORIZON_ENTITY_ID)
+    for key in (
+        CONF_FORECAST_EXCESS_ENABLED,
+        CONF_FORECAST_CLIP_EARLY_ENABLED,
+        CONF_FORECAST_EXCESS_SOC_SOURCE,
+        CONF_FORECAST_EXCESS_SOC,
+        "outage_entity_id",
+        "outage_precharge_lead_hours",
+        "outage_hold_hours",
+    ):
+        assert _schema_has(result["data_schema"], key)
+    hass.states.async_set("calendar.planned_outages", "off")
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
         user_input={
+            "outage_entity_id": "calendar.planned_outages",
+            "outage_precharge_lead_hours": 8,
+            "outage_hold_hours": 2,
             CONF_BATTERY_SOC_HYSTERESIS: 5,
             CONF_BASE_CONSUMPTION: 400,
             CONF_FORECAST_SOC_FLOOR: 35,
+            CONF_PACING_ENERGY_ENTITY_ID: "sensor.energy_to_use",
+            CONF_PACING_HORIZON_ENTITY_ID: "sensor.horizon_end",
+            CONF_FORECAST_EXCESS_ENABLED: True,
+            CONF_FORECAST_CLIP_EARLY_ENABLED: True,
+            CONF_FORECAST_EXCESS_SOC_SOURCE: "minimum",
+            CONF_FORECAST_EXCESS_SOC: 70,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_ENABLED) is True
+    assert mock_hub_entry.options.get(CONF_FORECAST_CLIP_EARLY_ENABLED) is True  # additive key, no migration
+    assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_SOC_SOURCE) == "minimum"
+    assert mock_hub_entry.options.get(CONF_FORECAST_EXCESS_SOC) == 70
+    assert mock_hub_entry.options.get(CONF_PACING_ENERGY_ENTITY_ID) == "sensor.energy_to_use"
+    assert mock_hub_entry.options.get(CONF_PACING_HORIZON_ENTITY_ID) == "sensor.horizon_end"
+    # JUG-23: the planned-outage input, additive keys, no migration
+    assert mock_hub_entry.options.get("outage_entity_id") == "calendar.planned_outages"
+    assert mock_hub_entry.options.get("outage_precharge_lead_hours") == 8
+    assert mock_hub_entry.options.get("outage_hold_hours") == 2
 
     result = await _open_options(hass, mock_hub_entry.entry_id, step="hub_timing")
     result = await hass.config_entries.options.async_configure(
@@ -697,7 +761,7 @@ async def test_options_flow_hub_saves_changes(
         user_input={CONF_FILTER_CTRL_FAST_TAU_S: 10.0, CONF_FILTER_INPUT_TAU_S: 5.0},
     )
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {CONF_FILTER_CTRL_FAST_TAU_S: "fast_filter_not_below_input"}
+    assert result["errors"] == {"filters": "fast_filter_not_below_input"}  # keyed by its section
     # Corrected, the same flow saves - and only this page's fields.
     result = await hass.config_entries.options.async_configure(
         result["flow_id"],
@@ -723,7 +787,7 @@ async def test_options_flow_hub_saves_changes(
 
 def _suggested_value(data_schema, key):
     """Read the suggested default a form schema offers for a field key."""
-    for marker in data_schema.schema:
+    for marker in flat_fields(data_schema):
         if getattr(marker, "schema", None) == key:
             desc = getattr(marker, "description", None) or {}
             return desc.get("suggested_value")
@@ -736,7 +800,7 @@ def _schema_default(data_schema, key):
     The sibling above reads ``suggested_value``; these are the fields that use a
     plain default instead, which voluptuous stores as a callable.
     """
-    for marker in data_schema.schema:
+    for marker in flat_fields(data_schema):
         if getattr(marker, "schema", None) == key:
             default = getattr(marker, "default", None)
             return default() if callable(default) else default
@@ -746,13 +810,13 @@ def _schema_default(data_schema, key):
 def _schema_has(data_schema, key) -> bool:
     """Whether a form schema offers a field at all."""
     return any(
-        getattr(marker, "schema", None) == key for marker in data_schema.schema
+        getattr(marker, "schema", None) == key for marker in flat_fields(data_schema)
     )
 
 
 def _selector_config(data_schema, key) -> dict:
     """The selector config behind a field - e.g. to assert `multiple: True`."""
-    for marker, validator in data_schema.schema.items():
+    for marker, validator in flat_fields(data_schema).items():
         if getattr(marker, "schema", None) == key:
             return getattr(validator, "config", {}) or {}
     raise AssertionError(f"{key} not present in schema")
@@ -781,6 +845,7 @@ async def _open_options(hass, entry_id, step="settings"):
 async def test_inverter_options_does_not_autodetect_phases(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
     """Editing an existing inverter must NOT auto-pick inverter-output entities.
@@ -788,18 +853,17 @@ async def test_inverter_options_does_not_autodetect_phases(
     Regression: the flow used to re-run auto-detection into empty fields, which
     could grab a 3-phase inverter from an unrelated building and silently add
     phantom L2/L3 phases that split available power across phases the site does
-    not have. The hub here has no inverter-output phases, so neither does the
-    inverter entry auto-imported from it; even with SolarEdge-matching entities
-    present in HA, its options page must leave those fields empty.
+    not have. The hub's inverter here has no inverter-output phases; even with
+    SolarEdge-matching entities present in HA, its options page must leave
+    those fields empty.
     """
     from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
-    # Setting the hub up auto-imports its legacy battery config onto an
-    # inverter entry - that entry is where the inverter page lives now.
     inverter = next(
         e
         for e in hass.config_entries.async_entries(DOMAIN)
@@ -833,6 +897,7 @@ async def test_inverter_options_does_not_autodetect_phases(
 async def test_inverter_options_offers_and_clears_the_soc_slots(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
     """The SOC write-control is editable from the options page too, and an
@@ -851,6 +916,7 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
     )
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -930,6 +996,7 @@ async def test_inverter_options_offers_and_clears_the_soc_slots(
 async def test_inverter_options_round_trip_the_minimum_charge_limit(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
     """The floor under the engaged charge limit is editable from the options
@@ -947,6 +1014,7 @@ async def test_inverter_options_round_trip_the_minimum_charge_limit(
     )
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -1053,14 +1121,98 @@ async def test_options_flow_charger_saves_changes(
             CONF_OCPP_PROFILE_TIMEOUT: 240,
             CONF_CHARGE_PAUSE_DURATION: 5,
             CONF_STACK_LEVEL: 5,
+            CONF_PACE_OVER_HORIZON: True,
+            CONF_CATCH_UP_ENABLED: True,
         },
     )
     assert result["type"] == FlowResultType.CREATE_ENTRY
 
     # Options should now contain the submitted values
+    assert mock_charger_entry.options.get(CONF_PACE_OVER_HORIZON) is True
+    assert mock_charger_entry.options.get(CONF_CATCH_UP_ENABLED) is True
     assert mock_charger_entry.options.get(CONF_LOAD_PRIORITY) == 2
     assert mock_charger_entry.options.get(CONF_EVSE_MINIMUM_CHARGE_CURRENT) == 8
     assert mock_charger_entry.options.get(CONF_UPDATE_FREQUENCY) == 30
+
+
+async def test_options_flow_plug_saves_catch_up(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The smart load's settings page offers the catch-up option (off) and saves it."""
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    plug = _plug_entry(mock_hub_entry, "Pond Pump")
+    plug.add_to_hass(hass)
+
+    result = await _open_options(hass, plug.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "plug"
+    keys = {str(k): k for k in flat_fields(result["data_schema"])}
+    assert keys[CONF_CATCH_UP_ENABLED].default() is False
+
+    user_input = {
+        str(k): k.default()
+        for k in flat_fields(result["data_schema"])
+        if k.default is not vol.UNDEFINED
+    }
+    user_input[CONF_CATCH_UP_ENABLED] = True
+    hass.states.async_set("switch.pond_pump", "off")
+    user_input["plug_switch_entity_id"] = "switch.pond_pump"
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=user_input
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert plug.options.get(CONF_CATCH_UP_ENABLED) is True
+
+
+async def test_options_flow_power_station_saves_catch_up(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_setup,
+):
+    """The power station's settings page offers the catch-up option (off) and saves it."""
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    station = MockConfigEntry(
+        domain=DOMAIN,
+        title="Power Station",
+        data={
+            CONF_NAME: "Power Station",
+            CONF_ENTITY_ID: "lj_power_station",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_DEVICE_TYPE: "power_station",
+            CONF_HUB_ENTRY_ID: mock_hub_entry.entry_id,
+            "station_charge_speed_entity_id": "number.ef_speed",
+            "station_reserve_entity_id": "number.ef_reserve",
+        },
+        options={CONF_LOAD_PRIORITY: 1},
+    )
+    station.add_to_hass(hass)
+    for entity in ("number.ef_speed", "number.ef_reserve", "sensor.ef_soc"):
+        hass.states.async_set(entity, "50")
+
+    result = await _open_options(hass, station.entry_id)
+    assert result["type"] == FlowResultType.FORM
+    assert result["step_id"] == "power_station"
+    keys = {str(k): k for k in flat_fields(result["data_schema"])}
+    assert keys[CONF_CATCH_UP_ENABLED].default() is False
+
+    user_input = {
+        str(k): k.default()
+        for k in flat_fields(result["data_schema"])
+        if k.default is not vol.UNDEFINED
+    }
+    user_input["station_battery_level_entity_id"] = "sensor.ef_soc"
+    user_input[CONF_CATCH_UP_ENABLED] = True
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=user_input
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert station.options.get(CONF_CATCH_UP_ENABLED) is True
 
 
 async def test_options_flow_charger_validates(
@@ -1366,7 +1518,6 @@ async def test_summary_page_describes_the_configuration(
     text = _summary_text(hass, mock_hub_entry.entry_id)
     assert "3-phase site at 230 V" in text
     assert "main breaker 25 A per phase" in text
-    # The hub's legacy battery was auto-imported onto an inverter entry.
     assert "Power sources" in text
     assert "Distribution mode" in text
     assert "Pond Pump" in text
@@ -1450,7 +1601,7 @@ async def test_migration_seeds_grid_export_limit_in_one_pass(hass: HomeAssistant
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 8
+    assert entry.minor_version == 10
     assert entry.options[CONF_GRID_EXPORT_LIMIT] == 13000 + DEFAULT_EXCESS_TRIGGER_MARGIN
     assert entry.options[CONF_EXCESS_TRIGGER_MARGIN] == DEFAULT_EXCESS_TRIGGER_MARGIN
     # ...and the legacy key it was derived FROM is pruned in the same pass.
@@ -1483,7 +1634,7 @@ async def test_migration_leaves_offgrid_hub_unlimited(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 8
+    assert entry.minor_version == 10
     assert not entry.options.get(CONF_GRID_EXPORT_LIMIT)
 
 
@@ -1521,7 +1672,7 @@ async def test_migration_renames_stored_charger_strings(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 8
+    assert entry.minor_version == 10
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD == "load"
     # Both stores are renamed, and the legacy spelling is gone from each.
     assert entry.data[CONF_LOAD_PRIORITY] == 2
@@ -1555,7 +1706,7 @@ async def test_migration_of_stored_charger_strings_is_idempotent(
     assert await async_migrate_entry(hass, entry)
     assert dict(entry.data) == migrated_data
     assert dict(entry.options) == migrated_options
-    assert entry.minor_version == 8
+    assert entry.minor_version == 10
 
 
 async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
@@ -1579,7 +1730,7 @@ async def test_migration_leaves_non_load_entries_alone(hass: HomeAssistant):
 
     assert await async_migrate_entry(hass, entry)
 
-    assert entry.minor_version == 8
+    assert entry.minor_version == 10
     assert dict(entry.data) == data_before
     assert dict(entry.options) == options_before
 
@@ -1603,7 +1754,7 @@ async def test_migrated_load_entry_sets_up(hass: HomeAssistant, mock_hub_entry):
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.minor_version == 8
+    assert entry.minor_version == 10
     assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
     assert entry.entry_id in hass.data[DOMAIN]["loads"]
     assert entry.entry_id in hass.data[DOMAIN]["load_allocations"]
@@ -1622,9 +1773,6 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
         ENTRY_TYPE_INVERTER,
         DEVICE_TYPE_INVERTER,
         CONF_DEVICE_TYPE,
-        CONF_BATTERY_SOC_FULL,
-        CONF_WIRING_TOPOLOGY,
-        WIRING_TOPOLOGY_SERIES,
         CONF_CHARGE_LIMIT_ENTITY_ID,
         CONF_CHARGE_LIMIT_UNIT,
         CONF_CHARGE_LIMIT_MINIMUM,
@@ -1681,7 +1829,7 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
             CONF_INVERTER_MAX_POWER: 12000,
             CONF_INVERTER_MAX_POWER_PER_PHASE: 4000,
             CONF_INVERTER_SUPPORTS_ASYMMETRIC: True,
-            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+            CONF_INVERTER_INPUT_IS_GRID: True,
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.deye_output_l1",
         },
     )
@@ -1695,7 +1843,6 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.deye_battery_power",
             CONF_BATTERY_MAX_CHARGE_POWER: 6000,
             CONF_BATTERY_MAX_DISCHARGE_POWER: 8000,
-            CONF_BATTERY_SOC_FULL: 97,
             CONF_BATTERY_CAPACITY_KWH: 15,
         },
     )
@@ -1739,7 +1886,8 @@ async def test_inverter_creation_flow(hass: HomeAssistant):
     assert entry.data[CONF_HUB_ENTRY_ID] == hub.entry_id
     stored = {**entry.data, **entry.options}
     assert stored[CONF_INVERTER_MAX_POWER] == 12000
-    assert stored[CONF_WIRING_TOPOLOGY] == WIRING_TOPOLOGY_SERIES
+    assert stored[CONF_INVERTER_INPUT_IS_GRID] is True
+    assert "wiring_topology" not in stored
     assert stored[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.deye_battery_soc"
     assert stored[CONF_BATTERY_CAPACITY_KWH] == 15
     assert stored[CONF_CHARGE_LIMIT_ENTITY_ID] == "number.deye_max_charge_current"
@@ -1762,9 +1910,9 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
     from custom_components.dynamic_ocpp_evse.const import (
         ENTRY_TYPE_INVERTER,
         CONF_BATTERY_CAPACITY_KWH,
-        CONF_WIRING_TOPOLOGY,
         CONF_BATTERY_SOC_HYSTERESIS,
     )
+    from custom_components.dynamic_ocpp_evse.helpers import LEGACY_WIRING_TOPOLOGY
 
     hub = MockConfigEntry(
         domain=DOMAIN,
@@ -1779,7 +1927,7 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
         options={
             CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a",
             CONF_INVERTER_MAX_POWER: 17000,
-            CONF_WIRING_TOPOLOGY: "series",
+            LEGACY_WIRING_TOPOLOGY: "series",
             CONF_SOLAR_PRODUCTION_ENTITY_ID: "sensor.pv_power",
             CONF_SOLAR_FORECAST_DEVICE_IDS: ["dev_east"],
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.batt_soc",
@@ -1808,6 +1956,9 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
     assert inverter.data[CONF_NAME] == "Inverter"
     assert inverter.title == "Inverter"
     assert inverter.options[CONF_INVERTER_MAX_POWER] == 17000
+    # Series became "the grid flows through this inverter"; the word is gone.
+    assert inverter.options[CONF_INVERTER_INPUT_IS_GRID] is True
+    assert LEGACY_WIRING_TOPOLOGY not in inverter.options
     assert inverter.options[CONF_BATTERY_SOC_ENTITY_ID] == "sensor.batt_soc"
     assert inverter.options[CONF_BATTERY_CAPACITY_KWH] == 10
     # The PV array belongs to the inverter too - sensor and forecast device.
@@ -1816,6 +1967,7 @@ async def test_hub_inverter_auto_import(hass: HomeAssistant):
 
     # The hub is blanked; site policy stays behind.
     assert CONF_INVERTER_MAX_POWER not in hub.options
+    assert LEGACY_WIRING_TOPOLOGY not in hub.options
     assert CONF_BATTERY_SOC_ENTITY_ID not in hub.options
     assert CONF_SOLAR_PRODUCTION_ENTITY_ID not in hub.options
     assert CONF_SOLAR_FORECAST_DEVICE_IDS not in hub.options
@@ -2100,12 +2252,16 @@ async def test_write_control_without_a_battery_is_refused(
 
 
 async def test_unticking_the_battery_in_options_clears_its_settings(
-    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
 ):
     """The options flow opens on the features page with the declared (or
     inferred) list suggested; unticking battery hides its section and clears
     every battery key on save, so a stale cap cannot outlive the battery."""
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -2193,7 +2349,7 @@ async def test_migration_infers_features_and_drops_the_phantom_battery(
     for entry in (hub, pv_only, hybrid):
         entry.add_to_hass(hass)
         assert await async_migrate_entry(hass, entry)
-        assert entry.minor_version == 8
+        assert entry.minor_version == 10
 
     assert CONF_INVERTER_FEATURES not in hub.options
     assert pv_only.options[CONF_INVERTER_FEATURES] == ["solar"]
@@ -2409,7 +2565,10 @@ async def test_the_overview_survives_hub_data_without_the_pools(
 
 
 async def test_the_inverter_overview_separates_battery_from_forecast(
-    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
 ):
     """The battery section and the array's forecast section are independent.
 
@@ -2422,6 +2581,7 @@ async def test_the_inverter_overview_separates_battery_from_forecast(
     from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
     inverter = next(
@@ -2458,7 +2618,10 @@ async def test_the_inverter_overview_separates_battery_from_forecast(
 
 
 async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
-    hass: HomeAssistant, mock_hub_entry: MockConfigEntry, mock_setup
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
 ):
     """Downloading from the hub yields every entry's config, the live result
     and the carried runtime - and the whole thing is JSON-serialisable, which
@@ -2472,6 +2635,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
 
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
     plug = _plug_entry(mock_hub_entry, "Pond Pump", priority=1)
@@ -2530,7 +2694,7 @@ async def test_diagnostics_dump_covers_the_whole_site_and_serialises(
     diag = await async_get_config_entry_diagnostics(hass, mock_hub_entry)
     json.dumps(diag)
     assert diag["runtime"]["hub"]["_household_held"] == {"a": 1.0, "b": 2.0, "c": None}
-    # The auto-imported inverter is a child, with its effective features.
+    # The inverter is a child, with its effective features.
     inv = next(
         c for c in diag["config"]["children"]
         if c["entry_type"] == ENTRY_TYPE_INVERTER
@@ -2588,16 +2752,17 @@ async def test_slider_backed_config_fields_say_the_slider_owns_them(hass: HomeAs
         seen = 0
         for section in ("config", "options"):
             for step, block in data[section]["step"].items():
-                for field in (block.get("data") or {}):
+                for field in labels(block):
                     if field not in seeds_a_slider:
                         continue
                     seen += 1
-                    help_text = (block.get("data_description") or {}).get(field)
+                    help_text = helps(block).get(field)
                     assert help_text, f"{name} {section}/{step}/{field}: no help text"
                     assert marker[lang] in help_text.lower(), (
                         f"{name} {section}/{step}/{field} does not mention the slider"
                     )
-        assert seen == 16, f"{name}: found {seen} slider-backed fields, expected 16"
+        # 18: the room thermostat repeats the tank's element power in its setup and options pages
+        assert seen == 18, f"{name}: found {seen} slider-backed fields, expected 18"
 
 
 def test_the_filters_page_is_translated_in_every_file():
@@ -2619,7 +2784,467 @@ def test_the_filters_page_is_translated_in_every_file():
         assert opt["step"]["init"]["menu_options"]["hub_filters"], name
         page = opt["step"]["hub_filters"]
         assert page["title"] and page["description"], name
-        assert set(page["data"]) == dials, (name, set(page["data"]) ^ dials)
-        assert set(page["data_description"]) == dials, name
-        assert all(page["data"][k] and page["data_description"][k] for k in dials), name
+        assert set(labels(page)) == dials, (name, set(labels(page)) ^ dials)
+        assert set(helps(page)) == dials, name
+        assert all(labels(page)[k] and helps(page)[k] for k in dials), name
         assert opt["error"]["fast_filter_not_below_input"], name
+
+
+# ── 2.8 → 2.9: the wiring topology becomes the inverter's input ────────
+
+
+def _legacy_inverter(hass, hub, entry_id, topology, **options):
+    """An inverter entry as 2.8 wrote it: a wiring topology (None = the key
+    absent), at minor version 8."""
+    from custom_components.dynamic_ocpp_evse.const import ENTRY_TYPE_INVERTER
+
+    stored = dict(options)
+    if topology is not None:
+        stored["wiring_topology"] = topology
+    entry = MockConfigEntry(
+        entry_id=entry_id,
+        domain=DOMAIN,
+        version=2,
+        minor_version=8,
+        title=f"Inverter {entry_id}",
+        data={
+            CONF_NAME: f"Inverter {entry_id}",
+            CONF_ENTITY_ID: f"lj_{entry_id}",
+            ENTRY_TYPE: ENTRY_TYPE_INVERTER,
+            CONF_HUB_ENTRY_ID: hub.entry_id,
+        },
+        options=stored,
+    )
+    entry.add_to_hass(hass)
+    return entry
+
+
+def _migration_hub(hass):
+    hub = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=8, title="Site",
+        data={CONF_NAME: "Site", CONF_ENTITY_ID: "site", ENTRY_TYPE: ENTRY_TYPE_HUB},
+    )
+    hub.add_to_hass(hass)
+    return hub
+
+
+async def test_migration_turns_series_into_the_grid_tick(hass: HomeAssistant):
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+
+    hub = _migration_hub(hass)
+    hybrid = _legacy_inverter(
+        hass, hub, "hybrid", "series",
+        **{CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.out_a"},
+    )
+
+    assert await async_migrate_entry(hass, hybrid)
+
+    assert hybrid.minor_version == 10
+    assert hybrid.options[CONF_INVERTER_INPUT_IS_GRID] is True
+    assert "wiring_topology" not in hybrid.options
+    assert "wiring_topology" not in hybrid.data
+    assert hybrid.options[CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID] == "sensor.out_a"
+
+
+@pytest.mark.parametrize("topology", ["parallel", None])
+async def test_migration_gives_parallel_no_input(hass: HomeAssistant, topology):
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+
+    hub = _migration_hub(hass)
+    pv = _legacy_inverter(
+        hass, hub, "pv", topology,
+        **{CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.out_a"},
+    )
+
+    assert await async_migrate_entry(hass, pv)
+
+    assert pv.minor_version == 10
+    assert "wiring_topology" not in pv.options
+    assert not pv.options.get(CONF_INVERTER_INPUT_IS_GRID)
+    assert CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID not in pv.options
+
+
+@pytest.mark.parametrize("order", [("inv_a", "inv_b"), ("inv_b", "inv_a")])
+async def test_migration_gives_the_tick_to_the_lowest_series_entry(
+    hass: HomeAssistant, order
+):
+    """Two series siblings: whatever order Home Assistant migrates them in, the
+    one with the lowest entry_id gets the tick, and a rerun changes nothing."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+
+    hub = _migration_hub(hass)
+    entries = {
+        entry_id: _legacy_inverter(hass, hub, entry_id, "series")
+        for entry_id in ("inv_a", "inv_b")
+    }
+    for entry_id in order:
+        assert await async_migrate_entry(hass, entries[entry_id])
+
+    assert entries["inv_a"].options[CONF_INVERTER_INPUT_IS_GRID] is True
+    assert not entries["inv_b"].options.get(CONF_INVERTER_INPUT_IS_GRID)
+    for entry in entries.values():
+        assert "wiring_topology" not in entry.options
+        assert entry.minor_version == 10
+
+    before = {k: dict(e.options) for k, e in entries.items()}
+    for entry in entries.values():
+        hass.config_entries.async_update_entry(entry, minor_version=8)
+        assert await async_migrate_entry(hass, entry)
+    assert {k: dict(e.options) for k, e in entries.items()} == before
+
+
+async def test_migration_of_a_mixed_fleet_warns_once(
+    hass: HomeAssistant, caplog
+):
+    """A PV inverter beside a hybrid has no exact equivalent: both migrate,
+    and the hub is told one thing to check."""
+    import logging
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+
+    hub = _migration_hub(hass)
+    hybrid = _legacy_inverter(hass, hub, "inv_a", "series")
+    pv = _legacy_inverter(hass, hub, "inv_b", "parallel")
+
+    with caplog.at_level(logging.WARNING):
+        assert await async_migrate_entry(hass, hybrid)
+        assert await async_migrate_entry(hass, pv)
+
+    warnings = [r for r in caplog.records if "beside a hybrid" in r.getMessage()]
+    assert len(warnings) == 1
+    assert "Site" in warnings[0].getMessage()
+    assert hybrid.options[CONF_INVERTER_INPUT_IS_GRID] is True
+    assert not pv.options.get(CONF_INVERTER_INPUT_IS_GRID)
+
+
+async def test_migration_leaves_a_hubs_legacy_topology_for_the_import(
+    hass: HomeAssistant,
+):
+    """A hub entry only moves its minor_version: the import reads the legacy
+    key off it (and converts it there)."""
+    from custom_components.dynamic_ocpp_evse import async_migrate_entry
+
+    hub = MockConfigEntry(
+        domain=DOMAIN, version=2, minor_version=8, title="Old Hub",
+        data={CONF_NAME: "Old Hub", CONF_ENTITY_ID: "old_hub", ENTRY_TYPE: ENTRY_TYPE_HUB},
+        options={"wiring_topology": "series"},
+    )
+    hub.add_to_hass(hass)
+
+    assert await async_migrate_entry(hass, hub)
+
+    assert hub.minor_version == 10
+    assert hub.options["wiring_topology"] == "series"
+    assert CONF_INVERTER_INPUT_IS_GRID not in hub.options
+
+
+# ── Inverter options: the input page ───────────────────────────────────
+
+
+async def test_inverter_core_stores_input_sensors(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
+):
+    mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
+    for ent in ("sensor.hyb_out_a", "sensor.hyb_in_a"):
+        hass.states.async_set(
+            ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"}
+        )
+
+    result = await _open_options(hass, mock_inverter_entry.entry_id, "inverter_core")
+    assert _schema_has(result["data_schema"], CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID)
+    assert _schema_has(result["data_schema"], CONF_INVERTER_INPUT_IS_GRID)
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"],
+        {
+            CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.hyb_out_a",
+            CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: "sensor.hyb_in_a",
+            CONF_INVERTER_INPUT_IS_GRID: False,
+        },
+    )
+
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    options = mock_inverter_entry.options
+    assert options[CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID] == "sensor.hyb_in_a"
+    assert options[CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID] == "sensor.hyb_out_a"
+    assert not options.get(CONF_INVERTER_INPUT_IS_GRID)
+
+
+async def _inverter_core_errors(hass, entry, user_input):
+    result = await _open_options(hass, entry.entry_id, "inverter_core")
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input
+    )
+    assert result["type"] == FlowResultType.FORM
+    return result["errors"]
+
+
+async def test_inverter_core_rejects_the_tick_together_with_sensors(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
+):
+    mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
+    for ent in ("sensor.hyb_out_a", "sensor.hyb_in_a"):
+        hass.states.async_set(
+            ent, "5.0", {"device_class": "current", "unit_of_measurement": "A"}
+        )
+
+    errors = await _inverter_core_errors(hass, mock_inverter_entry, {
+        CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.hyb_out_a",
+        CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: "sensor.hyb_in_a",
+        CONF_INVERTER_INPUT_IS_GRID: True,
+    })
+
+    assert errors == {"input": "input_grid_and_sensors"}  # keyed by its section
+
+
+async def test_inverter_core_allows_one_tick_per_hub(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
+):
+    mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
+    _legacy_inverter(
+        hass, mock_hub_entry, "other", None,
+        **{CONF_INVERTER_INPUT_IS_GRID: True},
+    )
+    hass.states.async_set(
+        "sensor.hyb_out_a", "5.0", {"device_class": "current", "unit_of_measurement": "A"}
+    )
+
+    errors = await _inverter_core_errors(hass, mock_inverter_entry, {
+        CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.hyb_out_a",
+        CONF_INVERTER_INPUT_IS_GRID: True,
+    })
+
+    assert errors == {"input": "input_grid_taken"}  # keyed by its section
+
+
+async def test_inverter_core_needs_an_output_beside_an_input(
+    hass: HomeAssistant,
+    mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
+    mock_setup,
+):
+    mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
+    hass.states.async_set(
+        "sensor.hyb_in_a", "5.0", {"device_class": "current", "unit_of_measurement": "A"}
+    )
+
+    errors = await _inverter_core_errors(hass, mock_inverter_entry, {
+        CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID: "sensor.hyb_in_a",
+    })
+
+    assert errors == {"input": "input_without_output"}  # keyed by its section
+
+
+def test_the_input_strings_exist_in_both_languages():
+    """Labels, descriptions and the three errors, en and sl alike."""
+    import json
+    from pathlib import Path
+
+    base = Path("custom_components/dynamic_ocpp_evse")
+    for name in ("translations/en.json", "translations/sl.json"):
+        data = json.loads((base / name).read_text(encoding="utf-8"))
+        for section, step in (("config", "inverter_config"), ("options", "inverter_core")):
+            page = data[section]["step"][step]
+            assert "wiring_topology" not in labels(page), name
+            assert "wiring_topology" not in helps(page), name
+            for key in (
+                "inverter_input_phase_a_entity_id",
+                "inverter_input_phase_b_entity_id",
+                "inverter_input_phase_c_entity_id",
+                "inverter_input_is_grid",
+            ):
+                assert labels(page)[key], (name, key)
+            assert helps(page)["inverter_input_phase_a_entity_id"], name
+            assert helps(page)["inverter_input_is_grid"], name
+            for error in (
+                "input_grid_and_sensors", "input_grid_taken", "input_without_output"
+            ):
+                assert data[section]["error"][error], (name, section, error)
+
+
+# ── SG Ready heat pump (JUG-24) ────────────────────────────────────────
+
+
+async def test_sg_ready_creation_flow(hass: HomeAssistant, mock_hub_entry, mock_setup):
+    """user -> sg_ready -> (auto-selected hub) -> sg_ready_config creates a load entry:
+    the two relays in the static data half, the settings (with their defaults) in options."""
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SG_MAX_BLOCK_TIME,
+        CONF_SG_MAX_BLOCKS_PER_DAY,
+        CONF_SG_MIN_STATE_TIME,
+        CONF_SG_NOMINAL_POWER,
+        CONF_SG_POWER_ENTITY_ID,
+        CONF_SG_RELAY_1_ENTITY_ID,
+        CONF_SG_RELAY_2_ENTITY_ID,
+        DEVICE_TYPE_SG_READY,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.hp_relay_1", "off")
+    hass.states.async_set("switch.hp_relay_2", "off")
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    options = flat_fields(result["data_schema"])["setup_type"].config["options"]
+    assert "sg_ready" in {o["value"] for o in options}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input={"setup_type": "sg_ready"}
+    )
+    assert result["step_id"] == "sg_ready_config"
+    schema = {str(k): k for k in flat_fields(result["data_schema"])}
+    # the timing limits come with their defaults; no mode or slider anywhere
+    assert schema[CONF_SG_MIN_STATE_TIME].default() == 10
+    assert schema[CONF_SG_MAX_BLOCK_TIME].default() == 120
+    assert schema[CONF_SG_MAX_BLOCKS_PER_DAY].default() == 3
+    assert "operating_mode" not in schema
+
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        user_input={
+            CONF_NAME: "Heat Pump",
+            CONF_ENTITY_ID: "lj_heat_pump",
+            CONF_SG_RELAY_1_ENTITY_ID: "switch.hp_relay_1",
+            CONF_SG_RELAY_2_ENTITY_ID: "switch.hp_relay_2",
+            CONF_SG_NOMINAL_POWER: 2500,
+            "connected_to_phase": "ABC",
+            CONF_LOAD_PRIORITY: 2,
+            CONF_SG_MIN_STATE_TIME: 10,
+            CONF_SG_MAX_BLOCK_TIME: 90,
+            CONF_SG_MAX_BLOCKS_PER_DAY: 2,
+            "manual_override_timeout": {"hours": 0, "minutes": 30},
+        },
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    entry = result["result"]
+    assert entry.options["manual_override_timeout"] == 30      # hours and minutes in, minutes stored
+    assert entry.data[CONF_DEVICE_TYPE] == DEVICE_TYPE_SG_READY
+    assert entry.data[ENTRY_TYPE] == ENTRY_TYPE_LOAD
+    assert entry.data[CONF_HUB_ENTRY_ID] == mock_hub_entry.entry_id
+    assert entry.data[CONF_SG_RELAY_1_ENTITY_ID] == "switch.hp_relay_1"
+    assert entry.data[CONF_SG_RELAY_2_ENTITY_ID] == "switch.hp_relay_2"
+    assert entry.options[CONF_SG_NOMINAL_POWER] == 2500
+    assert entry.options[CONF_SG_MAX_BLOCK_TIME] == 90
+    assert entry.options[CONF_SG_MAX_BLOCKS_PER_DAY] == 2
+    assert entry.options.get(CONF_SG_POWER_ENTITY_ID) is None
+    assert CONF_SG_RELAY_1_ENTITY_ID not in entry.options
+
+
+async def test_sg_ready_options_flow_saves_and_clears_the_power_sensor(
+    hass: HomeAssistant, mock_hub_entry, mock_setup
+):
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SG_MAX_BLOCKS_PER_DAY,
+        CONF_SG_POWER_ENTITY_ID,
+        CONF_SG_RELAY_1_ENTITY_ID,
+        CONF_SG_RELAY_2_ENTITY_ID,
+        DEVICE_TYPE_SG_READY,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=10,
+        title="Heat Pump",
+        data={
+            CONF_NAME: "Heat Pump",
+            CONF_ENTITY_ID: "heat_pump",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_SG_READY,
+            CONF_HUB_ENTRY_ID: mock_hub_entry.entry_id,
+            CONF_SG_RELAY_1_ENTITY_ID: "switch.r1",
+            CONF_SG_RELAY_2_ENTITY_ID: "switch.r2",
+        },
+        options={CONF_LOAD_PRIORITY: 1, CONF_SG_POWER_ENTITY_ID: "sensor.hp_power"},
+    )
+    entry.add_to_hass(hass)
+    result = await _open_options(hass, entry.entry_id)
+    assert result["step_id"] == "sg_ready"
+    user_input = {
+        str(k): k.default()
+        for k in flat_fields(result["data_schema"])
+        if k.default is not vol.UNDEFINED
+    }
+    user_input[CONF_SG_MAX_BLOCKS_PER_DAY] = 4
+    hass.states.async_set("switch.r1", "off")
+    hass.states.async_set("switch.r2", "off")
+    user_input[CONF_SG_RELAY_1_ENTITY_ID] = "switch.r1"
+    user_input[CONF_SG_RELAY_2_ENTITY_ID] = "switch.r2"
+    user_input.pop(CONF_SG_POWER_ENTITY_ID, None)  # cleared in the form
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], user_input=user_input
+    )
+    assert result["type"] == FlowResultType.CREATE_ENTRY
+    assert entry.options[CONF_SG_MAX_BLOCKS_PER_DAY] == 4
+    assert entry.options[CONF_SG_POWER_ENTITY_ID] is None
+
+
+async def test_sg_ready_entry_sets_up_with_a_state_sensor_and_no_mode(
+    hass: HomeAssistant, mock_hub_entry
+):
+    """Through the real setup path: a state sensor, the dynamic-control switch, and no
+    operating-mode select or sliders. Unloading leaves the relays in Normal."""
+    from homeassistant.helpers import entity_registry as er
+    from custom_components.dynamic_ocpp_evse.const import (
+        CONF_SG_RELAY_1_ENTITY_ID,
+        CONF_SG_RELAY_2_ENTITY_ID,
+        DEVICE_TYPE_SG_READY,
+    )
+
+    mock_hub_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(mock_hub_entry.entry_id)
+    await hass.async_block_till_done()
+    hass.states.async_set("switch.r1", "on")
+    hass.states.async_set("switch.r2", "off")
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        version=2,
+        minor_version=10,
+        title="Heat Pump",
+        data={
+            CONF_NAME: "Heat Pump",
+            CONF_ENTITY_ID: "heat_pump",
+            ENTRY_TYPE: ENTRY_TYPE_LOAD,
+            CONF_DEVICE_TYPE: DEVICE_TYPE_SG_READY,
+            CONF_HUB_ENTRY_ID: mock_hub_entry.entry_id,
+            CONF_SG_RELAY_1_ENTITY_ID: "switch.r1",
+            CONF_SG_RELAY_2_ENTITY_ID: "switch.r2",
+        },
+        options={CONF_LOAD_PRIORITY: 1},
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+
+    registry = er.async_get(hass)
+    entities = er.async_entries_for_config_entry(registry, entry.entry_id)
+    domains = {e.domain for e in entities}
+    assert "select" not in domains and "number" not in domains, [(e.domain, e.unique_id) for e in entities]
+    assert any(e.unique_id.endswith("_sg_ready_state") for e in entities)
+    assert any(e.unique_id.endswith("_dynamic_control") for e in entities)
+
+    calls = []
+
+    async def record(call):
+        calls.append((call.service, call.data["entity_id"]))
+        hass.states.async_set(call.data["entity_id"], "on" if call.service == "turn_on" else "off")
+
+    hass.services.async_register("switch", "turn_off", record)
+    hass.services.async_register("switch", "turn_on", record)
+    assert await hass.config_entries.async_unload(entry.entry_id)
+    assert calls == [("turn_off", "switch.r1")]  # Block -> Normal

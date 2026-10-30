@@ -134,9 +134,9 @@ async def test_both_views_subtract_one_smoothed_draw_per_cycle(hass, monkeypatch
     now = {}
     per_cycle = {}
 
-    def spy(consumption, export, draws):
+    def spy(consumption, export, draws, *rest):
         per_cycle.setdefault(now["i"], []).append(list(draws))
-        return real(consumption, export, draws)
+        return real(consumption, export, draws, *rest)
 
     monkeypatch.setattr(hub_calculation, "grid_without_managed_draws", spy)
     await _ramp(hass, "views", 1.0, cycles=START + 20,

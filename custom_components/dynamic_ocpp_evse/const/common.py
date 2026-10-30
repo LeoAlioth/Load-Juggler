@@ -19,8 +19,8 @@ ENTRY_TYPE_GROUP = "group"
 # An inverter (a power SOURCE, optionally carrying its own battery), linked to
 # a hub via CONF_HUB_ENTRY_ID like loads and groups. Inverter entries reuse
 # the hub-level CONF_INVERTER_* / CONF_BATTERY_* key names (const/hub.py) in
-# their own options: schemas are shared with the legacy hub pages, and the
-# one-time auto-import of a hub's legacy fields is a verbatim key copy.
+# their own options, so the one-time auto-import of an old hub's fields is a
+# verbatim key copy.
 ENTRY_TYPE_INVERTER = "inverter"
 
 # configuration keys - common
@@ -33,7 +33,18 @@ CONF_DEVICE_TYPE = "device_type"
 DEVICE_TYPE_EVSE = "evse"
 DEVICE_TYPE_PLUG = "plug"
 DEVICE_TYPE_HOT_WATER_TANK = "hot_water_tank"
+DEVICE_TYPE_ROOM_THERMOSTAT = "room_thermostat"
+
+
+def behaviour_type(device_type):
+    """The type whose machinery a device runs on: a room thermostat is a thermostat-driven
+    binary heating load exactly like a hot water tank, so the engine, entities and flows
+    treat it as one. Only the labels, the setpoint defaults and what Load Insights learns
+    from it (kWh per degree of a room, not of water) differ."""
+    return DEVICE_TYPE_HOT_WATER_TANK if device_type == DEVICE_TYPE_ROOM_THERMOSTAT else device_type
 DEVICE_TYPE_POWER_STATION = "power_station"
+DEVICE_TYPE_SG_READY = "sg_ready"
+DEVICE_TYPE_VARIABLE_LOAD = "variable_load"  # a setpoint entity, amps or watts (JUG-30)
 DEVICE_TYPE_GROUP = "group"
 DEVICE_TYPE_INVERTER = "inverter"
 
@@ -361,6 +372,9 @@ HARD_RESET_COOLDOWN_SECONDS = 300    # seconds to wait after hard reset (5 minut
 # nothing - and no reset changes that. Judged anyway, it was a profile reset
 # every three minutes and a hard reset every fourteen, for nine nights
 # (2026-09-29).
+# A charger offering more than this off the commanded limit is not following it
+# (A). Above the whole-amp rounding some chargers apply.
+COMPLIANCE_TOLERANCE = 1.0
 COMPLIANCE_IDLE_CONNECTOR_STATUSES = ("SuspendedEV", "SuspendedEVSE")
 # A charger fetching or installing firmware is not reset: FirmwareStatus as
 # the OCPP integration's "status firmware" sensor carries it...
@@ -406,8 +420,56 @@ BEHAVIOR_BINARY_ABOVE_MIN = "binary_above_min"        # run while battery > mini
 CONF_BINARY_MIN_OFF_TIME = "binary_min_off_time"
 DEFAULT_BINARY_MIN_OFF_TIME = 5  # minutes
 
+# A manual override - the device operated outside Load Juggler - hands the
+# load to the user for this long, then Load Juggler takes it back. Minutes,
+# per load, entered as hours and minutes. Every override ends. The Dynamic
+# Control switch is no override: off stays off (2026-10-14).
+# 0 never hands the load over: a change Load Juggler did not ask for is
+# written over at its next command (the owner, 2026-10-30 - reverses
+# 2026-10-13's "never 0"; GitHub issue 21: a Variable Load's charger reset
+# its own limit at unplug and read as a hand on the dial). 0 by default for a
+# Variable Load, whose setpoint entity an integration or charger writes too;
+# 120 for a plug, tank or station, where a person pressing the device's own
+# button is the normal case. A load that never saved it follows its default.
+CONF_MANUAL_OVERRIDE_TIMEOUT = "manual_override_timeout"
+DEFAULT_MANUAL_OVERRIDE_TIMEOUT = 120
+DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD = 0
+
+
+def manual_override_default(device_type) -> int:
+    """The manual override timeout a load of ``device_type`` has until it is set (minutes)."""
+    if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+        return DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD
+    return DEFAULT_MANUAL_OVERRIDE_TIMEOUT
+# A device reporting a value Load Juggler asked for this recently is still
+# answering that command, not being operated by hand: a slow (cloud) device's
+# report of the previous command can land after the next one went out.
+MANUAL_ECHO_S = 120
+
+# Per-load pacing (GitHub issue 22, owner 2026-10-17): an Excess-mode load with
+# this on is held to the planned energy spread over the time left - see
+# calculations/pacing.py. Off by default, so nothing changes until it is ticked.
+CONF_PACE_OVER_HORIZON = "pace_over_horizon"
+# Early start (calculations/forecast_excess.py): a kWh sensor saying how much more
+# this load can take today - Load Insights' "Room to absorb today". Optional;
+# without it the load counts as able to take what is planned.
+CONF_EARLY_ROOM_ENTITY_ID = "early_room_entity_id"
+CONF_EARLY_RATE_ENTITY_ID = "early_rate_entity_id"   # kW (or W) sensor: what the load really pulls (Load Insights' "Absorption rate")
+DEFAULT_PACE_OVER_HORIZON = False
+
+# Per-load catch-up (owner 2026-10-17): a Solar Only / Solar Priority load may
+# start below the target SOC when its own maximum power could not otherwise
+# keep up with the planned energy - see calculations/catch_up.py. Off by default.
+CONF_CATCH_UP_ENABLED = "catch_up_enabled"
+DEFAULT_CATCH_UP_ENABLED = False
+
 BEHAVIOR_BINARY_ABOVE_TARGET = "binary_above_target"  # run while battery > target SOC
 BEHAVIOR_BINARY_EXCESS = "binary_excess"              # run while battery near-full or exporting
+
+# The urgency tier the Excess modes compete at - the last one served. A load
+# ranked above it has first call on the surplus, so the Excess verdict reads
+# its draw as production already placed (calculations.excess_margin).
+EXCESS_URGENCY_TIER = 4
 
 
 @dataclass(frozen=True)

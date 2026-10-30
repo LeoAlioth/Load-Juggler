@@ -597,3 +597,53 @@ async def test_a_charger_leg_still_maps_to_a_single_phase():
     assert legs, "the scan found no leg mapping fields - the schema changed"
     for key, offered in legs.items():
         assert offered == {"A", "B", "C"}, (key, sorted(offered))
+
+
+# ── Processor: the grace hold ends ────────────────────────────────────
+
+
+async def test_a_spent_grace_window_stops_the_station_and_does_not_re_arm(
+    hass, hub_entry, station_entry, domain_data
+):
+    """A charging station whose Excess permit is gone rides ONE grace window
+    at its minimum, then stops: reserve back to normal. The stop waits a cycle
+    for confirmation, and the station still read as charging on that cycle, so
+    the window re-armed for ever - Home's EcoFlow charged at 200 W from the
+    grid from 15:00 until it was full (2026-10-13)."""
+    from custom_components.dynamic_ocpp_evse.entities.load import (
+        LoadJugglerDeviceSensor,
+    )
+
+    hub_entry.add_to_hass(hass)
+    station_entry.add_to_hass(hass)
+    _set_states(hass, speed="200", soc="60", limit="95", reserve="95")
+    sensor = LoadJugglerDeviceSensor(
+        hass, station_entry, hub_entry, "Power Station", "lj_power_station"
+    )
+    # It was charging on a permit that has now collapsed for good.
+    domain_data["station_charging"] = True
+    sensor._had_runnable_permit = True
+    hub_data = {
+        "load_modes": {station_entry.entry_id: "Excess"},
+        "load_available": {station_entry.entry_id: 0},
+        "load_targets": {station_entry.entry_id: 0},
+    }
+
+    reserves = []
+    with patch(
+        "homeassistant.core.ServiceRegistry.async_call", new_callable=AsyncMock
+    ) as call:
+        for _ in range(12):  # an hour of 5-minute windows, had it kept re-arming
+            sensor._last_command_time -= 10_000
+            if sensor._grace_started_at is not None:
+                sensor._grace_started_at -= 10_000  # the window runs out
+            await sensor.async_process(hub_data)
+            reserves += [
+                c[0][2]["value"] for c in call.call_args_list
+                if c[0][2].get("entity_id") == RESERVE
+            ]
+            call.reset_mock()
+
+    assert reserves and reserves[-1] == 30, reserves
+    assert domain_data["station_charging"] is False
+    assert sensor._grace_started_at is None

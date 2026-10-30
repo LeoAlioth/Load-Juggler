@@ -122,7 +122,10 @@ class LoadContext:
     # has then replaced l1/l2/l3 with the ASSUMED draw - the limit the charger
     # was last told, on the legs the verdict chose. Unlike draw_assumed (an
     # invented 0) this is a real estimate, so it IS published - as one: see
-    # draw_estimate below and engine/hub_result.py.
+    # draw_estimate below and engine/hub_result.py. Set the same way, with no
+    # verdict, while the reading predates the limit in force - it was last
+    # reported before the connector entered Charging or before a command that
+    # moved the car (readout_watch.assumed_before_new_reading).
     #
     # Its footprint is the LARGER of its allocation and that assumed draw (see
     # _pool_deduction): while the permit rises, it reserves the permit, as an
@@ -132,7 +135,8 @@ class LoadContext:
     draw_blind: bool = False
     # While draw_blind: what the estimate rests on, for the figures published
     # from it - ``{"load": entity id, "evidence": "above_limit" |
-    # "household_lockstep", "since": UTC datetime}``. Set by the HA layer.
+    # "household_lockstep" | "reading_predates_limit", "since": UTC
+    # datetime}``. Set by the HA layer.
     draw_estimate: dict | None = None
 
     # The current this load will draw the moment the Excess verdict starts it -
@@ -144,6 +148,33 @@ class LoadContext:
     # on, before its thermostat has responded, so a lower-ranked station does
     # not start on a surplus the tank is about to take (SE17K, 2026-09-04).
     excess_claim_current: float = 0.0
+
+    # Pacing (calculations/pacing.py): the per-phase current (A) this load's
+    # planned energy allows over the time left, or None when it is not paced -
+    # the option off, or no energy / horizon to pace on. Set by the HA layer;
+    # the calculator holds an Excess-mode load to it (_source_limit).
+    pace_cap_current: float | None = None
+
+    # Catch-up (calculations/catch_up.py): the load's own option, and the
+    # engine's latched verdict that its maximum power cannot keep up with the
+    # planned energy. Active, a Solar Only / Solar Priority load takes the solar
+    # pool below the target SOC too (_mode_source_limit).
+    catch_up_enabled: bool = False
+    catch_up_active: bool = False
+
+    # Early start (calculations/forecast_excess.py ``starts_early``): the engine's
+    # latched answer to "is it time for THIS load to take the forecast Excess
+    # verdict?" - true once the time left to the next full charge lets its minimum
+    # power spend the planned energy. Default true: with the forecast verdict off
+    # nothing reads it.
+    early_start_ok: bool = True
+    # What the load can still absorb, for the group rule (forecast_excess.early_group):
+    # the tank's gap to its boost temperature (K) and the energy it can still take
+    # today (kWh, from its optional room sensor). None = not known, counts as able.
+    thermal_headroom_k: float | None = None
+    early_room_kwh: float | None = None
+    # What the load really pulls when it runs (W, from its optional absorption-rate sensor); None = use its minimum power.
+    early_rate_w: float | None = None
 
     # Device hardware current rating (A) - the ceiling for available_current.
     # EVSE: its configured max current. Plug: the socket/relay rating, which
@@ -159,6 +190,10 @@ class LoadContext:
     #   draw, up to its rated/max. Drives the device command.
     allocated_current: float = 0
     available_current: float = 0
+    # Variable Load sized on fewer legs than it has: its configured legs, and
+    # the per-leg current those legs could be given (the phase advice reads it).
+    potential_phases_mask: str = ""
+    potential_current: float = 0
 
     @property
     def reports_idle(self) -> bool:
@@ -241,9 +276,9 @@ class SiteContext:
     household_consumption_total: float | None = None  # Computed when solar entity available (W)
     household_consumption: PhaseValues | None = None  # Per-phase household (A), from inverter entities
 
-    # Wiring topology + per-phase inverter output
-    wiring_topology: str = "parallel"  # "parallel" or "series"
-    inverter_output_per_phase: PhaseValues | None = None  # Raw inverter output readings (A)
+    # Per-phase net inverter output: Σ (output - input) over the fleet (A), the
+    # term the per-phase household adds to the grid (engine/fleet.net_output)
+    inverter_net_per_phase: PhaseValues | None = None
 
     # Battery
     battery_soc: float | None = None
@@ -251,6 +286,9 @@ class SiteContext:
     battery_soc_target: float | None = None
     battery_soc_min: float | None = None
     battery_soc_full: float | None = None  # SOC at/above which the battery counts as "full"
+    # Off-grid only (None grid-tied): below the minimum the battery's rating
+    # stays in the pool for the tanks and heaters down to this SOC (latched).
+    battery_soc_freeze_floor: float | None = None
     battery_max_charge_power: float | None = None
     battery_max_discharge_power: float | None = None
     # The most the battery is taken to discharge (W), below its rating: set
@@ -275,7 +313,7 @@ class SiteContext:
     #
     # Fleet AC output right now (W, SIGNED - negative means power is flowing
     # into the inverters). Measured where output entities exist, otherwise a
-    # topology-aware estimate - engine/fleet.py output_power_total(). None =
+    # estimate with the signed battery term - engine/fleet.py output_power_total(). None =
     # unknown, which the coverage gate treats as "do not gate".
     inverter_output_total: float | None = None
     # Net grid flow right now (W): positive = importing, negative = exporting.
@@ -298,10 +336,23 @@ class SiteContext:
     allow_grid_charging: bool = True
     power_buffer: float = 0
     excess_export_threshold: float = 13000
+    # How far below a sink's limit the Excess trigger sits (the hub's trigger
+    # margin): a sink at its limit is held slightly under it, so a trigger
+    # exactly AT it never fires. Grid-tied it is already in
+    # excess_export_threshold; off-grid it comes off the battery's charge
+    # allowance (target_calculator.excess_margin). 0 = none.
+    excess_trigger_margin: float = 0.0
     # Deadband subtracted from the excess absorption capacity while Excess is
     # engaged, so a load doesn't chatter at the trigger point. The engine owns
     # the latch and sets this; the calculator stays stateless.
     excess_hysteresis: float = 0
+    # Forecast-driven Excess (calculations/forecast_excess.py): the engine's
+    # latched verdict that the day's sun will overfill the battery, and the cap
+    # (W) on the power it adds to the Excess pool - the planned energy over the
+    # hours left. The verdict is OR-ed with the margin's, and tops the pool up
+    # with the charge the battery is absorbing (target_calculator).
+    forecast_excess: bool = False
+    forecast_excess_pace_w: float = 0.0
     # Excess start claims of loads that are INACTIVE this cycle but that the
     # verdict is about to start: ``((rank, mask, amps), ...)`` - set by
     # calculate_all_load_targets around the distribution, consumed by the
@@ -315,6 +366,16 @@ class SiteContext:
     pool_snapshot: dict = field(default_factory=dict)
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
+    # Per phase (A, B, C): an inverter feeds it but no grid CT reads it, on a site
+    # whose other phases do have CTs (a 3-phase inverter on a 1-phase grid
+    # connection). Its grid reading is a synthetic 0 A, so it has no grid
+    # headroom and the managed draws are not taken off it - off-grid, per phase.
+    gridless_phases: tuple = (False, False, False)
+    # Off-grid with a generator on the grid input (JUG-13): its per-phase rating
+    # (A; 0 = none) and the AC-in current it is carrying now, per phase (None
+    # while no source is connected - the site is then plainly off-grid).
+    generator_rating: float = 0.0
+    generator_current: PhaseValues | None = None
 
     # Loads at this site
     loads: list[LoadContext] = field(default_factory=list)

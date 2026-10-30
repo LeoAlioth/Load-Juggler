@@ -4,11 +4,17 @@ The thermostat (a climate or water_heater entity) owns all temperature regulatio
 power and writes the setpoint.
 """
 
-from .common import BEHAVIOR_FULL_POWER, BEHAVIOR_SOLAR_PRIORITY, OperatingMode
+from .common import (
+    BEHAVIOR_FULL_POWER,
+    BEHAVIOR_SOLAR_PRIORITY,
+    EXCESS_URGENCY_TIER,
+    OperatingMode,
+)
 
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate or water_heater entity (read + control)
 CONF_HEATING_ELEMENT_POWER = "heating_element_power"      # Element rating in watts
 CONF_TANK_POWER_ENTITY_ID = "tank_power_entity_id"        # Optional live power sensor
+CONF_TANK_OFF_OPERATION_MODE = "tank_off_operation_mode"  # Optional: a water heater's own operation mode for "off"
 CONF_TANK_AWAY_TEMPERATURE = "tank_away_temperature"      # Frost-protection / minimal setpoint
 CONF_TANK_NORMAL_TEMPERATURE = "tank_normal_temperature"  # Baseline setpoint
 CONF_TANK_BOOST_TEMPERATURE = "tank_boost_temperature"    # High setpoint (surplus available)
@@ -22,6 +28,18 @@ DEFAULT_TANK_AWAY_TEMPERATURE = 30        # °C
 DEFAULT_TANK_NORMAL_TEMPERATURE = 45      # °C
 DEFAULT_TANK_BOOST_TEMPERATURE = 65       # °C
 DEFAULT_TANK_PRIORITIZE_BELOW_NORMAL = True
+# A room thermostat (device type room_thermostat) is the same load with room setpoints.
+DEFAULT_ROOM_AWAY_TEMPERATURE = 7         # °C, frost protection
+DEFAULT_ROOM_NORMAL_TEMPERATURE = 21      # °C, comfort
+DEFAULT_ROOM_BOOST_TEMPERATURE = 24       # °C
+ROOM_TEMPERATURE_RANGE = (5, 35)          # slider bounds, °C
+
+
+def thermostat_defaults(device_type):
+    """(away, normal, boost) default setpoints of a thermostat load's type, °C."""
+    if device_type == "room_thermostat":
+        return DEFAULT_ROOM_AWAY_TEMPERATURE, DEFAULT_ROOM_NORMAL_TEMPERATURE, DEFAULT_ROOM_BOOST_TEMPERATURE
+    return DEFAULT_TANK_AWAY_TEMPERATURE, DEFAULT_TANK_NORMAL_TEMPERATURE, DEFAULT_TANK_BOOST_TEMPERATURE
 
 # Hot water tank operating modes. Each picks a setpoint (away/normal/boost)
 # dynamically via resolve_tank_setpoint(); priority is the distribution
@@ -47,7 +65,7 @@ OPERATING_MODES_HOT_WATER_TANK = [
 # Urgency tier a tank competes at while it is riding surplus (boost setpoint).
 # Matches the Excess tier used by EVSEs and plugs: heating past the mode's own
 # floor temperature is opportunistic, so it must not outrank must-run loads.
-TANK_SURPLUS_URGENCY_TIER = 4
+TANK_SURPLUS_URGENCY_TIER = EXCESS_URGENCY_TIER
 DEFAULT_OPERATING_MODE_HOT_WATER_TANK = TANK_MODE_NORMAL
 
 

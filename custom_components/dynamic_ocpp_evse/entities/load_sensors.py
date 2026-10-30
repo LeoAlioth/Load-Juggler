@@ -12,15 +12,13 @@ numeric measured quantity.
 """
 
 import logging
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
     SensorStateClass,
 )
 from ..const import (
-    CONF_CHARGER_L1_PHASE,
-    CONF_CHARGER_L2_PHASE,
-    CONF_CHARGER_L3_PHASE,
     CONF_CLIMATE_ENTITY_ID,
     CONF_PLUG_SWITCH_ENTITY_ID,
     CONF_STATION_CHARGE_SPEED_ENTITY_ID,
@@ -31,8 +29,11 @@ from ..const import (
     DEFAULT_LOAD_PRIORITY,
     EVSE_RT_READOUT_WATCH,
     LOAD_RT_SUN_PROBE,
+    SG_RT_STATUS,
+    VL_RT_OUTPUTS,
 )
-from ..helpers import get_entry_value
+from ..control.status import hands_off_status, with_early_start
+from ..helpers import get_entry_value, stored_legs
 from .. import units
 from .mixins import LoadEntityMixin, SiteCycleConsumerMixin
 from .readout import (
@@ -173,7 +174,8 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
     While the charger's readout is judged stuck (engine/readout_watch.py) the
     status says so in words - "Charging (readout stuck - controlled on assumed
     current)" - and carries the readout_* attributes; both clear the cycle the
-    episode ends. Composed here, on every site cycle, rather than in the load
+    episode ends. Likewise "Charging (waiting for a new reading - assumed
+    current)" while the charger's reading predates the limit in force. Composed here, on every site cycle, rather than in the load
     processor, which only re-derives its status on command cycles. So is the
     off-grid sun probe's backoff (entities/sun_probe.py): "... (no spare sun
     on 3 tries, next try 14:32)" while it waits, and sun_probe_* attributes.
@@ -202,27 +204,34 @@ class LoadJugglerDeviceStatusSensor(LoadJugglerLoadSensor):
     def _read_site_data(self):
         """Read charging status from hass.data (populated by the load processor)."""
         status = self._domain_bucket("load_status")
-        self._attr_native_value = status_with_sun_probe_note(
+        value = status_with_sun_probe_note(
             status_with_readout_note(
                 status.get(self.config_entry.entry_id, "Unknown"),
                 self._readout_watch(),
             ),
             self._runtime().get(LOAD_RT_SUN_PROBE),
         )
+        # a charger that is not charging says when the forecast verdict starts it
+        self._attr_native_value = (
+            value if value.startswith("Charging") else with_early_start(value, self._runtime())
+        )
 
 
-class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
+class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor, RestoreEntity):
     """Status sensor for a smart plug - on/off plus error states.
 
     A plug has no connector to plug a car into, so the EVSE charging-status
     vocabulary ("Unplugged", "Charging", ...) does not apply. This simply
-    reflects the controlled switch: ``On`` / ``Off``, or an error state when
-    the switch entity is missing or unavailable.
+    reflects the controlled switch: ``On`` / ``Off``, ``Manual until HH:MM``
+    in a manual override, ``Dynamic Control Off``, or an error state when the
+    switch entity is missing or unavailable.
     """
 
     _PLUG_ICONS = {
         "On": "mdi:power-plug",
         "Off": "mdi:power-plug-off",
+        "Manual": "mdi:hand-back-right",
+        "Dynamic Control Off": "mdi:hand-back-right",
     }
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
@@ -240,6 +249,35 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
         self._attr_native_value = "Unknown"
         self._attr_icon = "mdi:power-plug-off-outline"
 
+    @property
+    def extra_state_attributes(self):
+        """``restart_count`` while "Restart if it stops drawing" is watching
+        (control/plug.py): restarts in a row without the load drawing."""
+        count = self._runtime().get("plug_restart_count")
+        return {} if count is None else {"restart_count": count}
+
+    @property
+    def extra_restore_state_data(self):
+        """The restart count, kept over a restart of Home Assistant: it lives in the runtime,
+        and sets how long the next restart waits (JUG-27, JUG-33)."""
+        rt = self._runtime()
+        count = rt.get("plug_restart_count")
+        if not count:
+            return None
+        return RestoredExtraData({"count": count})
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_extra_data()
+        self._restore(last.as_dict() if last is not None else {})
+
+    def _restore(self, saved: dict) -> None:
+        count = saved.get("count")
+        if not count:
+            return
+        rt = self._runtime()
+        rt["plug_restart_count"] = int(count)
+
     def _read_site_data(self):
         """Reflect the smart plug's switch state, surfacing error states."""
         if not self._switch_entity:
@@ -248,13 +286,69 @@ class LoadJugglerPlugStatusSensor(LoadJugglerLoadSensor):
             switch_state = self.hass.states.get(self._switch_entity)
             if units.is_unavailable(switch_state):
                 self._attr_native_value = "Unavailable"
+            elif not self._runtime().get("dynamic_control", True):
+                self._attr_native_value = hands_off_status(self._runtime())
             elif switch_state.state == "on":
                 self._attr_native_value = "On"
             else:
-                self._attr_native_value = "Off"
+                self._attr_native_value = with_early_start("Off", self._runtime())
         self._attr_icon = self._PLUG_ICONS.get(
-            self._attr_native_value, "mdi:power-plug-off-outline"
+            self._attr_native_value.split(" until ")[0].split(" - ")[0], "mdi:power-plug-off-outline"
         )
+        # A restart says so until the load draws again; hands off (Dynamic Control off), it is stale.
+        load_rt = self._runtime()
+        note = load_rt.get("plug_finish_status") or load_rt.get("plug_restart_status")
+        if (
+            note
+            and self._attr_native_value.split(" - ")[0] in ("On", "Off")
+            and load_rt.get("dynamic_control", True)
+        ):
+            self._attr_native_value = note
+
+
+class LoadJugglerSgReadyStatusSensor(LoadJugglerLoadSensor):
+    """State sensor of an SG Ready heat pump: Block / Normal / Recommended /
+    Force, with the reason in brackets ("Recommended (predicted excess)") and the
+    block counters as attributes. No select or number: the state follows the
+    site (calculations/sg_ready.py)."""
+
+    _ICONS = {
+        "Block": "mdi:cancel",
+        "Normal": "mdi:heat-pump-outline",
+        "Recommended": "mdi:heat-pump",
+        "Force": "mdi:fire",
+    }
+    _LABELS = {"block": "Block", "normal": "Normal", "recommended": "Recommended", "force": "Force"}
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        super().__init__(
+            hass, config_entry, hub_entry, f"{name} State", f"{entity_id}_sg_ready_state"
+        )
+        self._attr_native_value = "Unknown"
+        self._attr_icon = "mdi:heat-pump-outline"
+        self._attrs = {}
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+    def _read_site_data(self):
+        status = self._runtime().get(SG_RT_STATUS)
+        if not status:
+            self._attr_native_value = "Unknown"
+            self._attrs = {}
+            return
+        label = self._LABELS[status["state"]]
+        reason = status["reason"]
+        self._attr_native_value = f"{label} ({reason})"
+        self._attr_icon = self._ICONS[label]
+        self._attrs = {
+            "state": status["state"],
+            "reason": reason,
+            "blocks_in_last_24h": status["blocks_24h"],
+            "minutes_left_in_state": round(status["min_left_s"] / 60, 1),
+            "block_allowance_used_up": status["allowance_used_up"],
+        }
 
 
 class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
@@ -273,6 +367,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
         "Full": "mdi:battery",
         "Idle": "mdi:battery-arrow-down",
         "Manual": "mdi:hand-back-right",
+        "Dynamic Control Off": "mdi:hand-back-right",
     }
 
     def __init__(self, hass, config_entry, hub_entry, name, entity_id):
@@ -317,7 +412,7 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
             # vendor app taking over looks exactly like this.
             self._attr_native_value = "Unavailable"
         elif not load_rt.get("dynamic_control", True):
-            self._attr_native_value = "Manual"
+            self._attr_native_value = hands_off_status(load_rt)
         elif load_rt.get("station_storm_reserve"):
             self._attr_native_value = "Storm Reserve"
         elif soc is not None and charge_limit is not None and soc >= charge_limit:
@@ -325,10 +420,10 @@ class LoadJugglerStationStatusSensor(LoadJugglerLoadSensor):
         elif load_rt.get("station_charging"):
             self._attr_native_value = "Charging"
         else:
-            self._attr_native_value = "Idle"
+            self._attr_native_value = with_early_start("Idle", load_rt)
 
         self._attr_icon = self._STATION_ICONS.get(
-            self._attr_native_value, "mdi:battery-unknown"
+            self._attr_native_value.split(" until ")[0].split(" - ")[0], "mdi:battery-unknown"
         )
         self._attrs = {
             "operating_mode": load_rt.get("operating_mode"),
@@ -355,10 +450,7 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
             f"{entity_id}_phase_mask",
         )
         self._attr_native_value = "Idle"
-        l1 = config_entry.data.get(CONF_CHARGER_L1_PHASE, "A")
-        l2 = config_entry.data.get(CONF_CHARGER_L2_PHASE, "B")
-        l3 = config_entry.data.get(CONF_CHARGER_L3_PHASE, "C")
-        self._wiring_mask = "".join(sorted({l1, l2, l3}))
+        self._wiring_mask = "".join(sorted(set(stored_legs(config_entry))))
 
     @property
     def extra_state_attributes(self):
@@ -421,17 +513,18 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
         if units.is_unavailable(climate_state):
             self._attr_native_value = "Unavailable"
         elif not load_rt.get("dynamic_control", True):
-            # Dynamic Control off - Load Juggler is not managing the tank;
-            # the thermostat runs on its own.
-            self._attr_native_value = "Manual"
+            # Dynamic Control off or a manual override - Load Juggler is
+            # not managing the tank; the thermostat runs on its own.
+            self._attr_native_value = hands_off_status(load_rt)
         elif not load_rt.get("tank_heating_permitted", True):
-            self._attr_native_value = "Waiting for Power"
+            self._attr_native_value = with_early_start("Waiting for Power", load_rt)
         else:
-            self._attr_native_value = {
+            state = {
                 "heating": "Heating",
                 "idle": "Idle",
                 "off": "Off",
             }.get(hvac_action, "Idle")
+            self._attr_native_value = state if state == "Heating" else with_early_start(state, load_rt)
 
         self._attrs = {
             "operating_mode": load_rt.get("operating_mode"),
@@ -441,3 +534,48 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
             "heating_permitted": load_rt.get("tank_heating_permitted"),
             "priority_elevated": load_rt.get("tank_priority_elevated", False),
         }
+
+
+class LoadJugglerAllowanceSensor(LoadJugglerLoadSensor):
+    """One of a Variable Load's published allowance figures (JUG-30): allowed
+    current per leg, the lowest across the legs in use, allowed power, percent
+    of maximum, or the phase advice (``single`` / ``multi``, with its reason as
+    an attribute). Written by control/variable_load.py on each command cycle;
+    unknown until the first."""
+
+    _SPECS = {
+        # key: (name, unit, device class, icon)
+        "allowed_l1": ("Allowed Current L1", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_l2": ("Allowed Current L2", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_l3": ("Allowed Current L3", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_lowest": ("Allowed Current", "A", SensorDeviceClass.CURRENT, "mdi:current-ac"),
+        "allowed_power": ("Allowed Power", "W", SensorDeviceClass.POWER, "mdi:flash"),
+        "allowed_percent": ("Allowed Percent", "%", None, "mdi:percent"),
+        "phase_advice": ("Phase Advice", None, None, "mdi:sine-wave"),
+    }
+    _UNIQUE_SUFFIX = {"allowed_lowest": "allowed_current", "allowed_l1": "allowed_current_l1",
+                      "allowed_l2": "allowed_current_l2", "allowed_l3": "allowed_current_l3"}
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id, key):
+        label, unit, device_class, icon = self._SPECS[key]
+        super().__init__(
+            hass, config_entry, hub_entry, f"{name} {label}",
+            f"{entity_id}_{self._UNIQUE_SUFFIX.get(key, key)}",
+        )
+        self._key = key
+        self._attr_native_unit_of_measurement = unit
+        self._attr_device_class = device_class
+        self._attr_state_class = SensorStateClass.MEASUREMENT if unit else None
+        self._attr_icon = icon
+        self._attr_native_value = None
+        self._attrs = {}
+
+    @property
+    def extra_state_attributes(self):
+        return self._attrs
+
+    def _read_site_data(self):
+        published = self._runtime().get(VL_RT_OUTPUTS) or {}
+        self._attr_native_value = published.get(self._key)
+        if self._key == "phase_advice":
+            self._attrs = {"reason": published.get("phase_advice_reason")}

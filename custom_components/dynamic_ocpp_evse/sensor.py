@@ -5,11 +5,7 @@ from homeassistant.core import HomeAssistant, callback
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import (
-    CONF_BATTERY_CAPACITY_KWH,
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_CHARGER_L1_PHASE,
-    CONF_CHARGER_L2_PHASE,
-    CONF_CHARGER_L3_PHASE,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_DEVICE_TYPE,
     CONF_ENTITY_ID,
@@ -27,6 +23,8 @@ from .const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_LOAD,
@@ -34,8 +32,11 @@ from .const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
 )
+from .const.common import behaviour_type
 from .helpers import (
-    fleet_battery_capacity,
+    stored_legs,
+    fleet_has_battery_capacity,
+    has_battery_capacity,
     fleet_has_forecast_sources,
     get_entry_value,
     hub_has_battery,
@@ -44,10 +45,12 @@ from .engine.hub_calculation import run_hub_calculation
 from .entities.load import LoadJugglerDeviceSensor
 from .entities.load_sensors import (
     LoadJugglerAllocatedCurrentSensor,
+    LoadJugglerAllowanceSensor,
     LoadJugglerDeviceStatusSensor,
     LoadJugglerEffectivePrioritySensor,
     LoadJugglerPhaseMaskSensor,
     LoadJugglerPlugStatusSensor,
+    LoadJugglerSgReadyStatusSensor,
     LoadJugglerStationStatusSensor,
     LoadJugglerTankStatusSensor,
 )
@@ -196,8 +199,8 @@ async def async_setup_entry(
         name = config_entry.data.get(CONF_NAME, "Site Load Management")
         entity_id = config_entry.data.get(CONF_ENTITY_ID, "site_load_management")
 
-        # Any battery on the fleet - the hub's legacy fields or an inverter
-        # entry - enables the hub's (fleet-aggregate) battery sensors.
+        # Any battery on the fleet's inverter entries enables the hub's
+        # (fleet-aggregate) battery sensors.
         has_battery = hub_has_battery(hass, config_entry)
         has_phase_b = bool(
             get_entry_value(config_entry, CONF_PHASE_B_CURRENT_ENTITY_ID, None)
@@ -211,7 +214,7 @@ async def async_setup_entry(
         has_forecast = (
             fleet_has_forecast_sources(hass, config_entry)
             and (get_entry_value(config_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and fleet_battery_capacity(hass, config_entry) > 0
+            and fleet_has_battery_capacity(hass, config_entry)
         )
 
         entities = [
@@ -264,7 +267,7 @@ async def async_setup_entry(
         )
         inv_has_forecast = (
             inv_has_battery
-            and (get_entry_value(config_entry, CONF_BATTERY_CAPACITY_KWH, 0) or 0) > 0
+            and has_battery_capacity(config_entry)
             and hub_entry is not None
             and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
             # Any array on the fleet feeds the site forecast - the advice for
@@ -282,7 +285,7 @@ async def async_setup_entry(
             bool(get_entry_value(config_entry, CONF_SOLAR_FORECAST_DEVICE_IDS, None))
             and hub_entry is not None
             and (get_entry_value(hub_entry, CONF_GRID_EXPORT_LIMIT, 0) or 0) > 0
-            and fleet_battery_capacity(hass, hub_entry) > 0
+            and fleet_has_battery_capacity(hass, hub_entry)
         )
         entities = []
         for desc in INVERTER_SENSOR_DEFINITIONS:
@@ -358,13 +361,17 @@ async def async_setup_entry(
         hass, config_entry, hub_entry, name, entity_id
     )
 
-    device_type = config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    device_type = behaviour_type(config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
     if device_type == DEVICE_TYPE_HOT_WATER_TANK:
         status_sensor = LoadJugglerTankStatusSensor(
             hass, config_entry, hub_entry, name, entity_id
         )
     elif device_type == DEVICE_TYPE_PLUG:
         status_sensor = LoadJugglerPlugStatusSensor(
+            hass, config_entry, hub_entry, name, entity_id
+        )
+    elif device_type == DEVICE_TYPE_SG_READY:
+        status_sensor = LoadJugglerSgReadyStatusSensor(
             hass, config_entry, hub_entry, name, entity_id
         )
     elif device_type == DEVICE_TYPE_POWER_STATION:
@@ -379,13 +386,22 @@ async def async_setup_entry(
 
     # Phase mask sensor - only for 3-phase EVSEs (L1/L2/L3 mapped to 3 distinct
     # site phases). For 1-/2-phase loads the mask is trivial, so it is omitted.
-    l1 = get_entry_value(config_entry, CONF_CHARGER_L1_PHASE, "A")
-    l2 = get_entry_value(config_entry, CONF_CHARGER_L2_PHASE, "B")
-    l3 = get_entry_value(config_entry, CONF_CHARGER_L3_PHASE, "C")
-    if device_type == DEVICE_TYPE_EVSE and len({l1, l2, l3}) == 3:
+    if device_type == DEVICE_TYPE_EVSE and len(stored_legs(config_entry)) == 3:
         entities.append(
             LoadJugglerPhaseMaskSensor(hass, config_entry, hub_entry, name, entity_id)
         )
+
+    # A variable load publishes its allowance (JUG-30). Per-leg figures and the
+    # phase advice only with more than one leg: on one they say nothing more.
+    if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+        legs = len(stored_legs(config_entry))
+        keys = ["allowed_lowest", "allowed_power", "allowed_percent"]
+        if legs > 1:
+            keys += [f"allowed_l{n}" for n in range(1, legs + 1)] + ["phase_advice"]
+        entities += [
+            LoadJugglerAllowanceSensor(hass, config_entry, hub_entry, name, entity_id, key)
+            for key in keys
+        ]
 
     async_add_entities(entities)
 

@@ -137,7 +137,7 @@ scenarios:
       33/33/0 A with a 40 A total.
       It used to spread the site-total terms evenly instead (-16/3 A each,
       giving 27.67/27.67/-15.33 A), which charged phase A a share of an export
-      limit that is contractually a site TOTAL (Anze, 2026-09-08: a 3x25 A
+      limit that is contractually a site TOTAL (2026-09-08: a 3x25 A
       connection exporting 15/20/25 A is compliant, not pegged at 20/20/20).
       Phase A really exports 33 A.
       Pass 1: the Standard load on C takes 6 A from the PHYSICAL pool and

@@ -15,13 +15,15 @@ from homeassistant.helpers.entity_registry import (
 from .. import units
 from ..entities.readout import status_with_readout_note
 from ..entities.sun_probe import status_with_sun_probe_note
+from ..control.status import hands_off_status
+from ..const.sg_ready import CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER
 from ..const import (
-    CONF_ENTITY_ID,
+    behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
+    CONF_VL_MAX, CONF_VL_MIN, CONF_VL_SETPOINT_ENTITY_ID, CONF_VL_SETPOINT_UNIT,
+    DEFAULT_VL_MAX, DEFAULT_VL_MIN, DEFAULT_VL_SETPOINT_UNIT,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_BATTERY_SOC_FULL,
-    CONF_BATTERY_SOC_MIN,
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
@@ -42,6 +44,8 @@ from ..const import (
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_SUPPORTS_ASYMMETRIC,
+    CONF_GENERATOR_RATING,
+    CONF_GRID_INPUT_IS_GENERATOR,
     CONF_INVERT_PHASES,
     CONF_MAIN_BREAKER_RATING,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
@@ -56,13 +60,15 @@ from ..const import (
     CONF_SOLAR_FORECAST_DEVICE_IDS,
     CONF_STATION_MAX_CHARGE_POWER,
     CONF_STATION_MIN_CHARGE_POWER,
-    CONF_WIRING_TOPOLOGY,
-    DEFAULT_BATTERY_SOC_FULL,
-    DEFAULT_BATTERY_SOC_MIN,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_CIRCUIT_GROUP_CURRENT_LIMIT,
     DEFAULT_DISTRIBUTION_MODE,
     DEFAULT_HEATING_ELEMENT_POWER,
+    DEFAULT_GENERATOR_RATING,
     DEFAULT_MAIN_BREAKER_RATING,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
@@ -71,11 +77,12 @@ from ..const import (
     DEFAULT_PLUG_POWER_RATING,
     DEFAULT_STATION_MAX_CHARGE_POWER,
     DEFAULT_STATION_MIN_CHARGE_POWER,
-    DEFAULT_WIRING_TOPOLOGY,
     DEVICE_TYPE_EVSE,
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_GROUP,
@@ -86,7 +93,7 @@ from ..const import (
     resolve_operating_mode,
 )
 from ..helpers import get_entry_value
-from ..registry import get_groups_for_hub, get_inverters_for_hub
+from ..registry import get_groups_for_hub, get_inverters_for_hub, own_entity_id
 from .helpers import (
     _LOGGER,
     _controlled_devices,
@@ -114,7 +121,10 @@ _DEVICE_TYPE_LABELS = {
     DEVICE_TYPE_EVSE: "EVSE",
     DEVICE_TYPE_PLUG: "Smart plug",
     DEVICE_TYPE_HOT_WATER_TANK: "Hot water tank",
+    DEVICE_TYPE_ROOM_THERMOSTAT: "Room thermostat",
     DEVICE_TYPE_POWER_STATION: "Power station",
+    DEVICE_TYPE_SG_READY: "SG Ready heat pump",
+    DEVICE_TYPE_VARIABLE_LOAD: "Variable load",
 }
 
 
@@ -230,6 +240,11 @@ def _runtime(hass) -> dict:
     return hass.data.get(DOMAIN) or {}
 
 
+def _hub_slider(hass, hub_entry_id, key):
+    """A hub slider's value (number.py writes it to the hub runtime)."""
+    return ((_runtime(hass).get("hubs") or {}).get(hub_entry_id) or {}).get(key)
+
+
 def _live_hub_data(hass, hub_entry_id: str | None) -> tuple[dict, str]:
     """Live hub_data plus a one-line freshness note.
 
@@ -313,6 +328,8 @@ def _group_cap_for(hass, hub_entry_id: str, load_entry_id: str) -> str | None:
 def _load_mode(hass, load_entry) -> str:
     """The load's current operating mode (live if set, else its default)."""
     device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    if device_type == DEVICE_TYPE_SG_READY:
+        return "follows the site"  # no operating mode
     runtime = (_runtime(hass).get("loads") or {}).get(load_entry.entry_id) or {}
     key = runtime.get("operating_mode") or get_entry_value(
         load_entry, CONF_OPERATING_MODE, None
@@ -322,7 +339,7 @@ def _load_mode(hass, load_entry) -> str:
 
 def _load_limits_text(hass, load_entry) -> str:
     """The load's configured envelope, in the units that device type uses."""
-    device_type = load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+    device_type = behaviour_type(load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
     if device_type == DEVICE_TYPE_PLUG:
         rating = get_entry_value(
             load_entry, CONF_PLUG_POWER_RATING, DEFAULT_PLUG_POWER_RATING
@@ -336,6 +353,9 @@ def _load_limits_text(hass, load_entry) -> str:
             load_entry, CONF_HEATING_ELEMENT_POWER, DEFAULT_HEATING_ELEMENT_POWER
         )
         return f"{_fmt(element, 'W', 0)} element"
+    if device_type == DEVICE_TYPE_SG_READY:
+        nominal = get_entry_value(load_entry, CONF_SG_NOMINAL_POWER, DEFAULT_SG_NOMINAL_POWER)
+        return f"{_fmt(nominal, 'W', 0)} above Normal"
     if device_type == DEVICE_TYPE_POWER_STATION:
         low = get_entry_value(
             load_entry, CONF_STATION_MIN_CHARGE_POWER, DEFAULT_STATION_MIN_CHARGE_POWER
@@ -344,6 +364,12 @@ def _load_limits_text(hass, load_entry) -> str:
             load_entry, CONF_STATION_MAX_CHARGE_POWER, DEFAULT_STATION_MAX_CHARGE_POWER
         )
         return f"{_fmt(low, 'W', 0)}–{_fmt(high, 'W', 0)}"
+    if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+        unit = get_entry_value(load_entry, CONF_VL_SETPOINT_UNIT, DEFAULT_VL_SETPOINT_UNIT)
+        low = get_entry_value(load_entry, CONF_VL_MIN, DEFAULT_VL_MIN)
+        high = get_entry_value(load_entry, CONF_VL_MAX, DEFAULT_VL_MAX)
+        setpoint = get_entry_value(load_entry, CONF_VL_SETPOINT_ENTITY_ID, None)
+        return f"{_fmt(low, unit, 0)}–{_fmt(high, unit, 0)}" + ("" if setpoint else ", output only")
     low = get_entry_value(
         load_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
     )
@@ -389,20 +415,18 @@ _STATUS_UNIQUE_ID_SUFFIX = {
     DEVICE_TYPE_HOT_WATER_TANK: "_tank_status",
     DEVICE_TYPE_POWER_STATION: "_charging_status",
     DEVICE_TYPE_PLUG: "_charging_status",
+    DEVICE_TYPE_SG_READY: "_sg_ready_state",
 }
 
 
 def _device_status(hass, load_entry) -> str | None:
     """A non-EVSE load's own status sensor state, or None (EVSE, or no sensor)."""
     suffix = _STATUS_UNIQUE_ID_SUFFIX.get(
-        load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
+        behaviour_type(load_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
     )
     if not suffix:
         return None
-    unique_id = f"{load_entry.data.get(CONF_ENTITY_ID)}{suffix}"
-    entity_id = async_get_entity_registry(hass).async_get_entity_id(
-        "sensor", DOMAIN, unique_id
-    )
+    entity_id = own_entity_id(hass, load_entry, "sensor", suffix)
     state = hass.states.get(entity_id) if entity_id else None
     if state is None or units.is_unavailable(state):
         return None
@@ -593,6 +617,7 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             CONF_PHASE_C_CURRENT_ENTITY_ID,
         )
     ]
+    generator = bool(get_entry_value(entry, CONF_GRID_INPUT_IS_GENERATOR, False))
     if any(configured_cts):
         grid_phases = [None, None, None]
         try:
@@ -608,11 +633,18 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             # configured-but-unreadable CT (it deliberately does not invent 0 A),
             # so the overview can say so instead of showing a confident "0.0 A".
             if units.is_unusable_number(value):
-                lines.append(f"- Phase {label}: {_DASH} (sensor unreadable)")
+                lines.append(
+                    f"- Phase {label}: {_DASH} "
+                    + ("(generator not connected)" if generator else "(sensor unreadable)")
+                )
                 continue
             flow = "export" if value < 0 else "import"
+            if generator:
+                lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} from the generator")
+                continue
             lines.append(f"- Phase {label}: {_fmt(abs(value), 'A')} {flow}")
-        off_grid = False
+        # A generator on the grid input is off-grid: no meter, nothing to export to.
+        off_grid = generator
     else:
         lines.append("- No grid CTs configured - off-grid site")
         off_grid = True
@@ -686,6 +718,8 @@ def _hub_overview_lines(hass, entry) -> list[str]:
             detail = f"{_fmt(abs(margin), 'W', 0)} {'above' if margin >= 0 else 'below'} trigger"
         else:
             detail = f"margin {_fmt(margin, 'W', 0)}"
+        if hub_data.get("forecast_excess"):
+            detail += ", started early by the forecast"
         lines.append(f"- Excess trigger: {'on' if excess else 'off'} ({detail})")
     lines.append(
         "- Per-phase headroom: "
@@ -761,7 +795,7 @@ def _load_overview_lines(hass, entry) -> list[str]:
         + (f" · served {rank}. this cycle" if rank is not None else "")
     )
     lines.append(f"- Configured envelope: {_load_limits_text(hass, entry)}")
-    if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_PLUG):
+    if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_PLUG, DEVICE_TYPE_VARIABLE_LOAD):
         lines.append(f"- Phase mapping (L1→L3): {_phase_mapping_text(hass, entry)}")
 
     lines += ["", "**📊 Right now**"]
@@ -775,7 +809,9 @@ def _load_overview_lines(hass, entry) -> list[str]:
         lines.append(f"- Drawing on phases: {mask}")
     load_runtime = (runtime.get("loads") or {}).get(entry.entry_id) or {}
     if load_runtime.get("dynamic_control") is False:
-        lines.append("- ⚠️ Dynamic control is OFF - Load Juggler is not limiting this load")
+        lines.append(
+            f"- ⚠️ {hands_off_status(load_runtime)} - Load Juggler is not limiting this load"
+        )
 
     cap = _group_cap_for(hass, hub_entry_id, entry.entry_id)
     lines += ["", "**⛓ Circuit group**"]
@@ -832,6 +868,23 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
     except Exception:  # pragma: no cover - display path
         _LOGGER.debug("Could not read inverter output for the overview", exc_info=True)
     lines += phase_lines or ["- No per-phase output sensors configured"]
+    # What the inverter takes in at its AC input (grid side), signed: positive
+    # while it draws from the grid, negative while it feeds it.
+    try:
+        for label, key in (
+            ("A", CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID),
+            ("B", CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID),
+            ("C", CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID),
+        ):
+            entity_id = get_entry_value(entry, key, None)
+            if not entity_id:
+                continue
+            value = _read_signed_amps(hass, entity_id, voltage)
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                value = None
+            lines.append(f"- Input phase {label}: {_fmt(value, 'A')}")
+    except Exception:  # pragma: no cover - display path
+        _LOGGER.debug("Could not read inverter input for the overview", exc_info=True)
     lines.append(f"- Solar production: {_fmt(own.get('solar_w'), 'W', 0)}")
     max_power = get_entry_value(entry, CONF_INVERTER_MAX_POWER, None)
     per_phase = get_entry_value(entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None)
@@ -846,8 +899,8 @@ def _inverter_overview_lines(hass, entry) -> list[str]:
         lines.append(f"- SOC: {_fmt(own.get('battery_soc'), '%', 0)}")
         lines.append(f"- Power: {_battery_power_line(own.get('battery_power'))}")
         lines.append(
-            f"- Reserve floor: {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN), '%', 0)}"
-            f" · full at {_fmt(get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL), '%', 0)}"
+            f"- Reserve floor: {_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_min'), '%', 0)}"
+            f" · full at {_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_full'), '%', 0)}"
         )
         lines.append(
             "- Charge/discharge limits: "
@@ -968,7 +1021,12 @@ def _summary_text(hass, hub_entry_id: str) -> str:
         )
         if get_entry_value(entry, key, None)
     ]
-    if grid_cts:
+    if grid_cts and get_entry_value(entry, CONF_GRID_INPUT_IS_GENERATOR, False):
+        lines.append(
+            "- ✓ Off-grid with a generator on the grid input, "
+            f"{_fmt(get_entry_value(entry, CONF_GENERATOR_RATING, DEFAULT_GENERATOR_RATING), 'A', 0)} per phase"
+        )
+    elif grid_cts:
         lines.append(
             f"- ✓ Grid CTs on phase {', '.join(grid_cts)}, main breaker "
             f"{_fmt(get_entry_value(entry, CONF_MAIN_BREAKER_RATING, DEFAULT_MAIN_BREAKER_RATING), 'A', 0)} per phase"
@@ -1000,17 +1058,23 @@ def _summary_text(hass, hub_entry_id: str) -> str:
                 if get_entry_value(inverter, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False)
                 else "symmetric"
             )
-            topology = get_entry_value(
-                inverter, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY
-            )
-            if topology:
-                bits.append(str(topology))
+            if get_entry_value(inverter, CONF_INVERTER_INPUT_IS_GRID, False):
+                bits.append("input: grid meter")
+            elif any(
+                get_entry_value(inverter, key, None)
+                for key in (
+                    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+                    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+                    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+                )
+            ):
+                bits.append("input: sensors")
             if get_entry_value(inverter, CONF_BATTERY_SOC_ENTITY_ID, None):
                 bits.append(
                     "battery "
-                    f"{_fmt(get_entry_value(inverter, CONF_BATTERY_SOC_MIN, DEFAULT_BATTERY_SOC_MIN), '%', 0)}"
+                    f"{_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_min'), '%', 0)}"
                     "–"
-                    f"{_fmt(get_entry_value(inverter, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL), '%', 0)}"
+                    f"{_fmt(_hub_slider(hass, hub_entry_id, 'battery_soc_full'), '%', 0)}"
                 )
             if get_entry_value(inverter, CONF_SOLAR_FORECAST_DEVICE_IDS, None):
                 bits.append("PV forecast active")
@@ -1058,6 +1122,7 @@ def _summary_text(hass, hub_entry_id: str) -> str:
             DEVICE_TYPE_EVSE,
             DEVICE_TYPE_POWER_STATION,
             DEVICE_TYPE_PLUG,
+            DEVICE_TYPE_VARIABLE_LOAD,
         ):
             bits.append(f"phases {_phase_mapping_text(hass, load)}")
         cap = _group_cap_for(hass, hub_entry_id, load.entry_id)

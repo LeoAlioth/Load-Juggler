@@ -36,7 +36,7 @@ scenarios:
       inverter_max_power_per_phase: 4000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "boiler"
         device_type: "plug"
@@ -72,7 +72,7 @@ scenarios:
       inverter_max_power_per_phase: 8000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "boiler"
         device_type: "plug"
@@ -106,7 +106,7 @@ scenarios:
       inverter_max_power_per_phase: 4000
       inverter_supports_asymmetric: false
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "boiler"
         device_type: "plug"
@@ -145,7 +145,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 20000
       inverter_max_power: 6000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         min_current: 6
@@ -196,7 +195,7 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -227,7 +226,7 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -258,7 +257,7 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -290,7 +289,7 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Solar Only"
@@ -322,7 +321,6 @@ scenarios:
       battery_soc_target: 50
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -355,7 +353,6 @@ scenarios:
       battery_soc_target: 50
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -387,7 +384,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_max_power: 4000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -421,7 +417,7 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 5000
       inverter_output_sensors: true
-      wiring_topology: series
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         operating_mode: "Standard"
@@ -464,7 +460,7 @@ scenarios:
       battery_max_discharge_power: 20000
       inverter_max_power: 6000
       inverter_output_sensors: true
-      wiring_topology: parallel
+      inverters: [{kind: hybrid, input: none}]
     loads:
       - entity_id: "car"
         min_current: 6
@@ -503,7 +499,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 20000
       inverter_max_power: 6000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         min_current: 6
@@ -535,7 +530,6 @@ scenarios:
       battery_max_charge_power: 5000
       battery_max_discharge_power: 20000
       inverter_max_power: 6000
-      wiring_topology: series
     loads:
       - entity_id: "car"
         min_current: 6

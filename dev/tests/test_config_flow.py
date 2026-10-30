@@ -8,6 +8,8 @@ from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.helpers.entity_registry import RegistryEntry
 from pytest_homeassistant_custom_component.common import MockConfigEntry, MockEntity
 
+from .conftest import add_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     DOMAIN,
     ENTRY_TYPE,
@@ -253,11 +255,13 @@ async def test_charger_config_creates_entry(
 async def test_options_flow_hub_shows_menu(
     hass: HomeAssistant,
     mock_hub_entry: MockConfigEntry,
+    mock_inverter_entry: MockConfigEntry,
     mock_setup,
 ):
-    """An imported hub's options open on a menu of one page per question, plus
+    """A hub's options open on a menu of one page per question, plus
     overview and how it decides - no priority page without loads."""
     mock_hub_entry.add_to_hass(hass)
+    mock_inverter_entry.add_to_hass(hass)
     await hass.config_entries.async_setup(mock_hub_entry.entry_id)
     await hass.async_block_till_done()
 
@@ -611,69 +615,69 @@ _BATTERY_FULL = {
 }
 
 
-def test_offgrid_battery_grid_cts_present_no_battery_ok():
+def _offgrid_errors(hass, grid, battery=None):
+    """The requirement's verdict for a hub whose grid page reads ``grid``,
+    with one inverter holding ``battery`` (none when None)."""
+    hub = MockConfigEntry(domain=DOMAIN, data={ENTRY_TYPE: ENTRY_TYPE_HUB})
+    hub.add_to_hass(hass)
+    if battery is not None:
+        add_inverter(hass, hub, battery)
+    errors = {}
+    validate_offgrid_battery_requirement(grid, errors, hass, hub.entry_id)
+    return errors
+
+
+async def test_offgrid_battery_grid_cts_present_no_battery_ok(hass):
     """Grid CTs configured → battery not required."""
-    errors = {}
-    validate_offgrid_battery_requirement(
-        {CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a"}, {}, errors
-    )
-    assert errors == {}
+    assert _offgrid_errors(hass, {CONF_PHASE_A_CURRENT_ENTITY_ID: "sensor.grid_a"}) == {}
 
 
-def test_offgrid_battery_no_cts_with_full_battery_ok():
-    """No grid CTs but SOC + power both configured → valid."""
-    errors = {}
-    validate_offgrid_battery_requirement({}, _BATTERY_FULL, errors)
-    assert errors == {}
+async def test_offgrid_battery_no_cts_with_full_battery_ok(hass):
+    """No grid CTs but an inverter with SOC + power → valid."""
+    assert _offgrid_errors(hass, {}, _BATTERY_FULL) == {}
 
 
-def test_offgrid_battery_no_cts_no_battery_blocked():
+async def test_offgrid_battery_no_cts_no_battery_blocked(hass):
     """No grid CTs and no battery → hard block."""
-    errors = {}
-    validate_offgrid_battery_requirement({}, {}, errors)
-    assert errors.get("base") == "battery_required_no_cts"
+    assert _offgrid_errors(hass, {}) == {"base": "battery_required_no_cts"}
 
 
-def test_offgrid_battery_no_cts_only_soc_blocked():
+async def test_offgrid_battery_no_cts_only_soc_blocked(hass):
     """No grid CTs, battery SOC but no power → hard block."""
-    errors = {}
-    validate_offgrid_battery_requirement(
-        {}, {CONF_BATTERY_SOC_ENTITY_ID: "sensor.bat_soc"}, errors
-    )
-    assert errors.get("base") == "battery_required_no_cts"
+    errors = _offgrid_errors(hass, {}, {CONF_BATTERY_SOC_ENTITY_ID: "sensor.bat_soc"})
+    assert errors == {"base": "battery_required_no_cts"}
 
 
-def test_offgrid_battery_no_cts_only_power_blocked():
+async def test_offgrid_battery_no_cts_only_power_blocked(hass):
     """No grid CTs, battery power but no SOC → hard block."""
-    errors = {}
-    validate_offgrid_battery_requirement(
-        {}, {CONF_BATTERY_POWER_ENTITY_ID: "sensor.bat_power"}, errors
+    errors = _offgrid_errors(
+        hass, {}, {CONF_BATTERY_POWER_ENTITY_ID: "sensor.bat_power"}
     )
-    assert errors.get("base") == "battery_required_no_cts"
+    assert errors == {"base": "battery_required_no_cts"}
 
 
-def test_offgrid_battery_partial_cts_count_as_grid():
+async def test_offgrid_battery_partial_cts_count_as_grid(hass):
     """A single phase CT counts as grid-connected → battery not required."""
-    errors = {}
-    validate_offgrid_battery_requirement(
-        {CONF_PHASE_C_CURRENT_ENTITY_ID: "sensor.grid_c"}, {}, errors
-    )
-    assert errors == {}
+    assert _offgrid_errors(hass, {CONF_PHASE_C_CURRENT_ENTITY_ID: "sensor.grid_c"}) == {}
 
 
-def test_offgrid_battery_none_grid_values_blocked():
+async def test_offgrid_battery_none_grid_values_blocked(hass):
     """Grid CT keys explicitly None → treated as no CTs."""
     grid = {
         CONF_PHASE_A_CURRENT_ENTITY_ID: None,
         CONF_PHASE_B_CURRENT_ENTITY_ID: None,
         CONF_PHASE_C_CURRENT_ENTITY_ID: None,
     }
-    errors = {}
-    validate_offgrid_battery_requirement(grid, _BATTERY_FULL, errors)
-    assert errors == {}
-    errors = {}
-    validate_offgrid_battery_requirement(grid, {}, errors)
-    assert errors.get("base") == "battery_required_no_cts"
+    assert _offgrid_errors(hass, grid, _BATTERY_FULL) == {}
+
+
+async def test_offgrid_battery_on_the_hub_itself_does_not_count(hass):
+    """Battery fields left on the hub (pre-import) satisfy nothing - the
+    requirement asks the inverter entries, the only place the engine reads a
+    battery from."""
+    assert _offgrid_errors(hass, {**_BATTERY_FULL}) == {
+        "base": "battery_required_no_cts"
+    }
 
 
 async def test_a_disabled_inverters_battery_does_not_count(hass):
@@ -698,7 +702,7 @@ async def test_a_disabled_inverters_battery_does_not_count(hass):
         )
         inverter.add_to_hass(hass)
         errors = {}
-        validate_offgrid_battery_requirement({}, {}, errors, hass, hub.entry_id)
+        validate_offgrid_battery_requirement({}, errors, hass, hub.entry_id)
         assert (errors == {}) is counts
         assert hub_has_battery(hass, hub) is counts
         await hass.config_entries.async_remove(inverter.entry_id)

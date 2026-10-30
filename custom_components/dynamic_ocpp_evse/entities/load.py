@@ -9,9 +9,11 @@ from homeassistant.components.sensor import (
 from homeassistant.core import callback
 from datetime import datetime, timezone
 from ..const import (
+    behaviour_type,
     CONF_LOAD_PRIORITY,
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
+    CONF_PAUSE_PROFILE_VALIDITY,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -21,10 +23,13 @@ from ..const import (
     CONF_PHASE_VOLTAGE,
     CONF_SOLAR_GRACE_PERIOD,
     CONF_STATION_MIN_CHARGE_POWER,
+    CONF_FILTER_DEAD_BAND,
     CONF_UPDATE_FREQUENCY,
+    DEAD_BAND,
     DEFAULT_LOAD_PRIORITY,
     DEFAULT_BINARY_MIN_OFF_TIME,
     DEFAULT_CHARGE_PAUSE_DURATION,
+    DEFAULT_PAUSE_PROFILE_VALIDITY,
     DEFAULT_MAX_CHARGE_CURRENT,
     DEFAULT_MIN_CHARGE_CURRENT,
     DEFAULT_PHASE_VOLTAGE,
@@ -35,27 +40,35 @@ from ..const import (
     DEVICE_TYPE_HOT_WATER_TANK,
     DEVICE_TYPE_PLUG,
     DEVICE_TYPE_POWER_STATION,
+    DEVICE_TYPE_SG_READY,
+    DEVICE_TYPE_VARIABLE_LOAD,
     DOMAIN,
     EVSE_MODE_EXCESS,
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_SOLAR_PRIORITY,
     EVSE_RT_READOUT_WATCH,
     LOAD_RT_SUN_PROBE,
+    VL_MODE_HOLD,
+    VL_RT_LEGS_GREW,
+    VL_RT_SIZED_COUNT,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, variable_load_amps
 from ..ocpp_discovery import ocpp_charge_control_entity, ocpp_connector_status_entity
 from .. import units
 from .mixins import LoadEntityMixin, SiteFreshnessMixin
 from .readout import readout_attributes
 from .sun_probe import sun_probe_attributes
 from ..registry import get_hub_for_load
-from ..control.smoothing import apply_smoothing
+from ..control.smoothing import apply_smoothing, cut_now
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
+from ..control import stamp_command
 from ..control.ocpp import send_ocpp_command
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
+from ..control.sg_ready import send_sg_ready_command
+from ..control.variable_load import send_variable_load_command
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -129,6 +142,23 @@ def grace_modes(binary_load, hub_data) -> tuple:
 
 
 
+def rides_grace(mode, device_type, hub_data, tank_label=None) -> bool:
+    """May this load hold a collapsed permit through the grace window?
+
+    The modes grace_modes names - and a tank boosting in Freeze Protection or
+    Normal: that boost is on the Excess tier (powered from the Excess pool
+    alone), so it rides a cloud like an Excess-mode load. Without it the permit
+    collapsed on the first dip and the minimum off time then held it off:
+    Kozolec 11 Oct 2026, the bathroom IR panel on for 20 s at a time as the sun
+    swung 7.4 -> 4.5 kW. Only the boost - normal heating still sheds at once,
+    and below the minimum SOC the tank's label is away, which is never held.
+    """
+    binary_load = device_type in (DEVICE_TYPE_PLUG, DEVICE_TYPE_HOT_WATER_TANK)
+    if mode in grace_modes(binary_load, hub_data):
+        return True
+    return device_type == DEVICE_TYPE_HOT_WATER_TANK and tank_label == "boost"
+
+
 class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity):
     """Representation of a managed device (EVSE, smart plug, etc.).
 
@@ -179,9 +209,17 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # the tz-aware values written later is a comparison landmine.
         self._last_update = None
         self._pause_started_at = None
+        # The pause whose 0 A profile reached the charger (its _pause_started_at),
+        # so the rest of that pause sends nothing - see the EVSE command below -
+        # and when that profile is due a refresh (monotonic).
+        self._pause_sent_for = None
+        self._pause_hold_until = 0.0
         # Has this load ever held a RUNNABLE permit in this process? The charge
         # pause may only arm once it has - see the pause branch for why.
         self._had_runnable_permit = False
+        # Did the last site cycle see a shortage (permit and raw permit both
+        # under the minimum)? The pause takes two in a row - see its branch.
+        self._short_last_cycle = False
         self._grace_started_at = None
         # Binary-load grace state: the last permit the engine actually granted
         # (what the hold re-offers) and a latch so a spent grace window cannot
@@ -305,6 +343,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             )
         return attrs
 
+    def _variable_load_floor(self, hub_entry) -> float:
+        """A variable load's minimum per-leg amps: its bounds are in its
+        setpoint unit, over the legs it is sized on - see _build_variable_load()."""
+        return variable_load_amps(
+            self.config_entry,
+            get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE),
+            self._runtime().get(VL_RT_SIZED_COUNT),
+        )[0]
+
     async def async_process(self, hub_data):
         """Apply one site result to this load: state, timers and commands.
 
@@ -424,10 +471,29 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             load_avail_data.get(self.config_entry.entry_id, 0), 1
         )
 
-        device_type = self.config_entry.data.get(
-            CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE
+        device_type = behaviour_type(
+            self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE)
         )
-        if device_type == DEVICE_TYPE_EVSE:
+        legs_grew = device_type == DEVICE_TYPE_VARIABLE_LOAD and self._runtime().pop(
+            VL_RT_LEGS_GREW, False
+        )
+        if legs_grew:
+            # It now draws on more legs than it was sized on (switched back to
+            # three phases): the allowance it holds was sized for fewer legs.
+            # Restart the permit from the minimum - the new legs only rise
+            # through the ramp - and let the cut (or the stop) go out now,
+            # not at the command slot, without the one-cycle confirmation.
+            floor = self._variable_load_floor(hub_entry)
+            self._ema_current = self._schmitt_current = self._rate_limited_current = floor
+            self._schmitt_state = "rising"
+            self._short_last_cycle = True
+            self._last_command_time = -float("inf")
+            self._last_commanded_limit = None  # not the cut straight to the new permit
+            _LOGGER.info(
+                "%s draws on more legs than it was sized on - restarting its allowance at %.1f A",
+                self._attr_name, floor,
+            )
+        if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_VARIABLE_LOAD):
             self._available_current = apply_smoothing(
                 self, raw_permit, mode_changed, hub_entry
             )
@@ -444,6 +510,13 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             )
         else:
             self._available_current = raw_permit
+        if (
+            device_type == DEVICE_TYPE_VARIABLE_LOAD
+            and self._operating_mode == VL_MODE_HOLD.key
+        ):
+            # Hold: nothing allowed. The engine claims nothing for it, but an
+            # inactive load is still offered what is left over.
+            raw_permit = self._available_current = 0.0
         self._state = self._available_current
 
         # The pause/grace floor MUST be the same number the engine floored this
@@ -453,6 +526,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # Both branches therefore read the live runtime slider first and fall
         # back to the config value exactly as engine/hub_calculation.py does.
         load_rt = self._runtime()
+        pause_s = 60 * get_entry_value(
+            self.config_entry, CONF_CHARGE_PAUSE_DURATION, DEFAULT_CHARGE_PAUSE_DURATION
+        )
         if device_type == DEVICE_TYPE_POWER_STATION:
             # The station's floor is its minimum charge POWER, not a current -
             # see _build_power_station_load().
@@ -471,6 +547,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 or "A"
             )
             min_charge_current = _min_power / (_voltage * _phases)
+        elif device_type == DEVICE_TYPE_VARIABLE_LOAD:
+            min_charge_current = self._variable_load_floor(hub_entry)
         else:
             # Mirrors _build_evse_load(): runtime "Min Current" slider, then
             # the configured minimum. Plugs and tanks never publish
@@ -528,7 +606,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # the cycle it happens, exactly as before. Nothing holds a load on below
         # its floor; the hold is simply no longer forbidden above it.
         if (
-            self._operating_mode in grace_modes(binary_load, hub_data)
+            rides_grace(self._operating_mode, device_type, hub_data,
+                        load_rt.get("tank_setpoint_label"))
             and grace_period_seconds > 0
         ):
             if self._available_current < min_charge_current:
@@ -545,10 +624,16 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 # the grace window whenever it was actually charging (the
                 # was-charging gate stops an idle station from cycling
                 # 200 W on/off through the night). This is what stops the
-                # reserve flapping over BLE on marginal days.
+                # reserve flapping over BLE on marginal days. Like a binary
+                # load it rides ONE window per collapse: the stop that ends a
+                # window waits a cycle for confirmation, and the station is
+                # still "charging" on that cycle, so without the exhausted
+                # latch the window re-armed for ever and the station charged
+                # at its minimum from the grid all evening (Home, 2026-10-13).
                 if (
                     device_type == DEVICE_TYPE_POWER_STATION
                     and load_rt.get("station_charging")
+                    and not self._grace_exhausted
                 ) or (
                     binary_load
                     and self._binary_last_permit > 0
@@ -580,11 +665,11 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                             grace_period_minutes,
                         )
                         self._grace_started_at = None
-                        if binary_load:
+                        if binary_load or device_type == DEVICE_TYPE_POWER_STATION:
                             # Do not re-arm next cycle: for a binary load the
                             # permit is the on/off answer, so a re-arming window
                             # would switch it back on for another grace period,
-                            # forever.
+                            # forever - and a station would hold its minimum.
                             self._grace_exhausted = True
                 else:
                     if self._grace_started_at is not None:
@@ -676,11 +761,42 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             self.config_entry.entry_id
         ] = load_phase_masks.get(self.config_entry.entry_id, "")
 
+        if device_type == DEVICE_TYPE_SG_READY:
+            # The state machine (engine/hub_calculation._apply_sg_ready) owns the
+            # timing - minimum time per state, Block limits - so none of the
+            # permit pipeline below (grace, pause, minimum off time) applies.
+            status = hub_data.get("sg_ready", {}).get(self.config_entry.entry_id)
+            if status is not None:
+                await send_sg_ready_command(self, status, time.monotonic())
+            return
+
+        # Kept on every cycle, command or not, so the pause below can ask
+        # whether the shortage it sees was there on the cycle before too.
+        short = max(self._available_current, raw_permit) < min_charge_current
+        short_confirmed = short and self._short_last_cycle
+        self._short_last_cycle = short
+
         command_interval = get_entry_value(
             self.config_entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
         )
         now_mono = time.monotonic()
-        if now_mono - self._last_command_time < command_interval:
+        dynamic_control_on = load_rt.get("dynamic_control", True)
+        # A cut that keeps the charger running goes out now, not at its slot:
+        # the engine has already handed the room to someone else (a second car
+        # starting). Raises, pauses and stops keep the slot.
+        cut = None
+        if not short and dynamic_control_on and self._pause_started_at is None:
+            cut = cut_now(
+                self, raw_permit, min_charge_current,
+                get_entry_value(hub_entry, CONF_FILTER_DEAD_BAND, DEAD_BAND),
+            )
+            if cut is not None:
+                _LOGGER.debug(
+                    "Cut for %s goes out before its slot: %.1f A -> %.1f A",
+                    self._attr_name, self._last_commanded_limit, cut,
+                )
+                self._available_current = cut
+        if cut is None and now_mono - self._last_command_time < command_interval:
             _LOGGER.debug(
                 "Site refresh for %s (command send in %.0fs)",
                 self._attr_name,
@@ -698,9 +814,6 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
             DEFAULT_MAX_CHARGE_CURRENT,
         )
-
-        load_rt = self._runtime()
-        dynamic_control_on = load_rt.get("dynamic_control", True)
 
         if device_type == DEVICE_TYPE_HOT_WATER_TANK:
             # The tank is a binary load whose thermostat - not the engine -
@@ -729,7 +842,27 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 self._attr_name,
                 limit,
             )
-        elif self._available_current < min_charge_current:
+        elif short:
+            # A shortage the engine still sees as the command goes out: the
+            # permit is under the minimum, and so is the raw permit - on this
+            # site cycle and the one before. The smoothed permit alone is no
+            # evidence of one: it climbs back to the minimum over some 25 s
+            # after any dip, so a dip of a cycle or two that was over well
+            # before the command still found it a few tenths short, and the
+            # car was paused for the whole dwell (the third site's second charger,
+            # 2026-10-04). With the engine offering the minimum again, the
+            # branch below runs the load at it. And one cycle's raw 0 is one
+            # reading: on the first, the decision waits for the next cycle -
+            # the command slot stays open, so a shortage that holds is acted
+            # on one site cycle later and one that does not costs nothing.
+            if not short_confirmed:
+                _LOGGER.debug(
+                    "Permit under the minimum for %s on this cycle only -"
+                    " deciding on the next",
+                    self._attr_name,
+                )
+                return
+            #
             # The pause bounds cycle FREQUENCY (see the minimum-off-time
             # comment below for why that is the quantity that matters), and a
             # cycle needs a previous ON: a load that has never held a runnable
@@ -750,28 +883,29 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # Reaching here means the permit is runnable, which is what lets a
             # later collapse arm the pause at all (see above). Set before the
             # dwell test, so a load that is currently serving one still counts
-            # as having held a permit.
+            # as having held a permit. Runnable means at least the minimum:
+            # the smoothed permit may still be climbing back to it.
             self._had_runnable_permit = True
-            pause_duration_s = (
-                get_entry_value(
-                    self.config_entry,
-                    CONF_CHARGE_PAUSE_DURATION,
-                    DEFAULT_CHARGE_PAUSE_DURATION,
-                )
-                * 60
-            )
+            runnable = round(max(self._available_current, min_charge_current), 1)
             if self._pause_started_at is not None:
                 elapsed = time.monotonic() - self._pause_started_at
-                if elapsed < pause_duration_s:
+                if elapsed < pause_s:
                     limit = 0
                 else:
                     self._pause_started_at = None
-                    limit = round(self._available_current, 1)
+                    limit = runnable
             else:
-                limit = round(self._available_current, 1)
+                limit = runnable
 
-        connector_state = self.hass.states.get(self._connector_status_entity)
-        connector_status = units.state_or_unknown(connector_state)
+        if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+            # No OCPP connector: the engine's verdict from its gates.
+            connector_status = hub_data.get("load_connector_status", {}).get(
+                self.config_entry.entry_id
+            ) or units.state_or_unknown(None)
+        else:
+            connector_status = units.state_or_unknown(
+                self.hass.states.get(self._connector_status_entity)
+            )
 
         self._charging_status = determine_charging_status(
             self,
@@ -808,9 +942,45 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 await send_power_station_command(
                     self, limit, hub_entry, now_mono
                 )
+        elif device_type == DEVICE_TYPE_VARIABLE_LOAD:
+            # Dynamic Control off → hands off: no write, nothing published.
+            if dynamic_control_on:
+                await send_variable_load_command(
+                    self, limit, hub_entry, now_mono,
+                    (hub_data.get("load_potential") or {}).get(self.config_entry.entry_id),
+                )
         else:
             await check_profile_compliance(self, limit, dynamic_control_on)
-            await send_ocpp_command(
+            # A pause's 0 A goes out once, valid for the pause profile validity
+            # (default 1 h, or the rest of the pause if longer) on top of the
+            # usual validity, and is not sent again while it holds: re-sending
+            # a 0 A profile every command interval restarted a go-eCharger's
+            # charging cycle every 30 s (the third site's Nova). A pause outlives its
+            # dwell whenever the permit stays under the minimum (Solar Only or
+            # Excess after sunset), so the profile is refreshed once its hold
+            # runs out - a lapsed one let Home's EVBox fall back to 16 A and
+            # charge at 10 kW in Excess mode (2026-10-12). Any allocation
+            # replaces it at once (same profile id and stack level). Sent
+            # again early only if the charger draws anyway - a reboot that
+            # lost it.
+            hold_s = None
+            if limit == 0 and self._pause_started_at is not None:
+                if (
+                    self._pause_sent_for == self._pause_started_at
+                    and time.monotonic() < self._pause_hold_until
+                    and (hub_data.get("load_draw", {}).get(self.config_entry.entry_id) or 0) < 1.0
+                ):
+                    stamp_command(self, now_mono)
+                    return
+                hold_s = max(
+                    pause_s - (time.monotonic() - self._pause_started_at),
+                    60 * get_entry_value(
+                        self.config_entry,
+                        CONF_PAUSE_PROFILE_VALIDITY,
+                        DEFAULT_PAUSE_PROFILE_VALIDITY,
+                    ),
+                )
+            sent = await send_ocpp_command(
                 self,
                 limit,
                 hub_entry,
@@ -821,4 +991,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 effective_status=hub_data.get("load_connector_status", {}).get(
                     self.config_entry.entry_id
                 ),
+                hold_s=hold_s,
             )
+            if hold_s is not None and sent:
+                self._pause_sent_for = self._pause_started_at
+                # Refreshed when the hold runs out, with the usual profile
+                # timeout still left on the charger as the margin.
+                self._pause_hold_until = time.monotonic() + hold_s

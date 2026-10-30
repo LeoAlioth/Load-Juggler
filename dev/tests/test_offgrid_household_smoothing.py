@@ -4,8 +4,8 @@ Machine-authored tests - not yet human-reviewed.
 
 Off-grid there is no grid meter: everything the site draws, managed loads
 included, comes out of the inverters, so the engine reconstructs the household
-as ``inverter output − Σ managed draw`` (series formula,
-``calculations.utils.compute_household_per_phase``) and sizes every permit on
+as ``grid + inverter output − Σ managed draw`` (the grid is 0 there,
+``calculations.utils.household_per_phase``) and sizes every permit on
 the inverter rating that household leaves. The output is SMOOTHED on the input
 EMA (``engine/readers._smooth_member_output``); until 2026-09-24 the draw it
 was subtracted from was RAW. So when a charger started, its whole draw came
@@ -28,6 +28,8 @@ household low while the charger starts.
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import INPUT_GRID, input_options, with_inverter
+
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
@@ -39,11 +41,9 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_MAIN_BREAKER_RATING,
     CONF_NAME,
     CONF_PHASE_VOLTAGE,
-    CONF_WIRING_TOPOLOGY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .closed_loop import (
@@ -71,7 +71,7 @@ def _hub(slug):
             CONF_MAIN_BREAKER_RATING: 40,
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: OUTPUT,
             CONF_INVERTER_MAX_POWER: int(RATING_W),
-            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+            **input_options(INPUT_GRID),
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.og_battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.og_battery_power",
             # A large pack, so the inverter's rating binds and not the battery.
@@ -93,7 +93,7 @@ async def _run(hass, slug, car_ramp_a_s, cycles=120, house=None, car=None,
     car that ignores its command). At night the battery supplies the whole
     output. One row per cycle.
     """
-    hub = _hub(slug)
+    hub = with_inverter(hass, _hub(slug))
     hass.states.async_set(STATUS, "Available")
     hass.states.async_set("sensor.og_battery_soc", "80", BATTERY_PCT)
     draw = 0.0

@@ -1,0 +1,271 @@
+# Test scenarios: one household sum, whatever the inverters' arrangement
+#
+# The household is grid + sum(output - input) - managed draw on EVERY site
+# (calculations/utils.household_per_phase). These scenarios put the same
+# physical site - 3 phases, 230 V, a 40 A breaker, a solar sensor, a
+# symmetric inverter with no rating, 3 A of household a phase and one 3-phase
+# car (6-16 A) - behind each arrangement of inverters the harness can draw
+# (`inverters:` / `main_bus_share:`, see run_tests.resolve_arrangement), and
+# each group has to give ONE allocation whatever the arrangement:
+#
+#   day group    6900 W of sun, Solar Only:
+#                (6900 - 3 * 3 A * 230 V) / 230 / 3 = 7.0 A
+#   night group  no sun, battery 80 % discharging up to 5 kW through the
+#                hybrid, 0 W import allowance, 1 A of household a phase,
+#                Standard: (5000 - 3 * 1 A * 230 V) / 230 / 3 = 6.2 A
+#
+# Before the wiring-topology setting went away, only the arrangements it could
+# name (a PV inverter on the grid bus, a hybrid the grid flows through) were
+# right; a panel on the grid bus ahead of a hybrid, or a PV inverter on a
+# hybrid's load port, were not expressible.
+
+scenarios:
+
+  # ── Day: 6900 W of sun, Solar Only, 7.0 A in every arrangement ───────────────
+
+  - name: "arr-a-pv-on-main"
+    description: "One PV inverter on the grid-meter bus, no input"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 6900
+      solar_production_direct: true
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      inverter_output_sensors: true
+      inverters: [{kind: pv}]
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 7.0
+
+  - name: "arr-b-hybrid-grid-tick"
+    description: "A hybrid the grid flows through (input is the grid meter), no battery"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 6900
+      solar_production_direct: true
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: grid}]
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 7.0
+
+  - name: "arr-c-hybrid-input-sensors"
+    description: "A hybrid with input sensors, no battery"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 6900
+      solar_production_direct: true
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: sensors}]
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 7.0
+
+  - name: "arr-d-hybrid-plus-unbacked-panel"
+    description: "A hybrid with input sensors, 40 % of the household on the grid-meter bus ahead of it"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 6900
+      solar_production_direct: true
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: sensors}]
+      main_bus_share: 0.4
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 7.0
+
+  - name: "arr-e-hybrid-plus-pv-on-main"
+    description: "A hybrid with input sensors plus a PV inverter on the main bus, sun split 50/50"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 6900
+      solar_production_direct: true
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: sensors}, {kind: pv, solar_share: 0.5}]
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 7.0
+
+  - name: "arr-f-pv-on-hybrid-load-port"
+    description: "A hybrid with input sensors plus a PV inverter on its load port, sun split 50/50 (the hybrid reads below the house while the PV out-produces the port)"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 6900
+      solar_production_direct: true
+      phase_a_consumption: 3.0
+      phase_b_consumption: 3.0
+      phase_c_consumption: 3.0
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: sensors}, {kind: pv, feeds: port, solar_share: 0.5}]
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 7.0
+
+  # ── Night: 5 kW of battery, no import, Standard, 6.2 A in every arrangement ───
+
+  - name: "arr-b-night"
+    description: "Night, battery behind a hybrid the grid flows through, 0 W import allowance"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      solar_production_direct: true
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: grid}]
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 6.2
+
+  - name: "arr-c-night"
+    description: "Night, battery behind a hybrid with input sensors, 0 W import allowance"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      solar_production_direct: true
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: sensors}]
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 6.2
+
+  - name: "arr-d-night"
+    description: "Night, hybrid with input sensors and 40 % of the household on the grid-meter bus, 0 W import allowance"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      max_import_power: 0
+      distribution_mode: priority
+      solar_production: 0
+      solar_production_direct: true
+      phase_a_consumption: 1.0
+      phase_b_consumption: 1.0
+      phase_c_consumption: 1.0
+      battery_soc: 80
+      battery_soc_min: 20
+      battery_soc_target: 50
+      battery_max_charge_power: 5000
+      battery_max_discharge_power: 5000
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: sensors}]
+      main_bus_share: 0.4
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 3
+        priority: 1
+    expected:
+      car:
+        allocated: 6.2

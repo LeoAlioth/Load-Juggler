@@ -18,32 +18,18 @@ from ..const import (
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
 )
-from ..helpers import get_entry_value, ocpp_config_value
+from ..helpers import detect_charge_rate_unit, get_entry_value
 from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
 
-async def detect_charge_rate_unit(sensor, ocpp_device_id: str) -> str | None:
-    """Query OCPP charger for ChargingScheduleAllowedChargingRateUnit."""
-    value = await ocpp_config_value(
-        sensor.hass, ocpp_device_id, "ChargingScheduleAllowedChargingRateUnit"
-    )
-    if not value:
-        return None
-    value = str(value).strip()
-    if "Current" in value:
-        return CHARGE_RATE_UNIT_AMPS
-    if "Power" in value:
-        return CHARGE_RATE_UNIT_WATTS
-    return None
-
-
 async def send_ocpp_command(
     sensor, limit: float, hub_entry, now_mono: float,
     effective_status: str | None = None,
-) -> None:
+    hold_s: float | None = None,
+) -> bool:
     """Send OCPP charging profile to an EVSE charger.
 
     ``effective_status`` is the connector status the ENGINE decided on, taken
@@ -58,7 +44,7 @@ async def send_ocpp_command(
     0 A profile every command interval, for as long as the car stayed plugged
     in, to a charger that had finished.
 
-    Reported live on the SE17K site's EvBox Elvi (Anze, 2026-09-09, and seen
+    Reported live on the SE17K site's EvBox Elvi (2026-09-09, and seen
     under 1.1.x too): "Set charging profile failed with response Exception",
     always with a car plugged in, arriving when that car finished charging,
     sometimes many times within the hour - one per command interval. The
@@ -83,11 +69,14 @@ async def send_ocpp_command(
         stamp_command(sensor, now_mono)
         return
 
+    # ``hold_s``: a pause's 0 A stays valid that much longer (the rest of the
+    # pause), so it is sent once - see entities/load.py. Returns whether the
+    # profile went out.
     profile_timeout = int(
         get_entry_value(
             sensor.config_entry, CONF_OCPP_PROFILE_TIMEOUT, DEFAULT_OCPP_PROFILE_TIMEOUT
         )
-    )
+    ) + int(hold_s or 0)
     stack_level = int(
         get_entry_value(sensor.config_entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL)
     )
@@ -107,7 +96,7 @@ async def send_ocpp_command(
             ocpp_device_id = get_entry_value(
                 sensor.config_entry, CONF_OCPP_DEVICE_ID, None
             )
-            detected = await detect_charge_rate_unit(sensor, ocpp_device_id)
+            detected = await detect_charge_rate_unit(sensor.hass, ocpp_device_id)
             if detected:
                 charge_rate_unit = detected
                 sensor._cached_charge_rate_unit = detected
@@ -249,3 +238,4 @@ async def send_ocpp_command(
     load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
     load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
     stamp_command(sensor, now_mono)
+    return True

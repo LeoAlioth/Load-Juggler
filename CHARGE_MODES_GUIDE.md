@@ -12,7 +12,8 @@ For circuit groups (shared breaker limits), see [DISTRIBUTION_MODES_GUIDE.md](DI
 6. [Excess Mode](#excess-mode)
 7. [Hot Water Tank Modes](#hot-water-tank-modes)
 8. [Power Station Modes](#power-station-modes)
-9. [Configuration Parameters](#configuration-parameters)
+9. [SG Ready Heat Pump](#sg-ready-heat-pump)
+10. [Configuration Parameters](#configuration-parameters)
 
 ---
 
@@ -428,7 +429,7 @@ battery is a second sink alongside grid export, so both are summed into a single
 comparison - one number decides Excess for every load:
 
 ```
-margin = (solar export + battery charge power + our own managed load draws)
+margin = (solar export + battery charge power + our Excess-tier load draws)
        - (export allowance + battery charge allowance)
 
 Excess is on when  margin >= 0   - and the margin IS the excess pool, in watts
@@ -439,11 +440,15 @@ A sink contributes its allowance only while it can actually absorb:
 | Sink | Allowance | Zeroed when |
 | ---- | --------- | ----------- |
 | Grid export | **Grid Export Limit − Excess Trigger Margin** | The site is off-grid - nothing can leave. (No limit configured = infinite allowance: the grid absorbs everything, so grid-side Excess never triggers.) |
-| Battery charging | **Battery Max Charge Power** - or the lower rate the inverter's **Battery Charge Control** is actually enforcing | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
+| Battery charging | **Battery Max Charge Power** - or the lower rate the inverter's **Battery Charge Control** is actually enforcing; off-grid **less the Excess Trigger Margin** | No battery is configured, **or** SOC is at/above the **Battery Full SOC** |
 
 The margin (default 500 W) exists because an inverter curtails slightly *under*
 the export limit - a trigger exactly at the limit would never fire. Enter your
-real physical/contract limit; the trigger takes care of itself.
+real physical/contract limit; the trigger takes care of itself. A battery's BMS
+holds charging just under its limit the same way, so an off-grid site - where the
+battery is the only sink - takes the same margin off the battery's allowance
+instead: enter the battery's real maximum charge power. Grid-tied, the margin is
+applied once, through the export limit.
 
 **Only solar export counts.** The export in that sum is the site's own
 *production* leaving the meter, so the battery's discharge is subtracted from
@@ -509,9 +514,15 @@ charge the battery wanted.
 **Hysteresis.** Once Excess engages, `capacity` drops by 500 W until it
 disengages, so a load doesn't chatter at the trigger point.
 
-**Managed draws are added back.** Our own loads' consumption is restored before
-the comparison, so a load already running on excess does not disqualify itself by
-consuming the surplus that started it. Grid-tied the feedback loop does this by
+**Excess-tier draws are added back.** The consumption of our loads at the
+Excess tier - Excess-mode chargers, plugs and stations, and a tank while it
+boosts - is restored before the comparison, so a load already running on excess
+does not disqualify itself by consuming the surplus that started it. A load
+ranked *above* Excess (Standard, Continuous, Solar Priority, Solar Only) is not
+restored: it is served first, so what it draws is production the site has
+already placed, not surplus. A Solar Priority car taking 2.2 kW of a 1.2 kW
+surplus leaves the Excess tier nothing, and the verdict says so - before 2.1.6
+it counted the car's draw as surplus and boosted a tank from an empty battery. Grid-tied the feedback loop does this by
 adding the draws back into export, which makes the margin equal *production minus
 household* - invariant to our loads, and invariant to whether the inverter serves
 them by cutting export or by throttling battery charging. In meter terms a load
@@ -596,6 +607,99 @@ Result: No charging - stored energy is not surplus, whatever the meter reads.
         Counting it would start a load on the house battery
 ```
 
+### Pacing an Excess load
+
+By default an Excess load takes whatever the surplus gives it, as fast as it comes. With **Pace until sunset** ticked on a load's settings (Excess mode only - the charger, smart load and power station pages; not Solar Only or any other mode), the load spreads a planned amount of energy over the time left instead (GitHub issue 22).
+
+It needs two optional sensors on the hub's *Battery and forecast policy* page:
+
+| Hub setting | Meaning |
+|-------------|---------|
+| **Excess energy** | kWh (Wh or kWh sensor) the paced loads may still use before sunset, for example a Load Insights planning sensor. A negative value counts as 0 |
+| **Sunset** | Timestamp sensor for when that excess energy has to be used by, for example the end of the day's solar production |
+
+The cap applies to each paced load on its own: two paced loads each get the full rate, so together they can use the energy at twice the pace. The cap is the same for every site and every phase count:
+
+```
+cap (W)       = energy (kWh) x 1000 / max(hours until sunset, 1)
+cap (A/phase) = cap (W) / (site voltage x the load's phases)
+load ceiling  = min(what Excess allows, cap)
+```
+
+The cap is applied where every ceiling is read (`_source_limit` in `target_calculator.py`), per load, on top of the Excess pool - it only ever lowers what Excess would give.
+
+**Minimum current.** A load cannot run below its minimum current, so a cap under it means off. An off load restarts only once the cap exceeds the minimum by 20 % (`PACE_START_MARGIN`); a load already drawing keeps running down to the minimum itself. A binary load (a smart load, whose minimum is its rating) follows the same rule against its rating.
+
+```
+Charger 6-16 A, 1 phase, 230 V; Excess surplus 8 A
+Energy 3.45 kWh, 2 h to sunset -> cap 7.5 A    -> 7.5 A  (the cap binds)
+Energy 3.17 kWh, 2 h to sunset -> cap 6.9 A    -> off    (an off load needs 7.2 A)
+Energy 5.52 kWh, 2 h to sunset -> cap 12 A     -> 8 A    (the surplus binds)
+Energy 1.73 kWh, 15 min to sunset -> 1 h counted -> 7.5 A
+```
+
+Without either sensor, with one unreadable for over a minute, or with the load's option off, nothing changes. A sensor that drops out for less than a minute holds its last reading. The hub's Status names an unreadable pacing sensor.
+
+### Starting Excess early on the forecast
+
+Excess normally starts when the battery is full (or taking all it may) and the site exports past its threshold. Until then the battery absorbs the sun and the Excess pool is empty. With **Early start on forecast excess** ticked on the hub's *Battery and forecast policy* page (off by default), the verdict can start earlier, because the day's sun will overfill the battery anyway. It uses the same *Excess energy* and *Sunset* sensors as pacing - without both it does nothing.
+
+| Hub setting | Meaning |
+|-------------|---------|
+| **Early start on forecast excess** | The option, off by default |
+| **Minimum SOC for early start** | The SOC from which it may start: the *minimum* SOC, the *target* SOC (default) or a *fixed value* |
+| **Fixed SOC for early start** | The percentage for the fixed value (default 80 %) |
+
+The forecast verdict is on while ALL of these hold:
+
+```
+the option is on
+excess energy        > 0.2 kWh   (held while above 0.1 kWh)
+battery SOC          >= the chosen SOC (minimum, target or fixed)   (no battery or no SOC: off)
+both pacing sensors readable     (an unreadable one holds its last value for a minute, then it is off)
+```
+
+The minimum and the target are the values Load Juggler already works with, with the battery SOC hysteresis in them, so they need no second band. A fixed value is held down to 2 % below it (`FORECAST_SOC_HYSTERESIS`). The verdict is added to the usual one (`excess_available`, published on the hub), so every reader of it follows: tank boost (Freeze Protection, Normal and Solar Priority tanks, as with any Excess verdict - below the minimum SOC the tank still falls back to its away temperature), Excess chargers, smart loads and power stations, and Excess plugs.
+
+**Power for the loads.** While the forecast verdict is on, the Excess pool is topped up with the solar the battery is absorbing right now, at most the paced rate:
+
+```
+top-up (W) = min(battery charge with our loads off, energy x 1000 / max(hours left, 1))
+pool       = the usual Excess pool + top-up        (never more than the site places)
+```
+
+It is the same for every site and phase count: the top-up is spread over the phases like the battery's own charge. The per-load *Pace until sunset* option stays an additional per-load cap. A battery that is not charging has nothing to give, and with the energy at 0 or unreadable the pool is not topped up - the battery keeps what it needs.
+
+```
+Battery 85 % (target 80 %) charging at 3000 W, 3.45 kWh left, 2 h to sunset
+-> paced rate 1725 W -> the Excess pool is 1725 W (7.5 A on one phase); the battery keeps 1275 W
+Same, but 8 kWh left and 1 h -> paced rate 8000 W -> the pool is the 3000 W the battery takes
+```
+
+Solar Priority and Solar Only chargers, smart loads and stations are not changed by this hub option: they still wait for the battery to reach its target, unless the load has its own catch-up option (next section; `docs/design-decisions.md`).
+
+### Catching up below the target SOC
+
+Solar Only and Solar Priority loads wait for the battery to reach its target SOC (Solar Only gets nothing before it, Solar Priority only its minimum from the grid). If the day's planned energy is more than the load could use even running flat out, waiting only lets the battery overfill. Tick **Catch up when the sun would overfill the battery** on a charger's, smart load's or power station's settings page (off by default) and that load may start earlier. It is a per-load option and works on loads in Solar Only or Solar Priority; tanks follow the Excess verdict instead, and a plug in Solar Priority already runs above the minimum SOC. It uses the same *Excess energy* and *Sunset* sensors as pacing - without both it does nothing.
+
+```
+can't keep up  =  energy x 1000 / max(hours left, 1)  >=  max current x voltage x the load's phases   (W)
+```
+
+It starts when that holds with more than 0.2 kWh to use; once on it holds while the rate stays at or above 80 % of the load's maximum power and the energy above 0.1 kWh, so a planning value wobbling at the boundary does not start and stop the load. The state is kept per load.
+
+**The SOC floor.** The load never starts below the SOC set for *Early start on forecast excess* (*Minimum SOC for early start*: minimum, target or fixed). With that hub option off, the floor is the minimum SOC - a Solar load never takes the battery below its reserve. Note that with the default source (the target) the floor is the target itself, so catch-up does nothing until the source is set to *minimum* or a *fixed value* below the target.
+
+**Power for the load.** Below the target, a catching-up load takes the solar pool - the export plus the charge the battery is absorbing - capped at its maximum current. The battery's discharge is not added (below the target the battery is not surplus). Solar Priority keeps its minimum as the floor; Solar Only goes from 0 to the pool. A plug in Solar Only (all or nothing at its rating) catches up only while that pool covers its whole rating, so it never runs from the battery's stored energy. It works per phase like every other limit, so it is the same for one, two and three phases, symmetric and asymmetric inverters and off-grid sites; with no battery it does nothing. The per-load *Pace until sunset* option applies to Excess loads only, so it does not affect it.
+
+```
+16 A, 1 phase, 230 V = 3680 W maximum. Battery 60 % (target 80 %, minimum 20 %) charging at 3450 W
+3.68 kWh left, 1 h to sunset -> 3680 W >= 3680 W -> Solar Only takes the 16 A the sun allows
+3.0 kWh left -> 3000 W < 3680 W -> it can keep up, so it waits for 80 %
+```
+
+The decision is recorded in `docs/design-decisions.md` (2026-10-17): a narrow, opt-in exception to the 2026-09-09 decision.
+
 ---
 
 ## Hot Water Tank Modes
@@ -626,11 +730,13 @@ The operating mode decides which setpoint the tank targets, based on conditions:
 
 ### How It Works
 
-- Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads. A `water_heater` entity does not report whether it is heating, so there the tank's power sensor decides: above 10 W it is heating, below it the water is hot and the power is freed. Without a power sensor a water heater is taken as heating, at the tank's *Heating element power*, while the tank is colder than the water heater's own target, and as satisfied once it is not.
-- When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint; when not, it sets the entity to `off`. A water heater is gated by its target temperature alone: the resolved setpoint while heating is allowed, its lowest target while it is not, so a tank colder than that still heats. It is never switched off - on some integrations that powers down a whole heat pump, space heating included - and its operation mode is never changed. The target is written only when it differs from the one already set, since a water heater is often a cloud device that limits how often it can be written.
+- Load Juggler reads the climate entity's `hvac_action`. When the thermostat reports `idle` (water already at temperature), the tank frees its reserved power for other loads. A `water_heater` entity has no standard way of reporting whether it is heating, so there the tank's power sensor decides: above 10 W it is heating, below it the water is hot and the power is freed. Without a power sensor, the device's own status decides where its integration publishes one - a MELCloud heat pump's `status`: `heat_water` (or a legionella cycle) is heating, `idle`, `standby`, or heating or cooling the house is not, so an idle heat pump holds no power. Without either, a water heater is taken as heating, at the tank's *Heating element power*, while the tank is colder than the water heater's own target, and as satisfied once it is not.
+- When heating is allowed, Load Juggler sets the climate entity to `heat` and writes the resolved setpoint. When it is not, a tank already at the temperature its mode keeps - `Away` in Freeze Protection and below the battery minimum SOC, `Normal` otherwise - is set to that temperature and left in `heat`: it draws nothing there either way. Only a tank colder than that, or one whose temperature is unknown, is set to `off`. A water heater is gated by its target temperature alone: the resolved setpoint while heating is allowed, the mode's temperature while it waits at it, its lowest target otherwise, so a tank colder than that still heats. It is never switched off - on some integrations that powers down a whole heat pump, space heating included - and its operation mode is never changed. The target is written only when it differs from the one already set, since a water heater is often a cloud device that limits how often it can be written.
+- **A target the device does not keep:** some devices hold a limit of their own below the one they publish - a heat pump asked for 60 °C may keep 55 °C. When the device answers a setpoint with the same lower temperature on three separate readings, each at least five minutes after the setpoint was asked and five minutes after the reading before, Load Juggler lowers that setpoint's slider to the device's value (in whole degrees), together with any lower setpoint that sat above it so `Away` ≤ `Normal` ≤ `Boost` still holds, and shows a notification. It then stops asking for a temperature the device will not hold. A readback that only lags behind a new setpoint - a cloud device still showing the old one at its next poll - or a higher value is not a limit. To get the higher temperature back, raise the device's own limit (for example its maximum hot water temperature) first, then the slider.
 - To the power-distribution engine the tank behaves like a smart load - a fixed-power binary draw - so it competes for power with EVSEs and smart plugs by mode urgency, then priority. Freeze Protection and Normal compete at **Continuous** urgency (must-run); Solar Priority competes at **Solar Priority** urgency, so it yields to must-run loads but still outranks Solar Only / Excess loads.
 - **Surplus demotion:** whichever mode is selected, a tank aiming at its `Boost` setpoint drops to the **Excess** urgency tier for as long as it is boosting. Heating past the temperature the mode actually asks for is opportunistic, so it must not outrank must-run loads. The cold-tank promotion takes precedence: a Solar Priority tank below its Normal temperature keeps tier 1 even while boosting.
 - Every tank mode always keeps heating *permitted* - the mode moves the target temperature, and the grid may cover the floor. A tank is only starved of power by contention (its tier losing out), never by its mode.
+- **The setpoint holds:** once the target changes it stays for the tank's **Minimum off time** before it may change again, and leaving `Boost` first waits out the **Solar/Excess grace period** - the verdict returning inside it starts the wait over, as for any solar load riding a dip. Only the drop to `Away` at the battery minimum SOC acts at once. A verdict sitting at its edge used to flip the thermostat between `Normal` and `Boost` every few seconds. While the boost rides a dip, the surplus it was heating on is gone, so the tank waits at `Normal` (`Away` in Freeze Protection) and boosts again when the surplus returns: leaving `Boost` goes straight to `Normal`, never through `off` or the lowest target.
 - **What counts as surplus:** the hub's single Excess verdict - grid export plus battery charging measured against what the site is allowed to absorb, hysteresis band included. The tank reads the same verdict an Excess-mode EVSE or plug triggers on, so "there is real surplus" is defined in exactly one place. See [Excess Mode](#excess-mode) for the comparison, including the managed-draw add-back that keeps a boosting tank from disqualifying itself.
 - On an **off-grid** system there is no grid export, so the export allowance is zero and Excess is decided entirely by the battery - it triggers once the battery is charging at its maximum rate. The battery-above-target clause still lifts the boost as well, and the Solar Priority SOC bands work unchanged.
 - On a **no-battery grid-tied** system every SOC clause drops out: Freeze Protection and Normal become purely export-driven (the battery term is zero on both sides of the Excess comparison), and Solar Priority has no band to follow - it stays at `Normal` and never boosts.
@@ -773,7 +879,7 @@ warning-based triggers over "the forecast mentions thunder".
 **Official warnings (recommended).** In the EU, [MeteoAlarm](https://www.home-assistant.io/integrations/meteoalarm/)
 covers most countries but is YAML-configured. Where a national integration exists
 it is usually both UI-configurable and more detailed - for Slovenia,
-[the ARSO integration](https://github.com/andrejs2/slovenian_weather_integration)
+the ARSO integration
 exposes a warning binary sensor whose `najvisja_stopnja` attribute is the highest
 active warning level (1 minor → 4 extreme):
 
@@ -851,6 +957,55 @@ condition, and lives in Home Assistant's own storage.
 
 ---
 
+## SG Ready Heat Pump
+
+**Available for:** a heat pump with SG Ready inputs, switched by two relays (a Shelly with two relays does it)
+
+An SG Ready heat pump has four operating states, chosen by two potential-free contacts. The pump's own controller decides what each state does.
+
+| State | Relay 1 | Relay 2 | Meaning |
+|---|---|---|---|
+| 1 Block | closed | open | utility lockout, the pump is off |
+| 2 Normal | open | open | regular, energy-efficient operation |
+| 3 Recommended | open | closed | run harder; a recommendation, the draw is the pump's choice |
+| 4 Force | closed | closed | run-up command, as hard as it safely can |
+
+With both relays open the pump is in Normal, so a relay that loses power or Home Assistant falls back to Normal. Unloading the entry, a relay that is unavailable and a restart of Home Assistant all leave the pump in Normal.
+
+### No operating mode
+
+The device has no mode of its own. Its state follows the site, first match wins:
+
+| Order | Condition | State |
+|---|---|---|
+| 1 | The overload reaches this device | Block |
+| 2 | Actual excess - the Excess verdict, and the allocation grants the pump its extra power | Force |
+| 3 | The early start on forecast excess says it should already run (the hub's *Early start on forecast excess* is on) | Recommended (predicted excess) |
+| 4 | The battery is above its target SOC | Recommended (battery above target) |
+| 5 | Otherwise | Normal |
+
+A site without a battery never meets rows 3 and 4 by the battery: it goes Normal, then Force on excess, with nothing between. The device's **State** sensor shows the reason in brackets, so the two Recommended causes can be told apart, and carries the number of Blocks in the last 24 hours and the minutes left in the current state.
+
+The pump competes like an Excess load: its *Extra power above Normal* is what the early start, the Excess pool and circuit groups count for it. Its draw in Normal is part of the household and is never counted as a managed load. With the optional power sensor, the reading while the pump is in Normal is taken as its Normal draw, and only what it draws above that in Recommended and Force counts.
+
+### Block, and its limits
+
+Block is a last resort. It is reached only when the shortage - the household over the breaker or the maximum import power with every managed load already off - actually gets to this device in the priority order: the chargers and other loads are cut first, as ever, and with several heat pumps the lowest priority is blocked first. A site without a grid limit to judge by (off-grid) never overloads the pump.
+
+The standard puts timing limits on the sender, and Load Juggler enforces them (settings per device):
+
+| Setting | Default | Meaning |
+|---|---|---|
+| Minimum time per state | 10 min | a state stays at least this long, and so is re-entered no sooner than this after it ended; applied to all four states |
+| Maximum block time | 120 min | one Block lasts at most this long |
+| Maximum blocks per day | 3 | counted over a rolling 24 hours, not the calendar day |
+
+A Block is released only when the grid headroom covers the pump's Normal draw (its last measured one, or the extra power setting without a sensor) plus the hub's *Excess trigger margin* (the margin the integration keeps below a limit), so the pump does not come back and push the house straight over the limit again. When the allowance is used up (3 Blocks in the rolling 24 hours, or a Block at its maximum time) the pump goes to Normal and is never blocked again until the allowance returns; a warning is logged and the State sensor says so, because the overload then goes unanswered and the other loads and the site's own limits have to handle it.
+
+The two limits act at different speeds. A **breaker overload** (the household over the breaker's rating, less the power buffer, with every managed load already off) matters within seconds: a Slovenian meter or breaker tolerates more than 110 % of its rating for only about 90 seconds. The pump is blocked after a 10-second noise filter, on top of the input smoothing, and does not wait for the minimum time of the state it interrupts (the Block itself then lasts at least that long). The **max import power** limit (the tariff's 15-minute block) blocks the pump only after the household has been over it for 2 continuous minutes, and then does wait for the state's minimum time.
+
+---
+
 ## Configuration Parameters
 
 ### Hub-Level Configuration
@@ -866,6 +1021,8 @@ condition, and lives in Home Assistant's own storage.
 | **Battery SOC Target** | Target battery SOC (%) | 80% | Solar Priority, Solar Only |
 | **Battery SOC Hysteresis** | SOC hysteresis to prevent oscillation (%) | 3% | Solar Priority, Solar Only |
 | **Battery Full SOC** | SOC at/above which the battery counts as full (%) | 97% | Excess mode - zeroes the battery's absorption capacity; also the Smart Plug on-trigger |
+| **Excess energy / Sunset** | Optional sensors that pace the loads which tick *Pace until sunset* (kWh to use, and when) | - | Excess mode, per load |
+| **Early start on forecast excess** | Starts the Excess verdict before the battery is full on the Excess energy sensor, from the chosen SOC (minimum, target or fixed) | Off | Everything that follows the Excess verdict |
 | **Battery Max Charge Power** | Maximum battery charging power (W) | 5000W | Excess mode (the battery's share of the absorption capacity) |
 | **Battery Max Discharge Power** | Maximum battery discharge power (W) | 5000W | Standard, Solar Priority |
 | **Power Buffer** | Safety buffer in Standard mode (W) | 0W | Standard mode |
@@ -892,6 +1049,8 @@ Standard and Solar Priority modes work identically - the grid portion of availab
 | **Load Priority** | Priority for distribution (1-10, lower=higher) | 1 |
 | **Update Frequency** | How often to recalculate (seconds) | 15s |
 | **Charge Pause Duration** | Min time before restarting (minutes) | 3 |
+| **Pace until sunset** | Hold an Excess-mode load to the hub's excess energy over the hours left until sunset | Off |
+| **Catch up when the sun would overfill the battery** | Let a Solar Only / Solar Priority load start below the target SOC when its maximum power could not otherwise keep up with the excess energy | Off |
 
 ---
 
@@ -998,6 +1157,8 @@ Falling (once above):
 **Without Battery:**
 - **Check:** Is solar exporting to grid?
 - **Check:** Is export > minimum current threshold?
+
+**Below the target with catch-up ticked:** needs both pacing sensors, a planned rate (energy x 1000 / hours left) at or above the load's maximum power, and a SOC at or above the early-Excess floor (the target by default - set *Minimum SOC for early start* to *minimum* or a fixed value below the target).
 
 ### Excess Mode Not Starting
 

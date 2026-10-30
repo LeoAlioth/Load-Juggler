@@ -41,7 +41,7 @@ class FakeServices:
     def __init__(self):
         self.calls = []
 
-    async def async_call(self, domain, service, data, blocking=False):
+    async def async_call(self, domain, service, data, blocking=False, context=None):
         self.calls.append((domain, service, data))
 
 
@@ -65,6 +65,9 @@ class FakeSensor:
     def __init__(self, hass, entry):
         self.hass = hass
         self.config_entry = entry
+
+    def _runtime(self):
+        return self.hass.data[DOMAIN]["loads"]["plug"]
 
 
 def _renamed():

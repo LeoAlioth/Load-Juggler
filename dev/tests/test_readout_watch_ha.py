@@ -9,6 +9,9 @@ wiring, on the real site calculation with its feedback loop:
   * the limit the charger ACCEPTED is published for the engine - and only once
     the service call has returned - and forgotten when a profile or hard reset
     hands the charger back to its own default;
+  * the profile reset also sends the charger its two reporting intervals at
+    its update frequency, and a key refused - or no configure service at all -
+    never breaks the reset;
   * a reading frozen above what the charger was since told to deliver is
     replaced by the commanded draw, which reconstructs the household exactly
     and keeps a second charger from being sized against phantom headroom
@@ -19,7 +22,11 @@ wiring, on the real site calculation with its feedback loop:
     attributes - all of it back to normal when the episode ends;
   * a steady reading on a healthy charger is never controlled blind;
   * the reading moving again - twice - ends blind mode, and so does the car
-    leaving.
+    leaving;
+  * a reading last reported before the connector entered Charging (a slow
+    meter, the 2026-10-03 field case) is assumed over the same way, without a
+    verdict, until the first reading since - which is trusted, a re-reported
+    0 included.
 """
 
 import logging
@@ -139,7 +146,10 @@ def site(hass):
 
 def _set_world(hass, first_reading, first_true, status="Charging"):
     """Grid CTs see the TRUTH (household + what "first" really draws; "second"
-    is connected and not yet drawing). "first" reports ``first_reading``."""
+    is connected and not yet drawing). "first" reports ``first_reading`` -
+    reported after the status, so it is a reading taken since the charging
+    began (a reading older than that is assumed over until a newer one: see
+    test_a_reading_from_before_the_charging_is_assumed_over)."""
     for phase in "abc":
         hass.states.async_set(
             f"sensor.grid_{phase}", str(HOUSEHOLD + first_true),
@@ -149,6 +159,11 @@ def _set_world(hass, first_reading, first_true, status="Charging"):
         ("first", first_reading, status),
         ("second", 0.0, "Charging"),
     ):
+        # In that status for ten minutes: past the car's climb to its limit
+        # (readout_watch.CAR_RAMP_S), so the reading is its answer.
+        hass.states.async_set(
+            f"sensor.{slug}_status_connector", state, timestamp=time.time() - 600
+        )
         hass.states.async_set(
             f"sensor.{slug}_current_import", str(reading),
             {
@@ -157,7 +172,6 @@ def _set_world(hass, first_reading, first_true, status="Charging"):
                 "l3_current": reading,
             },
         )
-        hass.states.async_set(f"sensor.{slug}_status_connector", state)
         hass.states.async_set(
             f"sensor.{slug}_current_offered", "16.0",
             {"device_class": "current", "unit_of_measurement": "A"},
@@ -278,6 +292,91 @@ async def test_a_profile_reset_forgets_the_recorded_command(hass, site):
         )
     script.return_value.async_run.assert_awaited_once()
     assert EVSE_RT_COMMANDED_LIMIT not in _runtime(hass, first)
+
+
+def _ocpp_configure(hass, fail_on=()):
+    """A stand-in for the ocpp integration's configure service: records each
+    call, and raises for the keys in ``fail_on`` as an offline charger or a
+    refused key would."""
+    from homeassistant.core import SupportsResponse
+    from homeassistant.exceptions import HomeAssistantError
+
+    calls = []
+
+    async def configure(call):
+        calls.append(dict(call.data))
+        if call.data["ocpp_key"] in fail_on:
+            raise HomeAssistantError("charger said no")
+        return {"reboot_required": False}
+
+    hass.services.async_register(
+        "ocpp", "configure", configure, supports_response=SupportsResponse.OPTIONAL
+    )
+    return calls
+
+
+async def test_a_reset_sends_the_reporting_intervals(hass, site):
+    """Both reporting intervals go to the charger at its update frequency
+    (15 s here) - after the profile reset, which runs as before."""
+    from custom_components.dynamic_ocpp_evse import async_setup
+
+    _, first, _ = site
+    first.add_to_hass(hass)
+    calls = _ocpp_configure(hass)
+    await async_setup(hass, {})
+    with patch("custom_components.dynamic_ocpp_evse.Script") as script:
+        script.return_value.async_run = AsyncMock()
+        await hass.services.async_call(
+            DOMAIN, "reset_ocpp_evse", {"entry_id": first.entry_id}, blocking=True
+        )
+    script.return_value.async_run.assert_awaited_once()
+    assert calls == [
+        {"devid": "first_cp", "ocpp_key": "MeterValueSampleInterval", "value": "15"},
+        {"devid": "first_cp", "ocpp_key": "ClockAlignedDataInterval", "value": "15"},
+    ]
+
+
+async def test_a_refused_interval_does_not_break_the_reset(hass, site, caplog):
+    """One key refused: the other is still sent, the reset completes, and the
+    refusal is a warning in the log."""
+    from custom_components.dynamic_ocpp_evse import async_setup
+
+    _, first, _ = site
+    first.add_to_hass(hass)
+    calls = _ocpp_configure(hass, fail_on={"MeterValueSampleInterval"})
+    await async_setup(hass, {})
+    with patch("custom_components.dynamic_ocpp_evse.Script") as script:
+        script.return_value.async_run = AsyncMock()
+        with caplog.at_level(logging.WARNING):
+            await hass.services.async_call(
+                DOMAIN, "reset_ocpp_evse", {"entry_id": first.entry_id},
+                blocking=True,
+            )
+    script.return_value.async_run.assert_awaited_once()
+    assert [c["ocpp_key"] for c in calls] == [
+        "MeterValueSampleInterval", "ClockAlignedDataInterval",
+    ]
+    refused = [
+        r for r in caplog.records
+        if r.levelno == logging.WARNING and "MeterValueSampleInterval" in r.getMessage()
+    ]
+    assert len(refused) == 1
+
+
+async def test_a_reset_without_the_configure_service_still_resets(hass, site):
+    """No ocpp configure service at all (the integration not loaded): the
+    profile reset still runs and the service call does not fail."""
+    from custom_components.dynamic_ocpp_evse import async_setup
+
+    _, first, _ = site
+    first.add_to_hass(hass)
+    await async_setup(hass, {})
+    with patch("custom_components.dynamic_ocpp_evse.Script") as script:
+        script.return_value.async_run = AsyncMock()
+        await hass.services.async_call(
+            DOMAIN, "reset_ocpp_evse", {"entry_id": first.entry_id}, blocking=True
+        )
+    script.return_value.async_run.assert_awaited_once()
 
 
 async def test_a_hard_reset_forgets_the_recorded_command(hass, site):
@@ -605,3 +704,166 @@ async def test_the_overview_marks_estimates_and_the_stuck_readout(hass, site):
     )
     assert pages._estimated(hub_data, first.entry_id) == " (estimated)"
     assert pages._estimated(hub_data) == " (estimated)"
+
+
+# ── a slow meter: the reading predates the charging ──────────────────────
+#
+# The field case (2026-10-03, a go-eCharger V4): meter values every
+# 120 s; at each SuspendedEV the ocpp integration writes 0 into the reading.
+# The car starts at 16 A at once and the reading still holds that 0: the
+# feedback booked the car as house load, the allocation collapsed within 16 s,
+# the charger was paused, and round it went every 3.5 minutes.
+
+
+def _ocpp_push(hass, reading, status, first_true, after=0.0):
+    """One push of the ocpp integration (0.12) for "first", the grid with it:
+    at each StatusNotification and MeterValues it re-writes every sensor of
+    the charger, the reading BEFORE the connector status - reported ``after``
+    seconds from now."""
+    for phase in "abc":
+        hass.states.async_set(
+            f"sensor.grid_{phase}", str(HOUSEHOLD + first_true),
+            {"device_class": "current", "unit_of_measurement": "A"},
+        )
+    hass.states.async_set(
+        "sensor.first_current_import", str(reading),
+        {
+            "device_class": "current", "unit_of_measurement": "A",
+            "l1_current": reading, "l2_current": reading, "l3_current": reading,
+        },
+        timestamp=time.time() + after,
+    )
+    hass.states.async_set("sensor.first_status_connector", status)
+
+
+def _started_on_a_held_zero(hass, first):
+    """The car paused with the reading zeroed, "first" holds a 16 A limit, and
+    the car starts taking it at once - announced by a push that re-reports
+    the held 0 just before the status turns Charging."""
+    _set_world(hass, first_reading=0.0, first_true=0.0, status="SuspendedEV")
+    rt = _runtime(hass, first)
+    rt[EVSE_RT_COMMANDED_LIMIT] = 16.0
+    rt[EVSE_RT_COMMANDED_RATE_UNIT] = "A"
+    _ocpp_push(hass, 0.0, "Charging", first_true=16.0)
+    return rt
+
+
+async def test_a_reading_from_before_the_charging_is_assumed_over(hass, site, caplog):
+    """The held 0 says nothing about the car yet. Read as it stands it books
+    the car's 16 A as house load - the field case. Assumed over, the household
+    is the real 5 A, the figures are marked as estimates resting on the old
+    reading, the status says it waits - one info line, no warning, no stuck
+    episode - and the first meter value since is trusted."""
+    from custom_components.dynamic_ocpp_evse.entities.load_sensors import (
+        LoadJugglerAllocatedCurrentSensor,
+        LoadJugglerDeviceStatusSensor,
+    )
+    from custom_components.dynamic_ocpp_evse.entities.readout import (
+        READING_AWAITED_NOTE,
+    )
+
+    hub_entry, first, second = site
+    rt = _started_on_a_held_zero(hass, first)
+
+    # Control: the reading taken as it stands - the household the field saw.
+    with patch.object(
+        readout_watch, "assumed_before_new_reading", lambda *a: None
+    ):
+        as_read = _calc(hass, hub_entry, first, second)
+    assert as_read["household_power"] == pytest.approx(
+        3 * (HOUSEHOLD + 16.0) * 230
+    )
+
+    _fresh_filters(hass, hub_entry)
+    with caplog.at_level(logging.INFO):
+        assumed = _calc(hass, hub_entry, first, second)
+        _calc(hass, hub_entry, first, second)
+    assert assumed["load_draw"][first.entry_id] == pytest.approx(3 * 16.0)
+    assert assumed["household_power"] == pytest.approx(3 * HOUSEHOLD * 230)
+    assert assumed["available_grid_power"] == (BREAKER - HOUSEHOLD) * 3 * 230
+    charging_since = hass.states.get("sensor.first_status_connector").last_changed
+    assert assumed["draw_estimated"][first.entry_id] == {
+        "load": "first",
+        "evidence": "reading_predates_limit",
+        "since": charging_since,
+    }
+    watch = rt[EVSE_RT_READOUT_WATCH]
+    assert not readout_watch.is_stuck(watch)
+    said = [
+        r for r in caplog.records
+        if r.name.endswith("load_builders") and r.levelno >= logging.INFO
+    ]
+    assert len(said) == 1 and said[0].levelno == logging.INFO, [
+        r.getMessage() for r in said
+    ]
+    assert "until the first reading since" in said[0].getMessage()
+
+    hass.data[DOMAIN]["load_status"] = {first.entry_id: "Charging"}
+    status = LoadJugglerDeviceStatusSensor(hass, first, hub_entry, "first", "first")
+    allocated = LoadJugglerAllocatedCurrentSensor(hass, first, hub_entry, "first", "first")
+    status._read_site_data()
+    assert status.native_value == f"Charging ({READING_AWAITED_NOTE})"
+    assert status.extra_state_attributes["readout_stuck"] is False
+    assert status.extra_state_attributes["readout_assumed_current"] == [16.0] * 3
+    assert allocated.extra_state_attributes == {
+        "estimated": True,
+        "estimate_evidence": "reading_predates_limit",
+        "estimated_since": charging_since,
+    }
+
+    # The first meter value since the car started: trusted.
+    _ocpp_push(hass, 15.6, "Charging", first_true=15.6)
+    _fresh_filters(hass, hub_entry)
+    read = _calc(hass, hub_entry, first, second)
+    assert read["load_draw"][first.entry_id] == pytest.approx(3 * 15.6)
+    assert read["household_power"] == pytest.approx(3 * HOUSEHOLD * 230)
+    assert first.entry_id not in read["draw_estimated"]
+    status._read_site_data()
+    assert status.native_value == "Charging"
+    assert allocated.extra_state_attributes["estimated"] is False
+
+
+async def test_a_zero_reported_again_since_the_charging_is_believed(hass, site):
+    """The same value re-reported is a new measurement: a car that really
+    takes nothing reads 0 at the next meter value, and that 0 is the draw."""
+    hub_entry, first, second = site
+    _started_on_a_held_zero(hass, first)
+    assert _calc(hass, hub_entry, first, second)["draw_estimated"]
+
+    # Re-reported within the car's climb, it may still be the car waking up...
+    _ocpp_push(hass, 0.0, "Charging", first_true=0.0)
+    _fresh_filters(hass, hub_entry)
+    assert _calc(hass, hub_entry, first, second)["draw_estimated"]
+
+    # ...past it, it is the car's answer.
+    _ocpp_push(hass, 0.0, "Charging", first_true=0.0,
+               after=readout_watch.CAR_RAMP_S + 1)
+    _fresh_filters(hass, hub_entry)
+    read = _calc(hass, hub_entry, first, second)
+    assert read["load_draw"][first.entry_id] == 0.0
+    assert read["household_power"] == pytest.approx(3 * HOUSEHOLD * 230)
+    assert first.entry_id not in read["draw_estimated"]
+    assert "awaiting" not in _runtime(hass, first)[EVSE_RT_READOUT_WATCH]
+
+
+async def test_states_restored_together_are_not_doubted(hass, site):
+    """After a restart the reading and the status are restored in the same
+    instant: the reading is not taken to predate the charging."""
+    hub_entry, first, second = site
+    _set_world(hass, first_reading=0.0, first_true=15.6, status="Available")
+    rt = _runtime(hass, first)
+    rt[EVSE_RT_COMMANDED_LIMIT] = 16.0
+    rt[EVSE_RT_COMMANDED_RATE_UNIT] = "A"
+    restored = time.time() + 1.0
+    hass.states.async_set(
+        "sensor.first_current_import", "15.6",
+        {"device_class": "current", "unit_of_measurement": "A",
+         "l1_current": 15.6, "l2_current": 15.6, "l3_current": 15.6},
+        timestamp=restored,
+    )
+    hass.states.async_set(
+        "sensor.first_status_connector", "Charging", timestamp=restored
+    )
+    read = _calc(hass, hub_entry, first, second)
+    assert read["load_draw"][first.entry_id] == pytest.approx(3 * 15.6)
+    assert first.entry_id not in read["draw_estimated"]

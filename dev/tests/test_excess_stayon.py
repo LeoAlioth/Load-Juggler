@@ -34,6 +34,7 @@ from custom_components.dynamic_ocpp_evse.calculations.utils import (
 from custom_components.dynamic_ocpp_evse.const.hub import (
     DEFAULT_EXCESS_HYSTERESIS,
 )
+from custom_components.dynamic_ocpp_evse.const import EXCESS_URGENCY_TIER
 
 V = 230.0
 CHARGE_MAX = 5000.0   # battery charge allowance
@@ -42,7 +43,8 @@ THRESHOLD = 13000.0   # export allowance (grid export limit − trigger margin)
 
 
 def _plug(watts, phase="A"):
-    """A binary managed load drawing ``watts`` on one site phase."""
+    """A binary Excess-tier load drawing ``watts`` on one site phase - the
+    loads the verdict engages, and so the ones the identity is about."""
     return LoadContext(
         load_id="plug",
         entity_id="plug",
@@ -53,6 +55,7 @@ def _plug(watts, phase="A"):
         l1_current=watts / V,
         l1_phase=phase,
         device_type="plug",
+        mode_priority=EXCESS_URGENCY_TIER,
     )
 
 

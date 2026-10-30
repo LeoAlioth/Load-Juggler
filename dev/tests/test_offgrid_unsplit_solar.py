@@ -30,6 +30,8 @@ from unittest.mock import patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from .conftest import INPUT_GRID, INPUT_NONE, input_options
+
 from custom_components.dynamic_ocpp_evse.const import (
     CONF_BASE_CONSUMPTION,
     CONF_BATTERY_CAPACITY_KWH,
@@ -43,13 +45,10 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_NAME,
     CONF_PHASE_VOLTAGE,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_WIRING_TOPOLOGY,
     DOMAIN,
     ENTRY_TYPE,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
-    WIRING_TOPOLOGY_PARALLEL,
-    WIRING_TOPOLOGY_SERIES,
 )
 
 from .test_sensor_update import _forecast_device
@@ -78,7 +77,7 @@ def _rig(hass, slug, topology, soc, *, battery=True):
     options = {
         CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: f"sensor.us_{slug}_out_a",
         CONF_INVERTER_MAX_POWER: 6000,
-        CONF_WIRING_TOPOLOGY: topology,
+        **input_options(topology),
         CONF_SOLAR_FORECAST_DEVICE_IDS: [device_id],
     }
     if battery:
@@ -176,7 +175,7 @@ def _observed(hass, hub):
 
 @pytest.mark.parametrize("soc", ["60", "100"], ids=["room", "full"])
 @pytest.mark.parametrize(
-    "topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES]
+    "topology", [INPUT_NONE, INPUT_GRID]
 )
 async def test_an_output_nothing_splits_publishes_no_solar(hass, topology, soc):
     """Battery configured, its power unread: the output is not production.
@@ -218,7 +217,7 @@ async def test_a_battery_less_output_is_still_solar(hass):
     """No battery entity at all is no battery (engine/readers: "A member with
     no battery entity has no battery"), so there is nothing in the output but
     the panels, and it publishes as before."""
-    hub, inverter = _rig(hass, "pvonly", WIRING_TOPOLOGY_PARALLEL, "0",
+    hub, inverter = _rig(hass, "pvonly", INPUT_NONE, "0",
                          battery=False)
 
     _engine_solar, published = await _cycle(hass, hub, inverter)
@@ -227,7 +226,7 @@ async def test_a_battery_less_output_is_still_solar(hass):
 
 
 @pytest.mark.parametrize(
-    "topology", [WIRING_TOPOLOGY_PARALLEL, WIRING_TOPOLOGY_SERIES]
+    "topology", [INPUT_NONE, INPUT_GRID]
 )
 async def test_an_output_nothing_splits_leaves_no_solar_remaining(hass, topology):
     """Battery configured, its power unread: Solar Remaining is unknown too.

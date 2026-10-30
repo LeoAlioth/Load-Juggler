@@ -47,10 +47,13 @@ jobs:
           VERSION=$(jq -r '.version' "custom_components/$COMPONENT/manifest.json")
 
           if [ "$PRE" = "true" ]; then
-            # The manifest's version, the branch and a UTC timestamp, so every
-            # push gets a new tag: 2.2.0-dev.20260217.2112 off dev,
-            # 2.2.0-dev-glm.20260217.2112 off dev-glm.
-            TAG_NAME="${VERSION}-${GITHUB_REF_NAME}.$(date -u +"%Y%m%d.%H%M")"
+            # The manifest's version, the branch and a UTC timestamp to the
+            # second, so every push gets a new tag: 2.2.0-dev.20260217.211205
+            # off dev, 2.2.0-dev-glm.20260217.211205 off dev-glm. To the
+            # minute, two pushes built in the same minute shared a tag and the
+            # second's release replaced the first's under the same name, so
+            # the sites, already on that name, never installed it (2026-10-30).
+            TAG_NAME="${VERSION}-${GITHUB_REF_NAME}.$(date -u +"%Y%m%d.%H%M%S")"
           elif echo "$GITHUB_REF" | grep -q "^refs/tags/"; then
             # Triggered by tag push - use the tag name directly
             TAG_NAME="$GITHUB_REF_NAME"
@@ -65,7 +68,7 @@ jobs:
             # one - so the AUTOMATIC path stops as soon as the version already
             # has a tag. Bump manifest.json and the next merge releases; do not,
             # and the merge passes in silence. A tag push and a manual run are
-            # both deliberate acts and are never skipped (Anze, 2026-09-22).
+            # both deliberate acts and are never skipped (2026-09-22).
             if [ "$GITHUB_EVENT_NAME" = "push" ] \
                && git ls-remote --exit-code --tags origin "refs/tags/$TAG_NAME" >/dev/null 2>&1; then
               echo "$TAG_NAME is already tagged - nothing to release."
@@ -300,8 +303,22 @@ jobs:
             exit 0
           fi
 
-          # The release asset was uploaded a moment ago; give GitHub a beat to
-          # start serving it before HACS asks for it.
+          # The release asset was uploaded a moment ago. HACS downloads what
+          # GitHub serves, so wait until GitHub lists the release with its
+          # asset (up to two minutes) before telling anyone: a flat 5 s left
+          # build 0.4.1-dev.20261030.1901 installed on neither site - the
+          # automation ran 3 s before the release's created_at (2026-10-30).
+          for i in $(seq 1 24); do
+            if curl -fsS -H "Authorization: token ${{ secrets.CLASSIC_TOKEN_GITHUB }}" \
+                 -H "Accept: application/vnd.github+json" \
+                 "https://api.github.com/repos/$GH_REPO/releases/tags/$TAG_NAME" \
+                 | jq -e --arg zip "$ZIP" '.assets[] | select(.name == $zip and .state == "uploaded")' >/dev/null 2>&1; then
+              echo "GitHub serves $TAG_NAME with $ZIP"
+              break
+            fi
+            echo "GitHub does not list $TAG_NAME with $ZIP yet ($i)"
+            sleep 5
+          done
           sleep 5
 
           # Word-splitting on whitespace/newlines is what lets one secret carry

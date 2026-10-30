@@ -179,3 +179,23 @@ def apply_smoothing(
         sensor._rate_limited_current = round(target, 1)
 
     return sensor._rate_limited_current
+
+
+def cut_now(sensor, raw_permit: float, floor: float, dead_band: float) -> float | None:
+    """The level to cut a running charger to at once, outside its command
+    slot, or None to wait for the slot as usual. Only a charger records the
+    limit it last accepted (control/ocpp.py), so plugs, tanks and stations
+    always wait. Straight to the permit, not down the ramp: stepping down sent
+    a profile every site cycle, and the readout watch lost the limit the
+    reading was taken under."""
+    # ponytail: every cut that keeps the load running, not only one a new start
+    # depends on; gate it on the limiting pool if Solar-mode dips prove noisy.
+    last = sensor._last_commanded_limit
+    if last is None:
+        return None
+    level = max(raw_permit, floor)
+    if level >= last - dead_band:
+        return None
+    sensor._ema_current = sensor._schmitt_current = sensor._rate_limited_current = level
+    sensor._schmitt_state = "falling"
+    return level

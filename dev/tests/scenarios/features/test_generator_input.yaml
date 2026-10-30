@@ -1,0 +1,132 @@
+# Test scenarios: off-grid with a generator on the grid input (JUG-13)
+#
+# Kozolec's wiring: a backup generator feeds the MultiPlus' AC input, limited to
+# 6 A by the MultiPlus itself. The site stays off-grid (no export, no grid): the
+# generator is one more supply, capped at its own rating, and what it carries now
+# (the AC-in reading) counts as consumption from it. While the reading is
+# unavailable (generator off) the site is plainly off-grid - `running: false`.
+#
+# The harness models the generator as passing through to the loads up to its
+# rating before the pack is asked for anything (run_tests.simulate_grid_ct).
+
+scenarios:
+
+  - name: "generator-input-running-adds-its-spare-rating-to-the-pool"
+    description: "Off-grid 1-phase, 6 A generator running, 1 kW pack, 1 A house: a Standard car is offered the generator's room plus the pack's headroom"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 1000
+      battery_max_discharge_power: 1000
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: none}]
+      generator: {rating: 6, running: true}
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 9.3
+
+  - name: "generator-input-off-is-plain-off-grid"
+    description: "Same site with the generator off (AC-in reading unavailable): the pack's 4.3 A is under the car's minimum, so it does not start - exactly today's off-grid result"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 1000
+      battery_max_discharge_power: 1000
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: none}]
+      generator: {rating: 6, running: false}
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 0.0
+
+  - name: "generator-input-power-is-not-solar"
+    description: "Generator running, pack below its target, no sun: a Solar Only car gets nothing - the generator is not surplus, and nothing is exported to it"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 1.0
+      battery_soc: 50
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 1000
+      battery_max_discharge_power: 1000
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: none}]
+      generator: {rating: 6, running: true}
+    loads:
+      - entity_id: "car"
+        operating_mode: "Solar Only"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 0.0
+
+  - name: "generator-input-loaded-generator-leaves-only-the-pack"
+    description: "A 4 A house on a 6 A generator: 2 A of generator room plus the pack's 4.3 A - the car is offered that and no more"
+    human_verified: false
+    site:
+      off_grid: true
+      voltage: 230
+      main_breaker_rating: 20
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 4.0
+      battery_soc: 60
+      battery_soc_min: 20
+      battery_soc_target: 80
+      battery_max_charge_power: 1000
+      battery_max_discharge_power: 1000
+      inverter_output_sensors: true
+      inverters: [{kind: hybrid, input: none}]
+      generator: {rating: 6, running: true}
+    loads:
+      - entity_id: "car"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      car:
+        allocated: 6.3

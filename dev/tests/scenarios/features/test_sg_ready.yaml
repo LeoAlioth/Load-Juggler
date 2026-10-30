@@ -1,0 +1,90 @@
+# JUG-24: an SG Ready heat pump, as the ALLOCATION sees it.
+#
+# The device is a binary Excess load whose rating is its nominal extra draw
+# (engine/load_builders._build_sg_ready_load), so what the state machine reads
+# as its Force condition - "the allocation granted it" - is exactly what an Excess
+# plug is granted. These scenarios pin that grant on a battery-free site (the
+# state machine itself, its timing and Block limits are in test_sg_ready.py).
+# The runner has no SG Ready type; the plug is the same load.
+
+scenarios:
+
+  - name: "sg-ready-granted-on-real-excess-battery-free"
+    description: >
+      Battery-free single-phase site, 6 kW of solar and 345 W of house: the site
+      exports 5.4 kW past its 3 kW Excess threshold. The heat pump's 2.3 kW above
+      Normal is granted, which with the Excess verdict is the Force state.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 6000
+      solar_production_direct: true
+      phase_a_consumption: 1.5
+      excess_export_threshold: 3000
+    loads:
+      - entity_id: "heat_pump"
+        device_type: "plug"
+        operating_mode: "Excess"
+        power_rating: 2300
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      heat_pump:
+        allocated: 10.0
+
+  - name: "sg-ready-not-granted-without-excess"
+    description: >
+      The same site with 1.5 kW of solar and 5 A of house: it imports, there is no
+      Excess, nothing is granted - the pump stays in Normal (or Recommended on
+      the battery / early-start rows, which do not read the allocation).
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 35
+      distribution_mode: priority
+      solar_production: 1500
+      solar_production_direct: true
+      phase_a_consumption: 5.0
+      excess_export_threshold: 3000
+    loads:
+      - entity_id: "heat_pump"
+        device_type: "plug"
+        operating_mode: "Excess"
+        power_rating: 2300
+        phases: 1
+        priority: 1
+        l1_phase: "A"
+    expected:
+      heat_pump:
+        allocated: 0.0
+
+  - name: "sg-ready-refused-on-an-importing-phase"
+    description: >
+      Three phases, the pump on B, and B is buying while the site as a whole
+      exports past its threshold: an Excess grant never goes to a phase that is
+      buying, so the pump is not granted Force there.
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 40
+      distribution_mode: priority
+      solar_production: 20000
+      solar_production_direct: true
+      phase_a_consumption: 1.3
+      phase_b_consumption: 32.6
+      phase_c_consumption: 1.3
+      excess_export_threshold: 10500
+    loads:
+      - entity_id: "heat_pump"
+        device_type: "plug"
+        operating_mode: "Excess"
+        power_rating: 2300
+        phases: 1
+        priority: 1
+        l1_phase: "B"
+    expected:
+      heat_pump:
+        allocated: 0.0

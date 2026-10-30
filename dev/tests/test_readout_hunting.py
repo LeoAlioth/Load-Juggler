@@ -17,17 +17,22 @@ OCPP command it sends - against a small model of the world:
   * a grid CT that sees house + car, and a charger status that follows the
     car (Charging while it draws, SuspendedEVSE while held at 0 A);
   * the charger's Current Import reading, which is healthy in a first session
-    (so the watch learns how often it reports) and pinned at 0.0 in a second.
+    (so the watch learns how often it reports) and pinned at 0.0 in a second -
+    or, for the slow-meter tests, moving only with a meter value every 120 s,
+    the way the ocpp integration shows one.
 
 The clock is simulated (every module's ``time.monotonic``), so twenty minutes
 of site cycles run in well under a second.
 """
 
+import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+from .conftest import INPUT_GRID, input_options, with_inverter
 
 from custom_components.dynamic_ocpp_evse import sensor as sensor_platform
 from custom_components.dynamic_ocpp_evse.const import (
@@ -51,8 +56,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_WIRING_TOPOLOGY,
-    WIRING_TOPOLOGY_SERIES,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_VOLTAGE,
     CONF_PHASES,
@@ -100,14 +103,28 @@ class World:
         self.on_new_limit = None   # called when the charger accepts a new limit
         self.extra_a = 0.0
         self._reports = 0
+        # A slow meter, as the ocpp integration (0.12) shows one: a meter value
+        # every ``meter_every`` cycles; None is the healthy/frozen reading.
+        self.meter_every = None
+        self._held = 0.0
+        self._pushed_status = None
+        # A car that climbs to a raised limit at this many A/s (None: at once);
+        # it comes down to a cut at once, as IEC 61851-1 has it within 5 s.
+        self.ramp_a_per_s = None
+        self._climbed = 0.0
 
-    @property
-    def draw(self):
+    def _offered(self):
         if not self.plugged or not self.car_draws or self.limit is None:
             return 0.0
         if self.car_takes is not None and not self.car_takes(self):
             return 0.0
         return self.limit if self.limit >= MIN_A else 0.0
+
+    @property
+    def draw(self):
+        if self.ramp_a_per_s is None:
+            return self._offered()
+        return min(self._offered(), self._climbed)
 
     @property
     def grid_w(self):
@@ -123,6 +140,12 @@ class World:
     def publish(self, cycle):
         """Set this cycle's entity states."""
         set_state = self.hass.states.async_set
+        if self.ramp_a_per_s is not None:
+            offered = self._offered()
+            self._climbed = (
+                offered if offered <= self._climbed
+                else min(offered, self._climbed + self.ramp_a_per_s * CYCLE_S)
+            )
         if self.extra_house is not None:
             self.extra_a = self.extra_house(self)
         site_amps = round(self.house_a + self.extra_a + self.draw, 3)
@@ -140,8 +163,27 @@ class World:
                       {"device_class": "current", "unit_of_measurement": "A"})
             set_state("sensor.grid_allowance", str(ALLOWANCE_W),
                       {"device_class": "power", "unit_of_measurement": "W"})
-        set_state("sensor.evse_status_connector", self.charger_status())
         set_state("switch.evse_charge_control", "on")
+        status = self.charger_status()
+        if self.meter_every is not None:
+            # The integration moves the reading only with a meter value, zeroes
+            # it at a suspension, and at each meter value and each status
+            # change re-writes every sensor - the reading before the status.
+            if status in ("SuspendedEV", "SuspendedEVSE"):
+                self._held = 0.0
+            metered = cycle % self.meter_every == 0
+            if metered:
+                self._held = round(self.draw, 2)
+            if metered or status != self._pushed_status:
+                # A microsecond before the status, as the integration writes
+                # them - the wall clock stands still within a cycle here.
+                set_state("sensor.evse_current_import", str(self._held),
+                          {"device_class": "current", "unit_of_measurement": "A"},
+                          timestamp=time.time() - 1e-6)
+                set_state("sensor.evse_status_connector", status)
+                self._pushed_status = status
+            return
+        set_state("sensor.evse_status_connector", status)
         if self.reading_frozen:
             reading = 0.0
         else:
@@ -165,7 +207,7 @@ class World:
 
 def _make_site(hass, off_grid=False):
     """Grid-tied: a 6 kW Max Import Power on phase A. Off-grid: no grid CT at
-    all, and a series hybrid (the hub's own inverter fields) rated 6 kW with
+    all, and a series hybrid (the hub's inverter entry) rated 6 kW with
     its AC output metered on phase A and a large battery behind it - so the
     binding limit is again 6 kW, now the inverter's."""
     if off_grid:
@@ -174,7 +216,7 @@ def _make_site(hass, off_grid=False):
             CONF_MAIN_BREAKER_RATING: 40,
             CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID: "sensor.inverter_out_a",
             CONF_INVERTER_MAX_POWER: ALLOWANCE_W,
-            CONF_WIRING_TOPOLOGY: WIRING_TOPOLOGY_SERIES,
+            **input_options(INPUT_GRID),
             CONF_BATTERY_SOC_ENTITY_ID: "sensor.battery_soc",
             CONF_BATTERY_POWER_ENTITY_ID: "sensor.battery_power",
             CONF_BATTERY_MAX_DISCHARGE_POWER: 20000,
@@ -187,11 +229,11 @@ def _make_site(hass, off_grid=False):
             CONF_PHASE_VOLTAGE: V,
             CONF_MAX_IMPORT_POWER_ENTITY_ID: "sensor.grid_allowance",
         }
-    hub_entry = MockConfigEntry(
+    hub_entry = with_inverter(hass, MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="Hub",
         data={CONF_NAME: "Hub", CONF_ENTITY_ID: "hub", ENTRY_TYPE: ENTRY_TYPE_HUB},
         options=hub_options,
-    )
+    ))
     evse = MockConfigEntry(
         domain=DOMAIN, version=2, minor_version=2, title="evse",
         data={
@@ -280,10 +322,14 @@ async def _session(hass, site, *, lockstep_enabled, frozen_minutes=20, car_draws
         site.hub.entry_id, {}
     )[site.evse.entry_id] = evse_sensor
 
-    patches = [] if lockstep_enabled else [patch.object(
-        hub_calculation, "_watch_readouts_against_household", lambda *a, **k: None
-    )]
-    with clocked(world.accept, *patches) as clock:
+    # The control for the field's stuck readout: the household check is off, and so is
+    # the early cut (plan lj-1) the field build did not have - it alone settles the
+    # stuck-at-0 case at half the room instead of letting the charger hunt.
+    patches = [] if lockstep_enabled else [
+        patch.object(hub_calculation, "_watch_readouts_against_household", lambda *a, **k: None),
+        patch("custom_components.dynamic_ocpp_evse.entities.load.cut_now", lambda *a: None),
+    ]
+    with clocked(world.accept, *patches, wall=True) as clock:
         first = []
         cycle = await _run(hass, site, world, 90, clock, first)           # 3 min healthy
         world.plugged = False
@@ -331,21 +377,22 @@ async def test_a_readout_stuck_at_zero_hunts_without_the_household_check(hass, s
 
 
 async def test_the_household_check_stops_the_hunting(hass, site):
-    """Same world, with the lockstep path. The first start and cut are the
-    evidence; from the restart on the charger is controlled blind, its assumed
-    5 kW is taken out of the household, and it charges straight through - at
-    the allowance, never over it."""
+    """Same world, with the lockstep path. Through the car's climb its draw
+    is the limit in force, and the commands that trim it meanwhile step the
+    household (judged on the frozen reading) - the evidence; from then on the
+    charger is controlled blind, its assumed 5 kW is taken out of the
+    household, and it charges straight through without a stop - at the
+    allowance, never over it."""
     _, second, watch = await _session(hass, site, lockstep_enabled=True)
 
     assert readout_watch.is_stuck(watch)
     assert watch["stuck_how"] == readout_watch.HOUSEHOLD_LOCKSTEP
-    assert _stops(second) <= 1, f"stopped {_stops(second)} times"
+    # Not one stop: through the car's climb its draw is the limit, and the
+    # commands that trim it meanwhile are the evidence.
+    assert _stops(second) == 0, f"stopped {_stops(second)} times"
 
-    # After the one pause, it runs to the end without another stop...
-    restart = next(
-        t for (t, a, _, _), (_, b, _, _) in zip(second, second[1:])
-        if (a or 0) < MIN_A and (b or 0) >= MIN_A and t > second[0][0] + 60
-    )
+    # It runs to the end...
+    restart = second[0][0]
     tail = [(t, limit, grid) for t, limit, grid, _ in second if t > restart + 30]
     assert tail and min(limit for _, limit, _ in tail) >= MIN_A
     # ...at essentially the allowance: the engine sees the house at 1 kW again.
@@ -444,6 +491,113 @@ async def test_a_car_that_briefly_takes_nothing_is_not_a_stuck_readout(hass, sit
     )
     assert not readout_watch.is_stuck(watch)
     assert _stops(second) == 0
+
+
+# ── A slow meter: the reading predates the charging ───────────────────────
+#
+# The field case (2026-10-03, a go-eCharger V4): nothing is stuck - the
+# meter reports every 120 s - but at each start the reading still holds the 0
+# written at the last suspension, the car's draw is booked as house load, and
+# the charger is cut and paused, again and again, until a meter value happens
+# to land while it runs. Until the first reading since the start, the draw is
+# the limit in force (load_builders._await_first_reading).
+
+METER_EVERY = int(120 / CYCLE_S)
+
+
+async def _slow_meter_session(hass, site, minutes, *patches):
+    world = World(hass, off_grid=site.off_grid)
+    world.meter_every = METER_EVERY
+    hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
+        site.hub.entry_id, {}
+    )[site.evse.entry_id] = sensor_platform.LoadJugglerDeviceSensor(
+        hass, site.evse, site.hub, "evse", "evse"
+    )
+    log = []
+    with clocked(world.accept, *patches, wall=True) as clock:
+        # The first meter value lands 30 s into the session, not with the start.
+        await _run(hass, site, world, int(minutes * 60 / CYCLE_S), clock, log,
+                   cycle0=METER_EVERY - 15)
+    return log, hass.data[DOMAIN]["loads"][site.evse.entry_id][EVSE_RT_READOUT_WATCH]
+
+
+async def test_a_slow_meter_hunts_when_its_old_reading_is_believed(hass, site):
+    """Control: the reading from before the start taken as it stands - and
+    the household check off, as it was for the field's first fifteen
+    minutes, and the early cut off, which the field build did not have."""
+    log, _ = await _slow_meter_session(
+        hass, site, 15,
+        patch.object(readout_watch, "assumed_before_new_reading",
+                     lambda *a: None),
+        patch.object(hub_calculation, "_watch_readouts_against_household",
+                     lambda *a, **k: None),
+        patch("custom_components.dynamic_ocpp_evse.entities.load.cut_now", lambda *a: None),
+    )
+    assert _stops(log) >= 2, f"expected the charger to hunt, it stopped {_stops(log)} times"
+
+
+async def test_a_slow_meter_charges_through_on_its_assumed_draw(hass, site):
+    """The same world: the charger starts and never stops, at the allowance,
+    with nothing judged stuck - and from the first meter value on, its draw
+    is the reading again."""
+    log, watch = await _slow_meter_session(hass, site, 15)
+    assert _stops(log) == 0, f"stopped {_stops(log)} times"
+    assert not readout_watch.is_stuck(watch)
+    running = [limit for _, limit, _, _ in log[20:] if limit is not None]
+    assert min(running) >= MIN_A
+    assert max(g for _, _, g, _ in log[30:]) <= SETTLED_W
+    assert "awaiting" not in watch
+    assert log[-1][3].extra_state_attributes["readout_assumed_current"] is None
+
+
+# ── A car that climbs: the reading lands during the climb ─────────────────
+#
+# The field case (2026-10-07, the third site's Nova, a go-eCharger V4): nothing is
+# stale in the old sense - meter values and commands both every 30 s - but a
+# car climbs to a raised limit over tens of seconds, and a value that lands a
+# few seconds after the raise shows it part of the way up. Believed, the rest
+# of the climb is house load, and the limit falls back toward what the car
+# had been drawing (16/6/16/6 A on that site, twice into a 3-minute pause).
+# Within readout_watch.CAR_RAMP_S of a raise the draw is the limit in force,
+# and the load is held there until a reading shows the car's answer.
+
+RAMP_METER_EVERY = int(30 / CYCLE_S)
+
+
+async def _climbing_car_session(hass, site, minutes, *patches):
+    world = World(hass)
+    world.meter_every = RAMP_METER_EVERY
+    world.ramp_a_per_s = 0.5          # 0 -> 21.7 A in about 45 s
+    hass.data[DOMAIN].setdefault("load_processors", {}).setdefault(
+        site.hub.entry_id, {}
+    )[site.evse.entry_id] = sensor_platform.LoadJugglerDeviceSensor(
+        hass, site.evse, site.hub, "evse", "evse"
+    )
+    log = []
+    with clocked(world.accept, *patches, wall=True) as clock:
+        # A meter value lands 4 s into the session, the car barely moving.
+        await _run(hass, site, world, int(minutes * 60 / CYCLE_S), clock, log,
+                   cycle0=RAMP_METER_EVERY - 2)
+    return log
+
+
+async def test_a_climbing_car_is_cut_when_its_climb_is_believed(hass, site):
+    """Control: the reading taken during the climb used as it stands."""
+    log = await _climbing_car_session(
+        hass, site, 10, patch.object(readout_watch, "CAR_RAMP_S", 0.0)
+    )
+    limits = [limit for _, limit, _, _ in log if limit is not None]
+    assert min(limits) < limits[0] - 5, f"expected a cut, limits {sorted(set(limits))}"
+
+
+async def test_a_climbing_car_holds_its_limit(hass, site):
+    """The same world: the first limit stands through the climb, never
+    raised past the allowance on room the climb has not used yet."""
+    log = await _climbing_car_session(hass, site, 10)
+    limits = [limit for _, limit, _, _ in log if limit is not None]
+    assert _stops(log) == 0
+    assert max(limits) - min(limits) <= DEAD_BAND, sorted(set(limits))
+    assert max(g for _, _, g, _ in log) <= SETTLED_W
 
 
 # ── Off-grid: the same hunting, through the inverter's capacity ────────────

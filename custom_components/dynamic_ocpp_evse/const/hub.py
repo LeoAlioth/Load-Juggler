@@ -6,6 +6,11 @@ CONF_PHASE_B_CURRENT_ENTITY_ID = "phase_b_current_entity_id"
 CONF_PHASE_C_CURRENT_ENTITY_ID = "phase_c_current_entity_id"
 CONF_MAIN_BREAKER_RATING = "main_breaker_rating"
 CONF_INVERT_PHASES = "invert_phases"
+# The "grid" sensors read what a backup generator feeds into the inverter's AC input
+# (JUG-13): the site is off-grid, the generator is one more supply capped at its own
+# per-phase rating, and nothing can be exported to it.
+CONF_GRID_INPUT_IS_GENERATOR = "grid_input_is_generator"
+CONF_GENERATOR_RATING = "generator_rating"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_ENABLE_MAX_IMPORT_POWER = "enable_max_import_power"  # Checkbox: create slider for max import power
 CONF_PHASE_VOLTAGE = "phase_voltage"
@@ -18,21 +23,29 @@ CONF_SOLAR_PRODUCTION_ENTITY_ID = "solar_production_entity_id"  # Optional direc
 # Inverter configuration (hub-level)
 CONF_INVERTER_MAX_POWER = "inverter_max_power"  # Total inverter capacity (W)
 CONF_INVERTER_MAX_POWER_PER_PHASE = "inverter_max_power_per_phase"  # Per-phase inverter limit (W)
+# Optional sensor (W/kW) read each cycle in place of the fixed total capacity - an automation
+# lowers it toward 0 on an inverter over-temperature alarm.
+CONF_INVERTER_MAX_POWER_ENTITY_ID = "inverter_max_power_entity_id"
 CONF_INVERTER_SUPPORTS_ASYMMETRIC = "inverter_supports_asymmetric"  # Can balance power across phases
 CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID = "inverter_output_phase_a_entity_id"  # Per-phase inverter output sensor
 CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID = "inverter_output_phase_b_entity_id"
 CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID = "inverter_output_phase_c_entity_id"
-CONF_WIRING_TOPOLOGY = "wiring_topology"  # "parallel" or "series"
-WIRING_TOPOLOGY_PARALLEL = "parallel"  # Inverter feeds in parallel (AC-coupled, no battery typical)
-WIRING_TOPOLOGY_SERIES = "series"  # Everything flows through inverter (hybrid, battery typical)
-DEFAULT_WIRING_TOPOLOGY = WIRING_TOPOLOGY_PARALLEL
+# What the inverter takes in at its AC input (grid side), per phase, positive
+# while it draws from the grid - optional, a PV string inverter has none. The
+# tick says the grid meter's own reading IS this input (a hybrid the grid flows
+# through, nothing in between); at most one inverter per hub has it.
+CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID = "inverter_input_phase_a_entity_id"
+CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID = "inverter_input_phase_b_entity_id"
+CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID = "inverter_input_phase_c_entity_id"
+CONF_INVERTER_INPUT_IS_GRID = "inverter_input_is_grid"
 
 # Battery support configuration constants (hub-level)
 CONF_BATTERY_POWER_ENTITY_ID = "battery_power_entity_id"
 CONF_BATTERY_SOC_ENTITY_ID = "battery_soc_entity_id"
-CONF_BATTERY_SOC_MIN = "battery_soc_min"  # Minimum SOC below which EV should not charge
 CONF_BATTERY_SOC_FULL = "battery_soc_full"  # SOC at/above which the battery counts as "full" (plug Excess mode)
 CONF_BATTERY_SOC_HYSTERESIS = "battery_soc_hysteresis"  # Hysteresis percentage for SOC thresholds
+# Off-grid, below the minimum SOC the battery still carries the tanks and heaters (at their away setpoint) down to this SOC
+CONF_BATTERY_SOC_FREEZE_FLOOR = "battery_soc_freeze_floor"
 CONF_BATTERY_MAX_CHARGE_POWER = "battery_max_charge_power"  # W
 CONF_BATTERY_MAX_DISCHARGE_POWER = "battery_max_discharge_power"  # W
 
@@ -60,6 +73,7 @@ CONF_FILTER_RAMP_DOWN_RATE = "filter_ramp_down_rate"    # RAMP_DOWN_RATE (A/s)
 
 # Hub default values
 DEFAULT_MAIN_BREAKER_RATING = 25
+DEFAULT_GENERATOR_RATING = 6  # A per phase - the MultiPlus AC input limit on the first site
 DEFAULT_SITE_UPDATE_FREQUENCY = 2  # Fast site info refresh (seconds)
 DEFAULT_SOLAR_GRACE_PERIOD = 5  # minutes
 DEFAULT_EXCESS_EXPORT_THRESHOLD = 13000  # LEGACY - migration fallback only
@@ -69,12 +83,18 @@ DEFAULT_BATTERY_SOC_MIN = 20  # Default minimum SOC (20%)
 DEFAULT_BATTERY_SOC_TARGET = 80  # Default SOC target (80%)
 DEFAULT_BATTERY_SOC_FULL = 97  # Default "full" SOC - plug Excess mode trigger (%)
 DEFAULT_BATTERY_SOC_HYSTERESIS = 3  # Default hysteresis (3%)
+DEFAULT_BATTERY_SOC_FREEZE_FLOOR = 5  # %
 
 # PV clipping forecast (hub-level). Sites with more PV than they may export
 # (e.g. 15 kWp behind a 5 kW export limit) should keep battery headroom for
 # the forecast midday peak instead of filling up on morning production that
 # could have been exported. The hub publishes advisory sensors only - a
 # future battery-inverter device type will optionally write them to a device.
+CONF_GRID_EXPORT_LIMIT_PER_PHASE = "grid_export_limit_per_phase"  # W per phase, 0 = none.
+# An optional second export ceiling beside the total (JUG-14): an ASYMMETRIC inverter can sit
+# well under the total while one leg exceeds a per-phase cap. Read ONLY by the curtailment
+# test (calculations/calibration.py export_is_clamped); it does not enable the forecast, move
+# the Excess trigger or change the clipping threshold - those stay on the total.
 CONF_GRID_EXPORT_LIMIT = "grid_export_limit"  # W - the site's physical/contract
 # export ceiling, and the ONE export number the user enters. Everything else
 # derives from it: the Excess trigger engages at (limit − trigger margin), and
@@ -94,15 +114,75 @@ CONF_SOLAR_FORECAST_DEVICE_IDS = "solar_forecast_device_ids"  # list - one forec
 # series, so selecting sensors risks double-counting one array - the reader
 # resolves exactly one watts-bearing sensor per device).
 CONF_SOLAR_FORECAST_ENTITY_IDS = "solar_forecast_entity_ids"  # LEGACY - direct
-# sensor list from the first dev iteration; still honored at runtime.
+# sensor list from the first dev iteration; read nowhere, only stripped from a
+# hub by the one-time import.
 CONF_BASE_CONSUMPTION = "base_consumption"  # W - typical daytime minimum house draw
+# Optional sensor (W/kW or input_number) read each cycle in place of the typed figure above - Load
+# Insights publishes the daytime minimum of its whole-house forecast.
+CONF_BASE_CONSUMPTION_ENTITY_ID = "base_consumption_entity_id"
 CONF_BATTERY_CAPACITY_KWH = "battery_capacity_kwh"  # kWh the SOC percentage spans; 0 = off
+CONF_BATTERY_CAPACITY_ENTITY_ID = "battery_capacity_entity_id"  # Wh/kWh sensor; overrides the number while it reads
+# Optional per-inverter entity (%; sensor, number or input_number) holding where this battery is
+# meant to END the day - the DESTINATION the clipping reserve is carved below. Unset, the
+# destination is read from CONF_SOC_LIMIT_NORMAL_ENTITY_ID as before. Set, the ceiling source
+# keeps only its write-side job (the fan-out's restore value), so a cheap-tariff night can drop
+# the slots without dragging the destination down with them.
+CONF_BATTERY_CHARGE_TARGET_ENTITY_ID = "battery_charge_target_entity_id"
 CONF_FORECAST_SOC_FLOOR = "forecast_soc_floor"  # % - never recommend a ceiling below this
+# Pacing (per-load option CONF_PACE_OVER_HORIZON): the excess energy
+# (kWh sensor) and sunset (timestamp sensor: when that energy has to be used by). With
+# either unset, or unreadable, no load is paced.
+CONF_PACING_ENERGY_ENTITY_ID = "pacing_energy_entity_id"
+CONF_PACING_HORIZON_ENTITY_ID = "pacing_horizon_entity_id"
+# Early-start (owner, 2026-10-18): a timestamp sensor for when the battery is next
+# full by the forecast. Each load starts early only once the time left to it lets
+# the load's minimum power use the pacing energy (calculations/forecast_excess.py,
+# ``starts_early``). Unset: the pacing horizon above stands in.
+CONF_FORECAST_EXCESS_FULL_ENTITY_ID = "forecast_excess_full_entity_id"
+# Forecast-driven Excess (owner, 2026-10-17): the Excess verdict may start before
+# the battery is full while the pacing energy says the day will overfill it -
+# see calculations/forecast_excess.py. Off by default.
+CONF_FORECAST_EXCESS_ENABLED = "forecast_excess_enabled"
+CONF_FORECAST_EXCESS_SOC_SOURCE = "forecast_excess_soc_source"
+CONF_FORECAST_EXCESS_SOC = "forecast_excess_soc"  # %, used with the fixed source
+FORECAST_EXCESS_SOURCE_MIN = "minimum"
+FORECAST_EXCESS_SOURCE_TARGET = "target"
+FORECAST_EXCESS_SOURCE_FIXED = "fixed"
+FORECAST_EXCESS_SOC_SOURCES = [
+    FORECAST_EXCESS_SOURCE_MIN,
+    FORECAST_EXCESS_SOURCE_TARGET,
+    FORECAST_EXCESS_SOURCE_FIXED,
+]
+# Early start on forecast CLIPPING (JUG-18): Excess loads start ahead of the PV
+# clipping window when the clip the battery cannot take would otherwise be
+# curtailed. Needs the clipping advice (export limit or off-grid, battery
+# capacity, solar forecast); shares the early-start SOC gate above. Off by default.
+CONF_FORECAST_CLIP_EARLY_ENABLED = "forecast_clip_early_enabled"
+DEFAULT_FORECAST_CLIP_EARLY_ENABLED = False
+# Expected grid loss window (JUG-23, DSO-agnostic): a calendar or binary_sensor
+# naming when the grid is about to be lost (a planned outage). While a window is
+# within the lead time, running, or inside the hold after it, a grid-tied site's
+# battery is pre-charged: see calculations/outage_window.py. Unset: nothing changes.
+CONF_OUTAGE_ENTITY_ID = "outage_entity_id"
+CONF_OUTAGE_LEAD_HOURS = "outage_precharge_lead_hours"
+CONF_OUTAGE_HOLD_HOURS = "outage_hold_hours"
+DEFAULT_OUTAGE_LEAD_HOURS = 6
+DEFAULT_OUTAGE_HOLD_HOURS = 1
+DEFAULT_FORECAST_EXCESS_ENABLED = False
+DEFAULT_FORECAST_EXCESS_SOC_SOURCE = FORECAST_EXCESS_SOURCE_TARGET
+DEFAULT_FORECAST_EXCESS_SOC = 80
 DEFAULT_GRID_EXPORT_LIMIT = 0
+DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE = 0  # 0 = no per-phase export limit
 DEFAULT_EXCESS_TRIGGER_MARGIN = 500
 DEFAULT_BASE_CONSUMPTION = 300
 DEFAULT_BATTERY_CAPACITY_KWH = 0
 DEFAULT_FORECAST_SOC_FLOOR = 30
+# How long a forecast source that stops delivering (unavailable, or no usable
+# data) keeps contributing the series it last read - an internet outage takes
+# the forecast integration down with it, and the last forecast it fetched still
+# describes the day (2026-10-07: "the last available forecast for up to
+# 24 hours"). Past it the source counts as missing, as before.
+FORECAST_HOLD_S = 24 * 3600
 FORECAST_SOC_HYSTERESIS = 2  # % - serves every forecast latch, so one
 # setting sizes the whole feature's stickiness:
 #  1. the published ceiling rises freely but falls only by more than this band,
@@ -129,3 +209,9 @@ DISTRIBUTION_MODES = [
     DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
 ]
 DEFAULT_DISTRIBUTION_MODE = DISTRIBUTION_MODE_PRIORITY
+# Optimized trims a load for the next one's minimum only with current left over
+# beyond the load's own maximum. To START the next load that leftover must be
+# at least this (A); a next load already running keeps its minimum down to any
+# leftover above 0. Without the band, a supply hovering at the first load's
+# maximum flipped two 6-16 A chargers between 16/0 and 11/6 A.
+OPTIMIZED_START_MARGIN = 1.0

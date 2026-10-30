@@ -70,11 +70,19 @@ engine/load_builders.py for the rest of blind mode). The watch lets go once the
 reading produces RESUME_VALUES new values - moving, not moved once - or when
 the caller resets it (session over, monitor unreadable, Dynamic Control off).
 
+A reading that is merely SLOW gets the same assumption without a verdict:
+``assumed_before_new_reading``, after ``assumed_legs``, for as long as the
+reading in use was last reported before the limit in force last changed - the
+connector entering Charging, or a command that moved it.
+
 Pure Python with no package imports. The caller owns the state dict (the
 load's runtime bucket) and the clock (``now``, monotonic seconds).
 """
 
 from __future__ import annotations
+
+from datetime import timedelta
+from statistics import median
 
 # OCPP 1.6 connector statuses in which a car may be connected but no energy is
 # transferred: waiting to start, suspended by the car or by the charger, or the
@@ -320,9 +328,163 @@ def assumed_legs(state: dict, status: str | None, commanded: float | None) -> tu
     return tuple(in_force if leg else 0.0 for leg in carrying)
 
 
+# ── Before a new reading: the reading predates the limit in force ───────
+#
+# A reading describes the draw under the limit in force when it was taken.
+# Until one taken since arrives, the draw under a new limit is ASSUMED, as in
+# blind mode - but nothing is stuck, the reading is only slow.
+#
+# The first field case (2026-10-03, a go-eCharger V4): meter values every
+# 120 s, and the ocpp integration writes 0 into the reading at each
+# SuspendedEV/EVSE. The car starts at 16 A, the reading still holds that 0, the
+# feedback books the car's 11 kW as house load, the allocation collapses
+# within 16 s, the charger is paused - and round it goes, every 3.5 min, until
+# the lockstep path caught it four starts later.
+#
+# The second (2026-10-04, two of them on a 20 A breaker, Priority mode, meter
+# values and commands both every 30 s): the priority-1 car followed every
+# command, its reading lagged each one by up to 26 s, and the feedback booked
+# every step as house load the other way - raised 7 -> 15 A, the house
+# "rose" 8 A and the next command fell to 8 A; cut, the house "fell" and the
+# next one rose again - 7/15/8/14/8/11 A, the breaker past 20 A after every
+# rise, and each phantom rise left no room for the priority-2 car's 6 A
+# minimum, so it was cut and paused for 3 minutes, again and again.
+#
+# "Taken since" is HA's last_reported, not last_changed: a value re-reported
+# unchanged is still a new measurement, so a car that really takes nothing is
+# believed at the next report. The ocpp integration (0.12) re-writes every
+# sensor of a charger at each StatusNotification and MeterValues, measurands
+# before the connector status - so the held 0 is re-reported by the very
+# notification that says Charging, microseconds BEFORE the status changes, and
+# still predates it; what makes it fresh is the next push, in practice the
+# next meter value. A reading reported AT the same instant counts as fresh, so
+# states restored together after a restart are not doubted.
+#
+# A command's moment is when the engine first saw it accepted - one site cycle
+# late at most, so a reading taken within that cycle is assumed over once
+# more, which errs toward the command it was about to show anyway.
+#
+# A reading taken AFTER a raise can still predate the car's answer to it: a
+# car climbs to a higher limit over tens of seconds, while it must come down
+# to a lower one within 5 s (IEC 61851-1). The third field case (2026-10-07,
+# the third site's Nova, a go-eCharger V4 alone on the site, meter values and commands
+# both every 30 s): a value landed a few seconds after each raise, showing the
+# car a third of the way up; the grid saw it reach the limit, the feedback
+# booked the rest as house load - 4 to 7 kW of it - and the allocation fell
+# back to what the car had been drawing. 16/6/16/6 A every minute or two, a
+# third of the session at 7 A or less on a site with room for 16, and twice a
+# phase read under 6 A and the car was paused for 3 minutes. So a reading
+# taken within CAR_RAMP_S of the charging starting, or of a command, is taken
+# under the LOWEST limit in force over that span - the one the car may still
+# be climbing from. A cut inside the span is the lowest limit itself, so a car
+# that obeyed it is believed at once, as before.
+
+# The draw_estimate evidence while the draw is assumed this way.
+READING_PREDATES_LIMIT = "reading_predates_limit"
+
+# How many recent commands the watch remembers, to find the one a reading was
+# taken under when readings come slower than commands. A memory length, like
+# GAP_MEMORY: a reading older than all of them is used as it stands.
+COMMAND_MEMORY = 4
+
+# How long a car may take to climb to a raised limit, in seconds: a reading
+# taken within it may show the climb rather than the car's answer. The Nova's
+# car took 45-50 s from the connector entering Charging to its 16 A; the
+# cost of a longer span is one more reading's wait before a car that holds
+# itself below a raise is believed - meanwhile the house reads low by the gap
+# and the charger is booked at its limit, which hands no one current the
+# charger could be drawing.
+CAR_RAMP_S = 60.0
+
+
+def track_commands(state: dict, commanded: float | None, now) -> None:
+    """Record each change of the commanded limit, at ``now`` (wall clock,
+    comparable with a reading's last_reported), in ``state["commands"]`` as
+    ``(at, limit)``. The first limit seen has ``at`` None - in force since
+    before the watch knows. An unknown limit forgets them all."""
+    commands = state.setdefault("commands", [])
+    if commanded is None:
+        commands.clear()
+    elif not commands or commands[-1][1] != commanded:
+        commands.append((now if commands else None, float(commanded)))
+        del commands[:-COMMAND_MEMORY]
+
+
+def _limits_between(commands, start, end) -> list[float]:
+    """Every remembered limit in force at some moment from ``start`` to
+    ``end`` - the oldest remembered one standing in for any before it."""
+    found = []
+    for i, (at, limit) in enumerate(commands):
+        if at is not None and at > end:
+            break
+        ends = commands[i + 1][0] if i + 1 < len(commands) else None
+        if ends is None or ends > start:
+            found.append(limit)
+    return found
+
+
+def assumed_before_new_reading(
+    status: str | None,
+    commanded: float | None,
+    legs: int,
+    reading,
+    reported_at,
+    charging_since,
+    commands,
+    margin: float,
+) -> tuple | None:
+    """``(assumed, since)`` for a reading taken under a limit no longer in
+    force - the per-leg draw (A) to use in its place, and when the limit it
+    predates came in - or None to use the reading.
+
+    The limit in force changes when the connector enters Charging - from a
+    no-energy status, so from 0 A (``charging_since``) - and when a command
+    moves it (``commands``, see ``track_commands``). ``reported_at`` is when
+    the reading was last reported (the oldest, for one sensor per leg). A
+    reading reported within CAR_RAMP_S after such a change may show the car
+    still climbing, so it counts as taken under the lowest limit in force over
+    those seconds (0 A when the charging began in them). Per leg, what the
+    reading showed under the limit it was taken at says which way the car goes:
+
+    * it took that limit, to within ``margin``: the car follows its limit, so
+      it now takes the limit in force;
+    * it took less: the car holds itself there, so it takes the same - or the
+      limit in force, if that is lower.
+
+    None while the connector is not Charging, with no limit in force or no
+    timestamp known, and when the assumption moves no leg by more than
+    ``margin`` - a car at its own ceiling, or a command that hardly moved.
+    Legs past the charger's ``legs`` carry 0 A.
+    """
+    if status != LEARNING_STATUS or reported_at is None:
+        return None
+    in_force = limit_in_force(status, commanded)
+    if in_force is None:
+        return None
+    ramp_from = reported_at - timedelta(seconds=CAR_RAMP_S)
+    # Reported AT the charging's instant: restored together after a restart.
+    if (charging_since is not None and charging_since > ramp_from
+            and reported_at != charging_since):
+        before, since = 0.0, charging_since
+    elif commands and commands[-1][0] is not None and commands[-1][0] > ramp_from:
+        limits = _limits_between(commands, ramp_from, reported_at)
+        if not limits:
+            return None
+        before, since = min(limits), commands[-1][0]
+    else:
+        return None
+    assumed = tuple(
+        (in_force if r >= before - margin else min(r, in_force)) if i < legs else 0.0
+        for i, r in enumerate(reading)
+    )
+    if all(abs(a - r) <= margin for a, r in zip(assumed, reading)):
+        return None
+    return assumed, since
+
+
 # ── Frozen LOW: the household follows our own commands ──────────────────
 #
-# The field case (Anze, 2026-09-23): the readout sticks at 0 while the car
+# The field case (2026-09-23): the readout sticks at 0 while the car
 # really draws. The feedback loop subtracts each managed draw from the grid
 # CTs, so every amp the reading misses is booked as HOUSE load - the charger
 # starts at 5 kW, the "household" jumps 1 -> 6 kW, the 6 kW allowance is gone,
@@ -401,14 +563,6 @@ def _reset_lockstep(state: dict) -> None:
         state.pop(key, None)
 
 
-def _median(values):
-    ordered = sorted(values)
-    mid = len(ordered) // 2
-    if len(ordered) % 2:
-        return ordered[mid]
-    return (ordered[mid - 1] + ordered[mid]) / 2
-
-
 def _summarise(samples) -> dict:
     """Per phase, the (level, spread) of one interval's household samples:
     their median, and their median absolute deviation from it."""
@@ -416,8 +570,8 @@ def _summarise(samples) -> dict:
     for phase in _PHASES:
         values = [s[phase] for s in samples if s.get(phase) is not None]
         if values:
-            level = _median(values)
-            out[phase] = (level, _median([abs(v - level) for v in values]))
+            level = median(values)
+            out[phase] = (level, median([abs(v - level) for v in values]))
     return out
 
 

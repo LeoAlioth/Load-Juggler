@@ -10,15 +10,26 @@ Every scenario runs a 30-cycle simulation:
 
 import yaml
 
+from custom_components.dynamic_ocpp_evse.calculations.catch_up import (
+    catch_up_verdict,
+    max_power_w,
+)
+from custom_components.dynamic_ocpp_evse.calculations.forecast_excess import (
+    forecast_excess_gate,
+    forecast_excess_verdict,
+)
+from custom_components.dynamic_ocpp_evse.calculations.outage_window import precharge_target
+from custom_components.dynamic_ocpp_evse.calculations.pacing import pace_cap_current, pace_watts
 from custom_components.dynamic_ocpp_evse.calculations.models import LoadContext, SiteContext, PhaseValues, CircuitGroup
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     calculate_all_load_targets,
     excess_margin,
 )
 from custom_components.dynamic_ocpp_evse.calculations.utils import (
-    compute_household_per_phase,
     grid_without_managed_draws,
+    household_per_phase,
 )
+from custom_components.dynamic_ocpp_evse.engine import fleet
 from custom_components.dynamic_ocpp_evse.const import (
     resolve_operating_mode,
     BEHAVIOR_EXCESS,
@@ -26,6 +37,7 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.const.hot_water_tank import (
     DEFAULT_TANK_AWAY_TEMPERATURE,
+    DEFAULT_TANK_BOOST_TEMPERATURE,
     TANK_MODE_FREEZE_PROTECTION,
     resolve_tank_mode_priority,
     tank_boost_is_opportunistic,
@@ -127,10 +139,10 @@ def set_load_phase_currents(load, commanded_limit):
             setattr(load, attr, commanded_limit)
 
 
-def place_asymmetric_output(demand, total, cap):
+def place_asymmetric_output(demand, total, cap, rating=float("inf")):
     """Per-phase output of an ASYMMETRIC inverter putting out ``total`` A net.
 
-    Anže, 2026-09-24: his asymmetric inverter "puts/pulls power on the phases in
+    The owner, 2026-09-24: his asymmetric inverter "puts/pulls power on the phases in
     a way to always try to balance them on the grid". So it places its net
     output - and its charging draw - to bring every phase's grid current
     (``demand[i] - out[i]``, demand being household + managed loads) to one
@@ -138,11 +150,23 @@ def place_asymmetric_output(demand, total, cap):
     short of that level keeps what is left. The outputs sum to ``total``, so the
     site's net grid flow is the even spread's; only the split moves. A total
     no placement within the caps can carry falls back to the even spread.
+
+    And everything it puts out, together, within ``rating`` (A, the inverter's
+    whole rating): a pull on one phase lets it push more on the others for the
+    same net, and per-phase caps alone let the pushes add up past the rating.
+    Over it, the pushes come down to the rating and the pulls with them, so
+    the net stays ``total`` (held to the rating already by the battery model).
     """
-    # ponytail: the net total is held to the inverter's rating (the battery
-    # model caps discharge at it); what a pull lets it push on top is bounded
-    # only per phase. No scenario pulls today - sum the pushes against
-    # inverter_max_power if one ever does.
+    out = _place_within_caps(demand, total, cap)
+    pushed = sum(o for o in out if o > 0)
+    if pushed <= rating:
+        return out
+    pulled = pushed - total
+    return [o * rating / pushed if o > 0 else o * (rating - total) / pulled for o in out]
+
+
+def _place_within_caps(demand, total, cap):
+    """place_asymmetric_output's level placement, each phase within +-``cap``."""
     n = len(demand)
     if abs(total) > n * cap:
         return [total / n] * n
@@ -198,6 +222,19 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     # Total raw demand across active phases
     total_raw = sum(v for v in [raw_a, raw_b, raw_c] if v is not None)
 
+    # A generator on the grid input (JUG-13), while running: it passes through
+    # to the loads up to its rating before the pack is asked for anything, and
+    # its AC-in reading (``site.generator_current``, set below) carries it.
+    generator_supply = 0.0
+    generator_running = (
+        site.is_off_grid
+        and site.generator_rating > 0
+        and site.generator_current is not None
+    )
+    if generator_running and total_raw > 0:
+        generator_supply = min(total_raw, site.generator_rating * num_phases)
+        total_raw -= generator_supply
+
     # Self-consumption battery: buffer to minimize grid flow
     battery_per_phase = 0.0
     if site.battery_soc is not None:
@@ -235,7 +272,10 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
 
     # Grid CT = raw + battery effect: a symmetric inverter's solar and battery
     # flow land evenly on every phase.
-    nets = [None if r is None else r + battery_per_phase for r in (raw_a, raw_b, raw_c)]
+    nets = [
+        None if r is None else r - generator_supply / num_phases + battery_per_phase
+        for r in (raw_a, raw_b, raw_c)
+    ]
     if site.inverter_supports_asymmetric and num_phases > 1:
         # An asymmetric one places the same net output per phase so the grid
         # phases come out as equal as it can make them (place_asymmetric_output).
@@ -249,6 +289,7 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             [d for d in demand if d is not None],
             solar_total - battery_per_phase * num_phases,
             cap_w / site.voltage if cap_w else float("inf"),
+            site.inverter_max_power / site.voltage if site.inverter_max_power else float("inf"),
         ))
         nets = [None if d is None else d - next(outputs) for d in demand]
 
@@ -271,6 +312,12 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
             return 0.0 if h is not None else None
         site.consumption = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
         site.export_current = PhaseValues(_zero(household.a), _zero(household.b), _zero(household.c))
+        if generator_running:
+            # What the generator carries per phase: the AC-in reading.
+            per = generator_supply / num_phases
+            site.generator_current = PhaseValues(
+                *[None if h is None else per for h in (household.a, household.b, household.c)]
+            )
 
     # Set battery_power for engine battery awareness in derived mode.
     # Convention: positive = discharging, negative = charging.
@@ -278,55 +325,146 @@ def simulate_grid_ct(site, household, load_l1, load_l2, load_l3):
     if site.battery_soc is not None:
         site.battery_power = -battery_per_phase * site.voltage * num_phases
 
-    # Update per-phase inverter output to reflect actual physical state.
-    # Parallel: inverter output = solar per phase (inverter only carries solar)
-    # Series: inverter output = household + load draws per phase (all loads go through inverter)
-    # Off-grid, either wiring: household + load draws - with no grid to carry
-    # the rest, everything the site consumes comes out of the inverter
-    # (production's _supply_per_phase reads the output the same way).
-    if site.inverter_output_per_phase is not None:
-        if site.wiring_topology == 'parallel' and not site.is_off_grid:
-            site.inverter_output_per_phase = PhaseValues(
-                solar_per_phase if household.a is not None else None,
-                solar_per_phase if household.b is not None else None,
-                solar_per_phase if household.c is not None else None,
-            )
-        else:
-            # Series, or off-grid: everything downstream goes through inverter
-            site.inverter_output_per_phase = PhaseValues(
-                ((household.a or 0) + load_l1) if household.a is not None else None,
-                ((household.b or 0) + load_l2) if household.b is not None else None,
-                ((household.c or 0) + load_l3) if household.c is not None else None,
-            )
-
     return ct_a_net, ct_b_net, ct_c_net, solar_per_phase, battery_per_phase
 
 
-def simulate_inverter_output(site):
-    """Fleet AC output in watts - the sim's stand-in for output_power_total().
+def resolve_arrangement(site_data, has_battery, off_grid):
+    """The scenario's inverter arrangement as a list of specs, or None when the
+    site has no inverter output sensors.
 
-    Mirrors engine/fleet.py's two tiers: the measured per-phase output when the
-    scenario models output sensors, else the topology-aware estimate (solar plus
-    the battery term - signed in series, discharge-only in parallel).
+    ``site: inverters:`` lists them in order - the battery sits behind the first
+    hybrid::
 
-    Called BEFORE apply_feedback_adjustment() for the same reason production
-    reads it before its feedback loop: afterwards the derived solar contains the
-    managed draws and the estimate is inflated by them.
+        - kind: hybrid          # pv | hybrid | battery
+          input: sensors        # hybrid: grid | sensors | none (off-grid)
+        - kind: pv
+          feeds: port           # pv: main (default) | port (the first hybrid's load port)
+          solar_share: 0.5      # default: an even split between the PV inverters
+
+    ``kind: battery`` is an AC-coupled battery with an inverter of its own: no
+    solar, its sensors read the battery's flow (output while discharging, input
+    while charging), and it hosts the battery when no hybrid does.
+
+    ``main_bus_share`` (site level) is the share of the household on the
+    grid-meter bus, in front of any hybrid.
+
+    Without ``inverters:``, ``inverter_output_sensors: true`` keeps the old
+    automatic rule: off-grid a hybrid with no input, a battery gives a hybrid
+    the grid flows through, otherwise one PV inverter.
     """
-    if site.inverter_output_per_phase is not None:
-        return site.inverter_output_per_phase.total * site.voltage
-    bp = site.battery_power or 0.0
-    battery_term = bp if site.wiring_topology == 'series' else max(0.0, bp)
-    return (site.solar_production_total or 0.0) + battery_term
+    spec = site_data.get('inverters')
+    if spec is not None:
+        return [dict(item) for item in spec]
+    if site_data.get('inverter_output_phase_a') is None and not site_data.get(
+        'inverter_output_sensors', False
+    ):
+        return None
+    if off_grid:
+        return [{'kind': 'hybrid', 'input': 'none'}]
+    if has_battery:
+        return [{'kind': 'hybrid', 'input': 'grid'}]
+    return [{'kind': 'pv'}]
 
 
-def apply_feedback_adjustment(site):
+def signed_grid(site):
+    """The signed per-phase grid reading (+ import) the CT simulation left on
+    the site, None for a phase that does not exist - what production's
+    ``smoothed_phases`` is. Off-grid it is the synthetic 0 on every phase."""
+    return [
+        None if c is None else c - (e or 0)
+        for c, e in zip(
+            (site.consumption.a, site.consumption.b, site.consumption.c),
+            (site.export_current.a, site.export_current.b, site.export_current.c),
+        )
+    ]
+
+
+def simulate_fleet(arrangement, site_data, site, household, draws, grid, solar_pp):
+    """The inverters' readings for one cycle, as production ``FleetMember``s.
+
+    Lossless physics per phase, after ``simulate_grid_ct``:
+
+    - the total conversion is ``C = house + draws - grid`` (what the inverters
+      together deliver net of what they take in);
+    - a PV inverter puts out its solar share;
+    - ``hybrid_out = backed house + draws - Σ PV-on-port out`` (the share of
+      the household on the grid-meter bus is not behind the hybrid);
+    - ``hybrid_in = hybrid_out - (C - Σ PV out)``.
+
+    A hybrid with ``input: grid`` has ``grid_input`` set (production reads the
+    grid meter itself, which only equals ``hybrid_in`` when nothing else sits
+    between the meter and it); ``input: sensors`` gets ``hybrid_in`` as its
+    input sensors' reading, ``input: none`` has no input.
+    """
+    pv_idx = [i for i, item in enumerate(arrangement) if item['kind'] == 'pv']
+    hybrid_idx = [i for i, item in enumerate(arrangement) if item['kind'] == 'hybrid']
+    battery_idx = [i for i, item in enumerate(arrangement) if item['kind'] == 'battery']
+    assert len(hybrid_idx) <= 1, "the harness models at most one hybrid"
+    host = (hybrid_idx + battery_idx + [-1])[0]  # the battery sits behind this one
+    main_share = site_data.get('main_bus_share', 0.0)
+    even = 1.0 / len(pv_idx) if pv_idx else 0.0
+    houses = (household.a, household.b, household.c)
+
+    outs = {i: [] for i in range(len(arrangement))}
+    ins = {i: [] for i in range(len(arrangement))}
+    for p, house in enumerate(houses):
+        if house is None:
+            for i in outs:
+                outs[i].append(None)
+                ins[i].append(None)
+            continue
+        pv_out = {
+            i: solar_pp * arrangement[i].get('solar_share', even) for i in pv_idx
+        }
+        pv_port = sum(
+            pv_out[i] for i in pv_idx if arrangement[i].get('feeds', 'main') == 'port'
+        )
+        conversion = house + draws[p] - grid[p]
+        for i in pv_idx:
+            outs[i].append(pv_out[i])
+            ins[i].append(None)
+        for i in hybrid_idx:
+            hybrid_out = house * (1 - main_share) + draws[p] - pv_port
+            outs[i].append(hybrid_out)
+            ins[i].append(hybrid_out - (conversion - sum(pv_out.values())))
+        for i in battery_idx:
+            net = conversion - sum(pv_out.values())
+            outs[i].append(max(0.0, net))
+            ins[i].append(max(0.0, -net))
+
+    battery = site.battery_soc is not None
+    members = []
+    for i, item in enumerate(arrangement):
+        mode = (
+            item.get('input', 'none') if item['kind'] == 'hybrid'
+            else 'sensors' if item['kind'] == 'battery'
+            else 'none'
+        )
+        out = PhaseValues(*outs[i])
+        inp = PhaseValues(*ins[i]) if mode == 'sensors' else None
+        members.append(fleet.FleetMember(
+            entry_id=f"inv{i}",
+            output=out,
+            output_raw=out,
+            input=inp,
+            input_raw=inp,
+            grid_input=mode == 'grid',
+            has_battery=battery and i == host,
+            has_battery_power_entity=battery and i == host,
+            battery_power=site.battery_power if battery and i == host else None,
+        ))
+    return members
+
+
+def apply_feedback_adjustment(site, members, grid):
     """Replicate dynamic_ocpp_evse.py feedback loop.
 
     Subtracts load draws from grid CT readings (mapped to site phases via
     get_site_phase_draw()) to recover the true household consumption/export
     before load was drawing.
-    In derived mode, recalculates solar_production_total from adjusted export.
+    In derived mode, recalculates solar_production_total from the inverters'
+    net output (``members``, against the pre-feedback signed ``grid``), else from
+    adjusted export.
     In dedicated solar entity mode, computes household_consumption_total instead
     - and off-grid with no output sensors whenever the battery's power is known.
     """
@@ -356,23 +494,17 @@ def apply_feedback_adjustment(site):
     # Derived mode: recalculate solar_production_total from adjusted export.
     # Battery charging absorbs solar power invisible to grid CT - add it back.
     if site.solar_is_derived:
-        if site.inverter_output_per_phase is not None:
+        if members:
             # With output sensors, grid-tied as well as off-grid, production
-            # derives solar from the inverter output (engine/fleet.member_solar),
+            # derives solar from the inverters (engine/fleet.member_solar),
             # never from the export - so must the harness. Until 2026-09-24 it
             # took the export-derived path on a grid-tied site, which is the
             # one configuration where the feedback loop's handed-back draw
             # reaches the inverter pool: it could not see the pool booking a
             # battery-fed car's own draw as spent.
-            # Series, and off-grid on either wiring: inverter_output = solar +
-            # battery_power, so solar = output - battery. Grid-tied parallel:
-            # the inverter output IS solar.
-            inv_watts = site.inverter_output_per_phase.total * site.voltage
-            if site.wiring_topology == 'series' or site.is_off_grid:
-                bp = site.battery_power if site.battery_power is not None else 0
-                site.solar_production_total = max(0, inv_watts - bp)
-            else:
-                site.solar_production_total = max(0, inv_watts)
+            site.solar_production_total = fleet.solar_total(
+                members, site.voltage, grid
+            )
         else:
             site.solar_production_total = site.export_current.total * site.voltage
             if site.battery_power is not None and site.battery_power < 0:
@@ -385,7 +517,7 @@ def apply_feedback_adjustment(site):
     # output sensors that balance is the whole supply, built whenever the
     # battery's power is known - at night (solar 0 W) and with no solar sensor
     # too; elsewhere only from a dedicated solar entity reading above 0.
-    if site.is_off_grid and site.inverter_output_per_phase is None:
+    if site.is_off_grid and site.inverter_net_per_phase is None:
         build_total = site.battery_power is not None or site.battery_soc is None
     else:
         build_total = (
@@ -403,8 +535,10 @@ def apply_feedback_adjustment(site):
             - managed_power
         )
 
-    # Per-phase household from inverter output entities
-    household = compute_household_per_phase(site, site.wiring_topology)
+    # Per-phase household from the inverters' net output: the one sum
+    household = household_per_phase(
+        grid, site.inverter_net_per_phase, (total_l1, total_l2, total_l3)
+    )
     if household is not None:
         site.household_consumption = household
 
@@ -482,7 +616,16 @@ def build_site_from_scenario(scenario, excess_on=False):
         solar_is_derived=solar_is_derived,
         battery_soc=site_data.get('battery_soc'),
         battery_soc_min=site_data.get('battery_soc_min', 20),
-        battery_soc_target=site_data.get('battery_soc_target', 80),
+        # ``outage_precharge: true`` - a planned outage is near (JUG-23): the
+        # engine runs the allocation on "full" as the target.
+        battery_soc_target=(
+            precharge_target(
+                site_data.get('battery_soc_target', 80),
+                site_data.get('battery_soc_full', DEFAULT_BATTERY_SOC_FULL),
+            )
+            if site_data.get('outage_precharge')
+            else site_data.get('battery_soc_target', 80)
+        ),
         battery_soc_full=site_data.get('battery_soc_full', DEFAULT_BATTERY_SOC_FULL),
         excess_export_threshold=site_data.get('excess_export_threshold', 13000),
         battery_max_charge_power=site_data.get('battery_max_charge_power', 5000),
@@ -492,10 +635,19 @@ def build_site_from_scenario(scenario, excess_on=False):
         inverter_max_power=site_data.get('inverter_max_power'),
         inverter_max_power_per_phase=site_data.get('inverter_max_power_per_phase'),
         inverter_supports_asymmetric=site_data.get('inverter_supports_asymmetric', False),
-        wiring_topology=site_data.get('wiring_topology', 'parallel'),
         allow_grid_charging=site_data.get('allow_grid_charging', True),
         is_off_grid=site_data.get('off_grid', False),
     )
+    # ``generator: {rating: 6, running: true}`` - a backup generator on the grid
+    # input of an off-grid site (JUG-13). ``running: false`` is the AC-in
+    # reading being unavailable: the site is plainly off-grid.
+    generator = site_data.get('generator')
+    if generator:
+        site.generator_rating = float(generator['rating'])
+        if generator.get('running', True):
+            site.generator_current = PhaseValues(
+                *[None if c is None else 0.0 for c in (phase_a_cons, phase_b_cons, phase_c_cons)]
+            )
 
     # Per-phase inverter output: explicit values or auto-derived from simulation
     inv_out_a = site_data.get('inverter_output_phase_a')
@@ -503,23 +655,18 @@ def build_site_from_scenario(scenario, excess_on=False):
     inv_out_c = site_data.get('inverter_output_phase_c')
     inverter_output_sensors = site_data.get('inverter_output_sensors', False)
 
-    if inv_out_a is not None:
-        # Explicit per-phase values provided in YAML
-        site.inverter_output_per_phase = PhaseValues(inv_out_a, inv_out_b, inv_out_c)
-    elif inverter_output_sensors:
-        # Auto-derive per-phase inverter output during simulation.
-        # Auto-detect wiring topology: series for battery sites, parallel otherwise
-        if 'wiring_topology' not in site_data:
-            site.wiring_topology = 'series' if site.battery_soc is not None else 'parallel'
-        # Initialize with zeros for active phases (simulate_grid_ct updates each cycle)
-        site.inverter_output_per_phase = PhaseValues(
+    if inv_out_a is not None or inverter_output_sensors or site_data.get('inverters') is not None:
+        # The inverters' net output is rebuilt every cycle from the arrangement
+        # (simulate_fleet); a zero placeholder marks the site as having output
+        # sensors.
+        site.inverter_net_per_phase = PhaseValues(
             0.0 if phase_a_cons is not None else None,
             0.0 if phase_b_cons is not None else None,
             0.0 if phase_c_cons is not None else None,
         )
     # No solar sensor and no output sensors: solar from the meter alone, as
     # production flags it (engine/fleet.solar_is_metered).
-    site.solar_is_metered = solar_is_derived and site.inverter_output_per_phase is None
+    site.solar_is_metered = solar_is_derived and site.inverter_net_per_phase is None
 
     # Build loads
     for idx, load_data in enumerate(scenario['loads']):
@@ -556,6 +703,7 @@ def build_site_from_scenario(scenario, excess_on=False):
         # production builder in engine/hub_calculation.py.
         mode_priority = _mode.priority
         mode_behavior = _mode.behavior
+        thermostat_idle = False
         if device_type == "hot_water_tank":
             # The setpoint label, as control/hot_water_tank.py resolves it:
             # Freeze Protection and Normal both ride surplus up to the boost
@@ -591,6 +739,21 @@ def build_site_from_scenario(scenario, excess_on=False):
                 away_temp if _mode.key == TANK_MODE_FREEZE_PROTECTION.key else normal_temp,
             ):
                 mode_behavior = BEHAVIOR_BINARY_EXCESS
+            # The thermostat, as production reads it (hvac_action "idle" ->
+            # "Available", engine/load_builders.py): a tank already at the
+            # setpoint its label asks for is satisfied and draws nothing. Without
+            # it a tank sitting at its normal temperature heated forever at its
+            # own tier, and that draw - production a must-run load has placed -
+            # held the Excess verdict off for good.
+            if setpoint_label and current_temp is not None:
+                setpoint = {
+                    "away": away_temp,
+                    "normal": normal_temp,
+                    "boost": load_data.get(
+                        "boost_temperature", DEFAULT_TANK_BOOST_TEMPERATURE
+                    ),
+                }[setpoint_label]
+                thermostat_idle = current_temp >= setpoint
 
         load = LoadContext(
             load_id=f"load_{idx}",
@@ -606,8 +769,12 @@ def build_site_from_scenario(scenario, excess_on=False):
             l1_phase=load_data.get("l1_phase", "A"),
             l2_phase=load_data.get("l2_phase", "B"),
             l3_phase=load_data.get("l3_phase", "C"),
-            connector_status=load_data.get("connector_status",
-                                              "Available" if load_data.get("active") is False else "Charging"),
+            connector_status=load_data.get(
+                "connector_status",
+                "Available"
+                if load_data.get("active") is False or thermostat_idle
+                else "Charging",
+            ),
             l1_current=load_data.get("l1_current", 0),
             l2_current=load_data.get("l2_current", 0),
             l3_current=load_data.get("l3_current", 0),
@@ -618,6 +785,23 @@ def build_site_from_scenario(scenario, excess_on=False):
             dynamic_control=load_data.get("dynamic_control", True),
             rated_current=rated_current,
         )
+        # Pacing, as engine/load_builders.py sets it: the site's energy still
+        # to use over the hours left (site: pace_energy_kwh, pace_hours_left),
+        # for the loads that tick ``pace: true``.
+        if load_data.get("pace") and "pace_energy_kwh" in site_data:
+            load.pace_cap_current = pace_cap_current(
+                site_data["pace_energy_kwh"],
+                site_data.get("pace_hours_left", 0),
+                voltage,
+                phases,
+            )
+        # Catch-up's per-load option (loads: catch_up: true); the verdict is
+        # latched per cycle in run_scenario_simulation.
+        load.catch_up_enabled = bool(load_data.get("catch_up"))
+        # The early-start group's per-load inputs (engine/load_builders.py):
+        # what the load can still absorb today, and a thermostat load's room.
+        load.early_room_kwh = load_data.get("early_room_kwh")
+        load.thermal_headroom_k = load_data.get("thermal_headroom_k")
         site.loads.append(load)
 
     # Build circuit groups
@@ -712,6 +896,14 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
     # Excess latch state, the hub_runtime["_excess_on"] equivalent: the widened
     # release band only applies while Excess was already engaged last cycle.
     excess_on = False
+    # The forecast verdict's latch (site: forecast_excess: {energy_kwh, hours_left,
+    # source, soc}) - the hub_runtime["_excess_by_forecast_on"] equivalent.
+    forecast_on = False
+    # Catch-up's per-load latch (site: catch_up: {energy_kwh, hours_left, source,
+    # soc}; source minimum = the hub's early-Excess option off) - the
+    # hub_runtime["_catch_up_on"] equivalent.
+    catch_on = {}
+    clip_runtime = {}  # hub_runtime's clip-early latches (site: forecast_clip)
     invariant_breaches = set()  # physical guards, deduplicated across cycles
 
     # Per-load draw-settle tracking: last measured draw and the count of
@@ -741,7 +933,7 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         # 1. Build site from YAML (household consumption, solar production, battery)
         # Last cycle's verdict, so a tank's boost setpoint (and therefore its
         # behavior) is resolved the way the control layer does it.
-        site = build_site_from_scenario(scenario, excess_on=excess_on)
+        site = build_site_from_scenario(scenario, excess_on=excess_on or forecast_on)
 
         # 2. Scale household + solar for cold-start ramp-up (cycles 0-4)
         if cycle < RAMP_UP_CYCLES:
@@ -766,6 +958,8 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
             cap = draw_cap.get(load.entity_id)
             if cap is not None:
                 simulated = min(simulated, cap)
+            if load.device_type == "hot_water_tank" and load.connector_status != "Charging":
+                simulated = 0.0  # a satisfied thermostat draws nothing
             set_load_phase_currents(load, simulated)
 
             eid = load.entity_id
@@ -805,6 +999,24 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         if scenario['site'].get('battery_power_unread'):
             site.battery_power = None
 
+        # 4a. The inverters' readings for this cycle, from the arrangement - the
+        #     FleetMembers production builds from its sensors - and the signed
+        #     grid they are netted against (production's smoothed_phases).
+        grid = signed_grid(site)
+        arrangement = resolve_arrangement(
+            scenario['site'], site.battery_soc is not None, site.is_off_grid
+        )
+        members = (
+            simulate_fleet(
+                arrangement, scenario['site'], site, household,
+                (load_phase_a, load_phase_b, load_phase_c), grid, solar_pp,
+            )
+            if arrangement is not None
+            else []
+        )
+        if members:
+            site.inverter_net_per_phase = fleet.net_output(members, grid)
+
         # 4b. Read-time figures the engine captures before its feedback loop and
         #     the calculator's inverter coverage gate reads: the raw meter and
         #     the fleet's AC output. Off grid there are no CTs at all, so
@@ -813,10 +1025,13 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         if not site.is_off_grid:
             site.grid_current = PhaseValues(ct_a_net, ct_b_net, ct_c_net)
         site.net_grid_power = site.grid_current.total * site.voltage
-        site.inverter_output_total = simulate_inverter_output(site)
+        site.inverter_output_total = fleet.output_power_total(
+            members, site.voltage, solar_w=site.solar_production_total,
+            battery_power_w=site.battery_power, grid=grid,
+        )
 
         # 5. Apply feedback: subtract load draws (replicates dynamic_ocpp_evse.py)
-        apply_feedback_adjustment(site)
+        apply_feedback_adjustment(site, members, grid)
 
         # 6. Excess trigger + hysteresis latch (replicates the same block in
         #    engine/hub_calculation.py - the calculator itself is stateless and
@@ -826,6 +1041,72 @@ def run_scenario_simulation(scenario, verbose=False, trace=False):
         margin = excess_margin(site, hysteresis if excess_on else 0)
         excess_on = margin >= 0
         site.excess_hysteresis = hysteresis if excess_on else 0
+
+        # 6b. The forecast-driven verdict, as engine/hub_calculation.py latches it
+        #     from the pacing energy and the hub's SOC gate.
+        fx = scenario['site'].get('forecast_excess')
+        if fx:
+            gate, band = forecast_excess_gate(
+                fx.get('source', 'target'), site.battery_soc_min,
+                site.battery_soc_target, fx.get('soc', 80),
+            )
+            forecast_on = forecast_excess_verdict(
+                True, site.battery_soc, gate, band, fx['energy_kwh'], forecast_on
+            )
+            site.forecast_excess = forecast_on
+            site.forecast_excess_pace_w = (
+                pace_watts(fx['energy_kwh'], fx.get('hours_left', 0))
+                if forecast_on else 0.0
+            )
+
+        # 6b2. The early start on forecast clipping (JUG-18): the real engine
+        #      function, fed the clip the advice would have published
+        #      (site: forecast_clip {kwh, start_hours, span_hours, enabled,
+        #      source, soc}); no clip the battery cannot take, no entry.
+        fcl = scenario['site'].get('forecast_clip')
+        if fcl:
+            from types import SimpleNamespace
+            from custom_components.dynamic_ocpp_evse.const import (
+                CONF_FORECAST_CLIP_EARLY_ENABLED,
+                CONF_FORECAST_EXCESS_SOC,
+                CONF_FORECAST_EXCESS_SOC_SOURCE,
+            )
+            from custom_components.dynamic_ocpp_evse.engine.hub_calculation import (
+                _apply_forecast_excess,
+            )
+            if fcl.get('kwh', 0) > 0:
+                clip_runtime['_clip_early'] = {
+                    'kwh': fcl['kwh'],
+                    'start_h': fcl.get('start_hours', 0.0),
+                    'span_h': fcl.get('span_hours', 1.0),
+                }
+            else:
+                clip_runtime.pop('_clip_early', None)
+            clip_entry = SimpleNamespace(entry_id='sim', data={}, options={
+                CONF_FORECAST_CLIP_EARLY_ENABLED: fcl.get('enabled', True),
+                CONF_FORECAST_EXCESS_SOC_SOURCE: fcl.get('source', 'target'),
+                CONF_FORECAST_EXCESS_SOC: fcl.get('soc', 80),
+            })
+            forecast_on = _apply_forecast_excess(clip_runtime, clip_entry, site, None, None)
+
+        # 6c. Catch-up, as engine/hub_calculation.py latches it per load.
+        cu = scenario['site'].get('catch_up')
+        if cu:
+            if cu.get('source', 'minimum') == 'minimum':
+                cu_floor, cu_band = site.battery_soc_min, 0.0
+            else:
+                cu_floor, cu_band = forecast_excess_gate(
+                    cu['source'], site.battery_soc_min,
+                    site.battery_soc_target, cu.get('soc', 80),
+                )
+            for ld in site.loads:
+                if ld.catch_up_enabled:
+                    ld.catch_up_active = catch_on[ld.load_id] = catch_up_verdict(
+                        ld.mode_behavior, site.battery_soc, cu_floor, cu_band,
+                        cu['energy_kwh'], cu.get('hours_left', 0),
+                        max_power_w(ld.max_current, site.voltage, ld.phases),
+                        catch_on.get(ld.load_id, False),
+                    )
 
         # 7. Run calculation engine
         calculate_all_load_targets(site)
@@ -965,7 +1246,7 @@ def check_physical_invariants(site, household, physical_solar_w):
     import into less import, the engine sized them on surplus that was not
     there. Restricted to ``BEHAVIOR_EXCESS`` on purpose - it is the one
     behaviour the engine SIZES against a surplus pool, so it has no excuse.
-    Binary Excess loads are exempt by decision (Anže, 2026-09-07: a 2 kW
+    Binary Excess loads are exempt by decision (2026-09-07: a 2 kW
     element on a smaller surplus still boosts, because the overshoot costs
     export), and Solar Priority is exempt because it deliberately runs on a
     grid-backed minimum below the SOC target.

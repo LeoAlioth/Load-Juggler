@@ -32,7 +32,7 @@ from ..const import (
     resolve_station_reserve,
 )
 from ..helpers import get_entry_value
-from . import stamp_command
+from . import call_device, stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -125,20 +125,26 @@ async def send_power_station_command(
                 current_speed is None
                 or abs(current_speed - speed) >= STATION_CHARGE_POWER_STEP
             ):
-                await sensor.hass.services.async_call(
+                await call_device(
+                    sensor.hass,
+                    load_rt,
                     "number",
                     "set_value",
                     {"entity_id": speed_entity, "value": speed},
-                    blocking=False,
+                    "state",
+                    speed,
                 )
 
         current_reserve = units.read_number(sensor.hass, reserve_entity)
         if current_reserve is None or abs(current_reserve - reserve) >= 1:
-            await sensor.hass.services.async_call(
+            await call_device(
+                sensor.hass,
+                load_rt,
                 "number",
                 "set_value",
                 {"entity_id": reserve_entity, "value": reserve},
-                blocking=False,
+                "state",
+                reserve,
             )
     except Exception as e:
         _LOGGER.warning(

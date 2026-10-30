@@ -15,11 +15,18 @@ defining them; config_flow.py reuses two of them for its live previews.
 import logging
 import math
 import time
+from datetime import datetime, timezone
+
+from homeassistant.util import dt as dt_util
 
 from ..calculations import PhaseValues
 from ..const import (
+    CONF_BASE_CONSUMPTION,
+    DEFAULT_BASE_CONSUMPTION,
     CHARGE_RATE_UNIT_WATTS,
     CONF_BATTERY_CAPACITY_KWH,
+    CONF_BATTERY_CAPACITY_ENTITY_ID,
+    CONF_BATTERY_CHARGE_TARGET_ENTITY_ID,
     CONF_BATTERY_MAX_CHARGE_POWER,
     CONF_BATTERY_MAX_DISCHARGE_POWER,
     CONF_BATTERY_POWER_ENTITY_ID,
@@ -27,6 +34,11 @@ from ..const import (
     CONF_BATTERY_SOC_FULL,
     CONF_CHARGE_RATE_UNIT,
     CONF_INVERTER_MAX_POWER,
+    CONF_INVERTER_MAX_POWER_ENTITY_ID,
+    CONF_INVERTER_INPUT_IS_GRID,
+    CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+    CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
     CONF_INVERTER_MAX_POWER_PER_PHASE,
     CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
     CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
@@ -35,19 +47,20 @@ from ..const import (
     CONF_INVERT_PHASES,
     CONF_MAX_IMPORT_POWER_ENTITY_ID,
     CONF_NAME,
+    CONF_PACING_ENERGY_ENTITY_ID,
+    CONF_BASE_CONSUMPTION_ENTITY_ID,
+    CONF_PACING_HORIZON_ENTITY_ID,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_SOC_LIMIT_NORMAL_ENTITY_ID,
     CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_SOLAR_FORECAST_ENTITY_IDS,
     CONF_SOLAR_PRODUCTION_ENTITY_ID,
-    CONF_WIRING_TOPOLOGY,
     DEFAULT_BATTERY_CAPACITY_KWH,
     DEFAULT_BATTERY_SOC_FULL,
     DEFAULT_CHARGE_RATE_UNIT,
     DEFAULT_PHASE_VOLTAGE,
-    DEFAULT_WIRING_TOPOLOGY,
     DOMAIN,
     CTRL_FAST_TAU_S,
     DEFAULT_SITE_UPDATE_FREQUENCY,
@@ -335,20 +348,15 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
     """Return unavailable hub-configured entities as ``(label, entity_id)``.
 
     Grid CTs are tracked separately (stale-timeout logic); this covers the
-    solar, battery, inverter-output and max-import-power sensors so a missing
-    feed shows up on the hub Status sensor instead of silently defaulting to 0.
+    hub's max-import-power sensor and every inverter entry's solar, battery
+    and output sensors so a missing feed shows up on the hub Status sensor
+    instead of silently defaulting to 0.
     Returns the short label and the entity_id so the caller can both name the
     sensor in the status line and spell out the full detail in a warning.
     ``members`` is this cycle's fleet (``_read_fleet_members``), whose forecast
     devices are checked.
     """
     unavailable = _unavailable_entities(hass, hub_entry, (
-        ("Solar production sensor", CONF_SOLAR_PRODUCTION_ENTITY_ID),
-        ("Battery SOC sensor", CONF_BATTERY_SOC_ENTITY_ID),
-        ("Battery power sensor", CONF_BATTERY_POWER_ENTITY_ID),
-        ("Inverter output sensor (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
-        ("Inverter output sensor (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
-        ("Inverter output sensor (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
         # Whenever it is configured, whatever the slider checkbox says: a set
         # override sensor is always read by the engine (hub_calculation.
         # _read_max_import_power), and an unreadable one lifts the cap to
@@ -359,6 +367,12 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
         # same source as the grid CTs, which is why every load went
         # unavailable in the same instants.
         ("Max import power sensor", CONF_MAX_IMPORT_POWER_ENTITY_ID),
+        # Pacing falls back to unpaced when either is unreadable - the very
+        # moment a paced load starts racing, so the status says why.
+        ("Base consumption sensor", CONF_BASE_CONSUMPTION_ENTITY_ID),
+        ("Pacing energy sensor", CONF_PACING_ENERGY_ENTITY_ID),
+        ("Pacing horizon sensor", CONF_PACING_HORIZON_ENTITY_ID),
+        ("Next full charge sensor", CONF_FORECAST_EXCESS_FULL_ENTITY_ID),
     ))
     # Per-inverter entries: their output and battery sensors feed the fleet
     # aggregation, which fails open member-by-member - the status sensor is
@@ -370,21 +384,22 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
             (f"Inverter {inv_name} output (L1)", CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID),
             (f"Inverter {inv_name} output (L2)", CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID),
             (f"Inverter {inv_name} output (L3)", CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID),
+            (f"Inverter {inv_name} input (L1)", CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID),
+            (f"Inverter {inv_name} input (L2)", CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID),
+            (f"Inverter {inv_name} input (L3)", CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID),
+            (f"Inverter {inv_name} capacity", CONF_INVERTER_MAX_POWER_ENTITY_ID),
             (f"Battery SOC ({inv_name})", CONF_BATTERY_SOC_ENTITY_ID),
             (f"Battery power ({inv_name})", CONF_BATTERY_POWER_ENTITY_ID),
+            (f"Battery charge target ({inv_name})", CONF_BATTERY_CHARGE_TARGET_ENTITY_ID),
         ))
 
     # Forecast sources fail open in the clipping maths - the status sensor is
     # the only place a dropout is visible. A configured forecast DEVICE with
     # no watts-bearing sensor right now (integration down, states missing)
-    # counts as unavailable; legacy directly-configured sensors are checked
-    # like any other entity.
+    # counts as unavailable.
     for device_id in fleet.forecast_device_ids(members):
         if resolve_forecast_sensor(hass, device_id) is None:
             unavailable.append(("Solar forecast device", device_id))
-    for entity_id in get_entry_value(hub_entry, CONF_SOLAR_FORECAST_ENTITY_IDS, None) or []:
-        if units.is_unavailable(hass.states.get(entity_id)):
-            unavailable.append(("Solar forecast sensor", entity_id))
     return unavailable
 
 
@@ -532,32 +547,9 @@ def _track_grid_stale(hub_runtime, any_stale, now):
     return 0
 
 
-# Legacy hub-level fleet fields: while any of these are configured on the hub
-# entry itself (pre-import installs), the hub acts as one implicit inverter
-# merged into the fleet. The one-time auto-import moves them onto a standalone
-# inverter entry and blanks them here.
-_LEGACY_FLEET_KEYS = (
-    CONF_SOLAR_PRODUCTION_ENTITY_ID,
-    CONF_SOLAR_FORECAST_DEVICE_IDS,
-    CONF_INVERTER_MAX_POWER,
-    CONF_INVERTER_MAX_POWER_PER_PHASE,
-    CONF_INVERTER_OUTPUT_PHASE_A_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_B_ENTITY_ID,
-    CONF_INVERTER_OUTPUT_PHASE_C_ENTITY_ID,
-    CONF_BATTERY_SOC_ENTITY_ID,
-    CONF_BATTERY_POWER_ENTITY_ID,
-    CONF_BATTERY_MAX_CHARGE_POWER,
-    CONF_BATTERY_MAX_DISCHARGE_POWER,
-)
-
-
 def _smooth_member_output(output_pv, hub_runtime, ema_inputs, key_prefix):
-    """Stale-guard + EMA a member's per-phase inverter output.
-
-    The legacy hub member uses the historic ``inv_0..2`` keys, so pre-import
-    behavior (and smoothing state) is bit-identical; inverter entries get
-    keys namespaced by their entry_id.
-    """
+    """Stale-guard + EMA a member's per-phase inverter output, under keys
+    namespaced by the inverter entry's id."""
     if output_pv is None:
         return None
     smoothed = [
@@ -588,21 +580,63 @@ def _read_enforced_charge_limit(hass, entry):
     None whenever nothing is being held back - switch off, no advice, released,
     no register configured at all, or simply before the first write pass of a
     fresh start - and None is exactly what leaves the member at its nameplate
-    charge rate in ``fleet.charge_power_total()``. The legacy hub member has no
-    charge control of its own (it is a per-inverter-entry feature), so it lands
-    on None through the same lookup rather than through a special case.
+    charge rate in ``fleet.charge_power_total()``.
     """
-    entry_id = getattr(entry, "entry_id", None)
-    if not entry_id:
-        return None
-    inverter_rt = hass.data.get(DOMAIN, {}).get("inverters", {}).get(entry_id) or {}
+    inverter_rt = hass.data.get(DOMAIN, {}).get("inverters", {}).get(entry.entry_id) or {}
     value = inverter_rt.get(INVERTER_RT_ENFORCED_CHARGE_W)
     return float(value) if is_number(value) else None
 
 
-def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy):
-    """Read one inverter (an inverter entry, or the hub's legacy fields) into
-    a FleetMember. ``legacy`` selects the historic EMA key namespace."""
+# What a capacity sensor reading 0 stands for. The engine reads a falsy capacity as "no
+# capacity configured" (unconstrained), so a failsafe that drops the sensor to 0 W must
+# land on a figure that still constrains: 1 W allocates nothing.
+_CAPACITY_SENSOR_FLOOR_W = 1.0
+
+
+def _inverter_capacity(hass, entry, hub_runtime):
+    """The inverter's total capacity (W): the optional capacity sensor's live value, else
+    the fixed setting.
+
+    HELD while the sensor is unreadable - a brief unavailability must not release a
+    capacity an automation has just lowered on an over-temperature alarm - and the fixed
+    setting only until the sensor has first read in this hub's lifetime.
+    """
+    fixed = get_entry_value(entry, CONF_INVERTER_MAX_POWER, None)
+    entity = get_entry_value(entry, CONF_INVERTER_MAX_POWER_ENTITY_ID, None)
+    if not entity:
+        return fixed
+    held = hub_runtime.setdefault("_inverter_capacity_hold", {})
+    live = units.read_number(hass, entity, units.DOMAIN_WATTS)
+    if live is None:
+        live = held.get(entry.entry_id)
+    else:
+        held[entry.entry_id] = live
+    return fixed if live is None else max(live, _CAPACITY_SENSOR_FLOOR_W)
+
+
+def _read_base_consumption(hass, hub_entry, hub_runtime):
+    """The house's base draw (W) the clipping forecast uses: the optional sensor's live
+    value, else the typed setting.
+
+    HELD while the sensor is unreadable, and the typed figure only until it has first read
+    in this hub's lifetime (the same shape as ``_inverter_capacity``).
+    """
+    typed = (
+        get_entry_value(hub_entry, CONF_BASE_CONSUMPTION, DEFAULT_BASE_CONSUMPTION) or 0
+    )
+    entity = get_entry_value(hub_entry, CONF_BASE_CONSUMPTION_ENTITY_ID, None)
+    if not entity:
+        return typed
+    live = units.read_number(hass, entity, units.DOMAIN_WATTS)
+    if live is None:
+        live = hub_runtime.get("_base_consumption_hold")
+    else:
+        hub_runtime["_base_consumption_hold"] = live
+    return typed if live is None else max(live, 0.0)
+
+
+def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage):
+    """Read one inverter entry into a FleetMember."""
     # Per-phase output entities (optional). Each configured phase is read
     # independently - a B/C-only configuration is valid, and one phase being
     # momentarily unavailable must not discard the others. Unavailable phases
@@ -621,7 +655,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
         if any(output_entities)
         else None
     )
-    output_prefix = "inv_" if legacy else f"inv_{entry.entry_id}_"
+    output_prefix = f"inv_{entry.entry_id}_"
     output_raw = (
         None
         if output_pv is None
@@ -629,11 +663,33 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     )
     output_pv = _smooth_member_output(output_pv, hub_runtime, ema_inputs, output_prefix)
 
-    # Solar production sensor: this inverter's own PV output. The legacy hub
-    # member keeps the historic "solar" EMA key so pre-import smoothing (and
-    # its stale guard) is bit-identical.
+    # Input entities (optional, the grid side): read exactly like the outputs,
+    # under their own EMA keys.
+    input_entities = [
+        get_entry_value(entry, conf, None)
+        for conf in (
+            CONF_INVERTER_INPUT_PHASE_A_ENTITY_ID,
+            CONF_INVERTER_INPUT_PHASE_B_ENTITY_ID,
+            CONF_INVERTER_INPUT_PHASE_C_ENTITY_ID,
+        )
+    ]
+    input_pv = (
+        PhaseValues(*(_read_signed_amps(hass, e, voltage) for e in input_entities))
+        if any(input_entities)
+        else None
+    )
+    input_raw = (
+        None
+        if input_pv is None
+        else PhaseValues(*(_coerce(v, None) for v in (input_pv.a, input_pv.b, input_pv.c)))
+    )
+    input_pv = _smooth_member_output(
+        input_pv, hub_runtime, ema_inputs, f"inv_in_{entry.entry_id}_"
+    )
+
+    # Solar production sensor: this inverter's own PV output.
     solar_entity = get_entry_value(entry, CONF_SOLAR_PRODUCTION_ENTITY_ID, None)
-    solar_key = "solar" if legacy else f"solar_{entry.entry_id}"
+    solar_key = f"solar_{entry.entry_id}"
     solar_measured = None
     solar_assumed = False
     if solar_entity:
@@ -662,7 +718,7 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     soc_entity = get_entry_value(entry, CONF_BATTERY_SOC_ENTITY_ID, None)
     power_entity = get_entry_value(entry, CONF_BATTERY_POWER_ENTITY_ID, None)
     battery_soc = units.read_number(hass, soc_entity)
-    power_key = "battery_power" if legacy else f"battery_power_{entry.entry_id}"
+    power_key = f"battery_power_{entry.entry_id}"
     raw_power = (
         _read_entity(hass, power_entity, None, unit="W") if power_entity else None
     )
@@ -708,7 +764,13 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
     # (``recommended_charge_limit``). A floor whose value is NOT the target
     # (a cheap-tariff 20 %) simply leaves this source unset and anchors at
     # 100 % - that knob already existed, so the flag must not duplicate it.
-    soc_target_entity = get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
+    #
+    # A dedicated charge-target entity (JUG-21) takes precedence as the destination, so
+    # the ceiling source above keeps only its write-side job and the slots can be dropped
+    # (a cheap-tariff 20 %) without taking the destination with them.
+    soc_target_entity = get_entry_value(
+        entry, CONF_BATTERY_CHARGE_TARGET_ENTITY_ID, None
+    ) or get_entry_value(entry, CONF_SOC_LIMIT_NORMAL_ENTITY_ID, None)
     soc_target = None
     if soc_target_entity:
         held = hub_runtime.setdefault("_soc_target_hold", {})
@@ -745,17 +807,19 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
 
     return fleet.FleetMember(
         entry_id=entry.entry_id,
-        name=get_entry_value(entry, CONF_NAME, entry.title if not legacy else "Hub"),
-        max_power=get_entry_value(entry, CONF_INVERTER_MAX_POWER, None),
+        name=get_entry_value(entry, CONF_NAME, entry.title),
+        max_power=_inverter_capacity(hass, entry, hub_runtime),
         max_power_per_phase=get_entry_value(
             entry, CONF_INVERTER_MAX_POWER_PER_PHASE, None
         ),
         supports_asymmetric=get_entry_value(
             entry, CONF_INVERTER_SUPPORTS_ASYMMETRIC, False
         ),
-        topology=get_entry_value(entry, CONF_WIRING_TOPOLOGY, DEFAULT_WIRING_TOPOLOGY),
         output=output_pv,
         output_raw=output_raw,
+        input=input_pv,
+        input_raw=input_raw,
+        grid_input=bool(get_entry_value(entry, CONF_INVERTER_INPUT_IS_GRID, False)),
         has_solar_entity=bool(solar_entity),
         solar_measured=solar_measured,
         solar_assumed=solar_assumed,
@@ -780,38 +844,113 @@ def _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage, *, legacy)
             if has_battery
             else None
         ),
+        # The hub's slider (number.py); the inverter's own setting before it.
         soc_full=(
-            get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL)
+            hub_runtime.get("battery_soc_full")
+            or get_entry_value(entry, CONF_BATTERY_SOC_FULL, DEFAULT_BATTERY_SOC_FULL)
             if has_battery
             else None
         ),
         soc_target=soc_target if has_battery else None,
-        capacity_kwh=(
-            get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH)
-            if has_battery
-            else None
-        ),
+        capacity_kwh=_read_capacity(hass, entry, hub_runtime) if has_battery else None,
     )
 
 
+def _read_capacity(hass, entry, hub_runtime):
+    """kWh the SOC percentage spans: the capacity sensor's reading (Wh or kWh -
+    an installed-Ah x state-of-health helper follows the pack's ageing), held
+    at its last good value while it is unreadable, and the entry's kWh figure
+    until it has read once."""
+    entity = get_entry_value(entry, CONF_BATTERY_CAPACITY_ENTITY_ID, None)
+    fixed = get_entry_value(entry, CONF_BATTERY_CAPACITY_KWH, DEFAULT_BATTERY_CAPACITY_KWH)
+    if not entity:
+        return fixed
+    held = hub_runtime.setdefault("_capacity_hold", {})
+    kwh = units.read_number(hass, entity, units.DOMAIN_KWH)
+    if kwh is not None and kwh > 0:
+        held[entry.entry_id] = kwh
+    return held.get(entry.entry_id, fixed)
+
+
+def _read_horizon(hass, entity_id):
+    """A timestamp sensor's state as an aware datetime; ``_UNAVAILABLE`` when
+    it is configured but unreadable (same sentinel as ``_read_entity``)."""
+    state = hass.states.get(entity_id)
+    if units.is_unavailable(state):
+        return _UNAVAILABLE
+    when = dt_util.parse_datetime(str(state.state))
+    if when is None:
+        return _UNAVAILABLE
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
+
+
+def _read_pacing(hass, hub_entry, hub_runtime, now: datetime | None = None):
+    """``(energy_kwh, hours_left)`` the hub's pacing entities give, or None.
+
+    None - nobody is paced, behaviour is exactly as without the feature - when
+    either entity is not configured, or one has been unreadable past
+    INPUT_STALE_TIMEOUT. A shorter dropout holds the last good reading, like
+    every other input (``_stale_guard``). ``hours_left`` is the time to the
+    horizon, 0 once it has passed; pacing.pace_cap_current floors it.
+    """
+    energy_entity = get_entry_value(hub_entry, CONF_PACING_ENERGY_ENTITY_ID, None)
+    horizon_entity = get_entry_value(hub_entry, CONF_PACING_HORIZON_ENTITY_ID, None)
+    if not energy_entity or not horizon_entity:
+        return None
+    held = hub_runtime.setdefault("_pacing_hold", {})
+
+    def read(key, raw):
+        value = _stale_guard(hub_runtime, held, key, raw, None)
+        if value is _UNAVAILABLE:  # a dropout inside the stale timeout: hold
+            return held.get(key)
+        if value is None:  # past it: the guard has cleared the hold
+            held.pop(key, None)
+        else:
+            held[key] = value
+        return value
+
+    energy = read(
+        "pacing_energy",
+        _read_entity(hass, energy_entity, default=None, unit=units.DOMAIN_KWH),
+    )
+    horizon = read("pacing_horizon", _read_horizon(hass, horizon_entity))
+    if energy is None or horizon is None:
+        return None
+    now = now or dt_util.utcnow()
+    return energy, max((horizon - now).total_seconds() / 3600.0, 0.0)
+
+
+def _read_full_hours(hass, hub_entry, hub_runtime, pacing, now: datetime | None = None):
+    """Hours until the battery is next full by the forecast, 0 once that time has
+    passed - what the early-start rule counts back from
+    (calculations/forecast_excess.py ``starts_early``).
+
+    The ``next full charge`` entity's timestamp; the pacing horizon's hours stand
+    in while it is not configured (``pacing`` is ``_read_pacing``'s pair). None -
+    the early start is off - when it is configured but unreadable past
+    INPUT_STALE_TIMEOUT, like the pacing entities.
+    """
+    entity = get_entry_value(hub_entry, CONF_FORECAST_EXCESS_FULL_ENTITY_ID, None)
+    if not entity:
+        return pacing[1] if pacing is not None else None
+    held = hub_runtime.setdefault("_full_hold", {})
+    value = _stale_guard(hub_runtime, held, "full", _read_horizon(hass, entity), None)
+    if value is _UNAVAILABLE:  # a dropout inside the stale timeout: hold
+        value = held.get("full")
+    elif value is None:  # past it: the guard has cleared the hold
+        held.pop("full", None)
+    else:
+        held["full"] = value
+    if value is None:
+        return None
+    return max((value - (now or dt_util.utcnow())).total_seconds() / 3600.0, 0.0)
+
+
 def _read_fleet_members(hass, hub_entry, hub_runtime, ema_inputs, voltage):
-    """All of the hub's inverters: standalone inverter entries plus, while its
-    legacy hub-level fields remain configured, the hub itself as one implicit
-    member (using the historic EMA keys, so pre-import behavior is
-    bit-identical)."""
-    members = []
-    if any(get_entry_value(hub_entry, key, None) for key in _LEGACY_FLEET_KEYS):
-        members.append(
-            _read_fleet_member(
-                hass, hub_entry, hub_runtime, ema_inputs, voltage, legacy=True
-            )
-        )
-    hub_entry_id = getattr(hub_entry, "entry_id", None)
-    if hub_entry_id:
-        for entry in get_inverters_for_hub(hass, hub_entry_id):
-            members.append(
-                _read_fleet_member(
-                    hass, entry, hub_runtime, ema_inputs, voltage, legacy=False
-                )
-            )
-    return members
+    """All of the hub's inverters - its inverter entries. Inverter fields
+    an old hub still carries are moved onto one by the import at hub setup
+    (``_setup_hub_entry``), before the engine first reads anything."""
+    return [
+        _read_fleet_member(hass, entry, hub_runtime, ema_inputs, voltage)
+        for entry in get_inverters_for_hub(hass, hub_entry.entry_id)
+    ]
