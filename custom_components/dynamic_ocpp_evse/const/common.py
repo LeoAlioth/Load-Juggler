@@ -422,11 +422,25 @@ DEFAULT_BINARY_MIN_OFF_TIME = 5  # minutes
 
 # A manual override - the device operated outside Load Juggler - hands the
 # load to the user for this long, then Load Juggler takes it back. Minutes,
-# per load; never 0, so every override ends (2026-10-13). The Dynamic
+# per load, entered as hours and minutes. Every override ends. The Dynamic
 # Control switch is no override: off stays off (2026-10-14).
+# 0 never hands the load over: a change Load Juggler did not ask for is
+# written over at its next command (the owner, 2026-10-30 - reverses
+# 2026-10-13's "never 0"; GitHub issue 21: a Variable Load's charger reset
+# its own limit at unplug and read as a hand on the dial). 0 by default for a
+# Variable Load, whose setpoint entity an integration or charger writes too;
+# 120 for a plug, tank or station, where a person pressing the device's own
+# button is the normal case. A load that never saved it follows its default.
 CONF_MANUAL_OVERRIDE_TIMEOUT = "manual_override_timeout"
 DEFAULT_MANUAL_OVERRIDE_TIMEOUT = 120
-MIN_MANUAL_OVERRIDE_TIMEOUT = 5
+DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD = 0
+
+
+def manual_override_default(device_type) -> int:
+    """The manual override timeout a load of ``device_type`` has until it is set (minutes)."""
+    if device_type == DEVICE_TYPE_VARIABLE_LOAD:
+        return DEFAULT_MANUAL_OVERRIDE_TIMEOUT_VARIABLE_LOAD
+    return DEFAULT_MANUAL_OVERRIDE_TIMEOUT
 # A device reporting a value Load Juggler asked for this recently is still
 # answering that command, not being operated by hand: a slow (cloud) device's
 # report of the previous command can land after the next one went out.

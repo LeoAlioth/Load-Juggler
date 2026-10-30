@@ -117,3 +117,19 @@ Built 2026-10-21 (JUG-30); `calculations/variable_load.py`, `engine/load_builder
 - **Hold writes the setpoint entity's own minimum when it cannot take 0** (its `min` attribute above 0), so such a device may still draw that minimum in Hold; the allocation claims nothing for it.
 - **With no current or power sensor the device is booked as drawing the allowance it was last handed** while it is active, as a power station without its AC sensors is booked at its commanded speed. In output-only mode that assumes your automation follows the published allowance.
 - **Stale grid CTs: as an EVSE.** Past the timeout a running device (active, drawing over 1 A - its booked allowance counts) keeps its minimum; one that is not running gets 0. The fallback setpoint is NOT written then - it is written only when the entry unloads (the stand-in for a charger's profile running out; a charger's own default after the profile timeout is the device's watchdog, which the re-send interval keeps fed).
+
+## Manual override: 0 never hands the load over, and is a Variable Load's default
+
+Changed 2026-10-30 (the owner; JUG-36, GitHub issue 21). The rule of 2026-10-13 was "never 0, so every override
+ends" (`MIN_MANUAL_OVERRIDE_TIMEOUT` 5 minutes). It is reversed: the timeout is entered as hours and minutes (stored
+as minutes, `units.minutes_of`), and 0 means Load Juggler never hands the load over - a change it did not ask for is
+logged and written over at its next command. The reporter's Variable Load went from unplugged straight into manual
+mode with nothing but Load Juggler touching the setpoint: the charger or its Modbus integration changing its own
+limit reads exactly like a hand on the dial (`control.manual_change`).
+
+- **Defaults** (`const.manual_override_default`): 0 for a Variable Load, whose setpoint entity an integration or a
+  charger writes too; 120 minutes for a plug, tank, room thermostat, SG Ready or power station, where a person
+  pressing the device's own button is the normal case - with 0 a plug switched on by hand would be switched back.
+  An OCPP charger has no override at all (no signal to watch).
+- **A load that never saved the field follows its default** (the owner: no pinning on update), so an existing
+  Variable Load stops yielding to device-side changes after the update.

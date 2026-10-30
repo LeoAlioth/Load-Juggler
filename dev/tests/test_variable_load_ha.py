@@ -292,7 +292,7 @@ _FORM = {
     CONF_VL_PHASE_SINGLE_BELOW: 2000,
     CONF_VL_PHASE_MIN_INTERVAL: 10,
     CONF_SOLAR_GRACE_PERIOD: 2,
-    "manual_override_timeout": 120,
+    "manual_override_timeout": {"hours": 2, "minutes": 0},
     "pace_over_horizon": False,
     "catch_up_enabled": False,
 }
