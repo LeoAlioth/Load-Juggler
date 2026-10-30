@@ -1,5 +1,11 @@
 # Release Notes
 
+## 2.1.7
+
+_Nothing yet: changes made after 2.1.6 was released (2026-10-30) go here._
+
+---
+
 ## 2.1.6
 
 ### New Features
