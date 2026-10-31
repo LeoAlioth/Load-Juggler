@@ -2,7 +2,9 @@
 
 ## 2.1.7
 
-_Nothing yet: changes made after 2.1.6 was released (2026-10-30) go here._
+### Improvements
+
+- **A reporting interval the charger refuses is remembered**: a charger that will not take `MeterValueSampleInterval` or `ClockAlignedDataInterval` - it still holds another value when read back - is no longer sent it on every automatic reset, each of which made the ocpp integration post a *charger reported Rejected* notification. The refusal is logged once and remembered per charger; pressing *Reset OCPP* yourself tries it again, so a firmware update that adds it is noticed.
 
 ---
 
