@@ -363,6 +363,48 @@ async def test_a_refused_interval_does_not_break_the_reset(hass, site, caplog):
     assert len(refused) == 1
 
 
+async def test_a_setting_the_charger_refuses_is_remembered_and_not_sent_again(hass, site, caplog):
+    """Sean's nest (2026-10-31): the charger refuses ClockAlignedDataInterval,
+    and every automatic reset made the ocpp integration post a "Rejected"
+    notification. A setting the charger does not hold when read back is
+    remembered: an automatic reset no longer sends it, a Reset OCPP pressed by
+    hand tries it again, and once the charger takes it it is forgotten."""
+    from homeassistant.core import Context, SupportsResponse
+    from custom_components.dynamic_ocpp_evse import async_setup
+
+    _, first, _ = site
+    first.add_to_hass(hass)
+    calls = _ocpp_configure(hass)
+    held = {"MeterValueSampleInterval": "15", "ClockAlignedDataInterval": "900"}
+
+    async def get_configuration(call):
+        return {"value": held[call.data["ocpp_key"]]}
+
+    hass.services.async_register(
+        "ocpp", "get_configuration", get_configuration, supports_response=SupportsResponse.ONLY
+    )
+    await async_setup(hass, {})
+
+    async def reset(context=None):
+        calls.clear()
+        with patch("custom_components.dynamic_ocpp_evse.Script") as script:
+            script.return_value.async_run = AsyncMock()
+            await hass.services.async_call(
+                DOMAIN, "reset_ocpp_evse", {"entry_id": first.entry_id}, blocking=True, context=context,
+            )
+        return [c["ocpp_key"] for c in calls]
+
+    with caplog.at_level(logging.WARNING):
+        assert await reset() == ["MeterValueSampleInterval", "ClockAlignedDataInterval"]
+    assert any("did not take ClockAlignedDataInterval" in r.getMessage() for r in caplog.records)
+    assert await reset() == ["MeterValueSampleInterval"]                  # automatic: not sent again
+    by_hand = Context(user_id="owner")
+    assert await reset(by_hand) == ["MeterValueSampleInterval", "ClockAlignedDataInterval"]
+    held["ClockAlignedDataInterval"] = "15"                                 # a firmware that takes it
+    assert await reset(by_hand) == ["MeterValueSampleInterval", "ClockAlignedDataInterval"]
+    assert await reset() == ["MeterValueSampleInterval", "ClockAlignedDataInterval"]   # forgotten
+
+
 async def test_a_reset_without_the_configure_service_still_resets(hass, site):
     """No ocpp configure service at all (the integration not loaded): the
     profile reset still runs and the service call does not fail."""

@@ -9,6 +9,8 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.script import Script
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 import logging
 import operator
 import voluptuous as vol
@@ -462,6 +464,19 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Load Juggler component."""
     
+    async def _charger_setting(hass, devid, key):
+        """The value the charger holds for OCPP setting ``key`` (ocpp's
+        get_configuration), or None when it cannot be read."""
+        try:
+            got = await hass.services.async_call(
+                "ocpp", "get_configuration", {"devid": devid, "ocpp_key": key},
+                blocking=True, return_response=True,
+            )
+        except Exception as err:  # noqa: BLE001 - a read that fails decides nothing
+            _LOGGER.debug("could not read the charger's %s: %s", key, err)
+            return None
+        return got.get("value") if isinstance(got, dict) else None
+
     async def handle_reset_service(call):
         """Handle the reset service call."""
         entry_id = call.data.get("entry_id")
@@ -559,7 +574,25 @@ async def async_setup(hass: HomeAssistant, config: dict):
         interval = str(int(get_entry_value(
             entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
         )))
+        # A setting the charger did not take - it holds another value when read
+        # back - is remembered per charger and not sent again on an automatic
+        # reset, each of which made the ocpp integration post a "charger reported
+        # Rejected" notification (Sean's nest, ClockAlignedDataInterval,
+        # 2026-10-31). A Reset OCPP pressed by hand tries it again, so a firmware
+        # that learns it is noticed. ocpp's configure answers only whether a
+        # reboot is needed, hence the read-back.
+        # ponytail: the store outlives a removed load; drop it in async_remove_entry if that ever matters
+        store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.ocpp_refused")
+        refused = await store.async_load() or {}
+        by_hand = call.context.user_id is not None
+        changed = False
         for key in ("MeterValueSampleInterval", "ClockAlignedDataInterval"):
+            if key in refused and not by_hand:
+                _LOGGER.debug(
+                    "%s: not sending %s - the charger refused it on %s (Reset OCPP by hand tries again)",
+                    entry.title, key, refused[key].get("at"),
+                )
+                continue
             try:
                 response = await hass.services.async_call(
                     "ocpp",
@@ -574,13 +607,26 @@ async def async_setup(hass: HomeAssistant, config: dict):
                     entry.title, key, interval, err,
                 )
                 continue
+            reboot = isinstance(response, dict) and bool(response.get("reboot_required"))
             _LOGGER.info(
                 "%s: sent the charger %s = %s s%s",
                 entry.title, key, interval,
-                " (the charger needs a reboot to apply it)"
-                if isinstance(response, dict) and response.get("reboot_required")
-                else "",
+                " (the charger needs a reboot to apply it)" if reboot else "",
             )
+            held = None if reboot else await _charger_setting(hass, ocpp_device_id, key)
+            if held is not None and str(held).strip() != interval:
+                refused[key] = {"value": interval, "held": str(held), "at": dt_util.utcnow().isoformat()}
+                changed = True
+                _LOGGER.warning(
+                    "%s: the charger did not take %s = %s (it holds %s) - remembered, and not sent again "
+                    "on automatic resets; Reset OCPP pressed by hand tries it again",
+                    entry.title, key, interval, held,
+                )
+            elif held is not None and key in refused:
+                del refused[key]
+                changed = True
+        if changed:
+            await store.async_save(refused)
 
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
 
