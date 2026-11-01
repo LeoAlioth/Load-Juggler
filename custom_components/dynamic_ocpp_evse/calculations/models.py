@@ -7,6 +7,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 
+from ..units import is_unavailable_state
+
 _LOGGER = logging.getLogger(__name__)
 
 # Valid load phase masks - the site phases a load may occupy. Any other
@@ -24,6 +26,16 @@ VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
 INACTIVE_STATUSES = frozenset(
     {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
 )
+
+
+def is_inactive_status(status) -> bool:
+    """Is a load with this connector status drawing nothing - one of
+    INACTIVE_STATUSES, or a status sensor gone offline, which Home Assistant
+    writes in lower case ("unavailable", "unknown"; units.is_unavailable_state).
+    Spelled only as OCPP writes them, an offline charger read as ACTIVE and kept
+    its whole share: Andrej's old charger held 13.3 A of a 9.2 kW budget while
+    the second one, car plugged in, got 0.3 A and sat paused (2026-11-01)."""
+    return status in INACTIVE_STATUSES or is_unavailable_state(status)
 
 
 @dataclass
@@ -205,7 +217,7 @@ class LoadContext:
         is unreadable - and, conversely, what makes the fabricated 0 of a load
         that reports itself active something we must not publish.
         """
-        return self.connector_status in INACTIVE_STATUSES
+        return is_inactive_status(self.connector_status)
 
     def get_site_phase_draw(self) -> tuple[float, float, float]:
         """Map L1/L2/L3 current to site phases A/B/C using phase mapping."""

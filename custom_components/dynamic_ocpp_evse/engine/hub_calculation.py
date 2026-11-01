@@ -34,7 +34,7 @@ from ..calculations.outage_window import (
     precharge_window,
 )
 from ..calculations.pacing import pace_watts
-from ..calculations.models import INACTIVE_STATUSES
+from ..calculations.models import is_inactive_status
 from homeassistant.util import dt as dt_util
 
 from ..const import (
@@ -1366,7 +1366,7 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
             and not load.unmetered
             and (
                 load.device_type == DEVICE_TYPE_PLUG
-                or load.connector_status not in INACTIVE_STATUSES
+                or not is_inactive_status(load.connector_status)
             )
             and max(load.get_site_phase_draw()) < load.max_current - DEAD_BAND
         ),

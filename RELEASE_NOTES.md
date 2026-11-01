@@ -2,6 +2,10 @@
 
 ## 2.1.7
 
+### Bug Fixes
+
+- **A charger that is offline no longer keeps its share**: when a charger's connection to the ocpp integration drops, Home Assistant shows its status as *unavailable*, and Load Juggler counted that as a charger that may be charging - it kept allocating its full share to it, and the other loads got what was left. A second charger at a site with a 9.2 kW budget sat paused at 0.3 A with a car plugged in while the first, offline, held 13.3 A. An offline or unknown status now counts as not drawing, the same as *Available*.
+
 ### Improvements
 
 - **A reporting interval the charger refuses is remembered**: a charger that will not take `MeterValueSampleInterval` or `ClockAlignedDataInterval` - it still holds another value when read back - is no longer sent it on every automatic reset, each of which made the ocpp integration post a *charger reported Rejected* notification. The refusal is logged once and remembered per charger; pressing *Reset OCPP* yourself tries it again, so a firmware update that adds it is noticed.
