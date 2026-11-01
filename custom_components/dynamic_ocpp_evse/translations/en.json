@@ -2017,6 +2017,20 @@
         }
     },
     "services": {
+        "move_priority": {
+            "name": "Move Priority",
+            "description": "Move a load one place up (served sooner) or down in its hub's priority order. The loads are numbered 1..N again, so normally only the two loads that swap places change; each changed load reloads.",
+            "fields": {
+                "entity_id": {
+                    "name": "Load entity",
+                    "description": "Any entity of the load to move."
+                },
+                "direction": {
+                    "name": "Direction",
+                    "description": "up = one place sooner, down = one place later."
+                }
+            }
+        },
         "reset_ocpp_evse": {
             "name": "Reset OCPP EVSE",
             "description": "Clear charging profiles and reset the charger to minimum current. Also sends the charger its reporting intervals (MeterValueSampleInterval and ClockAlignedDataInterval), set to the charger's update frequency: the ocpp integration writes its own Meter interval and Idle interval to these keys every time the charger connects, so a reset applies Load Juggler's again.",

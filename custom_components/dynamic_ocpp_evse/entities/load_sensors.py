@@ -145,6 +145,10 @@ class LoadJugglerEffectivePrioritySensor(LoadJugglerLoadSensor):
                 DEFAULT_LOAD_PRIORITY,
             ),
             "total_devices": self._ranked_siblings(ranks),
+            # For the Priorities card: the lane it sits in this cycle and the
+            # voltage its watts are shown with.
+            "urgency_tier": (self._hub_data().get("load_tier") or {}).get(self.config_entry.entry_id),
+            "voltage": self._hub_data().get("voltage"),
         }
 
     def _ranked_siblings(self, ranks: dict) -> int:

@@ -4,7 +4,7 @@ from homeassistant.config_entries import (
     SOURCE_IMPORT,
     SOURCE_INTEGRATION_DISCOVERY,
 )
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.script import Script
 from homeassistant.helpers.debounce import Debouncer
@@ -462,8 +462,33 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
     return max(1, len(stored_legs(entry)))
 
 
+CARD_URL = "/dynamic_ocpp_evse/load-juggler-priorities-card.js"
+
+
+async def _register_card(hass: HomeAssistant) -> None:
+    """Serve the Priorities card and load it on every dashboard, so it needs no
+    resource added by hand (docs/plans/2026-11-01/dashboard-cards.md). Its URL
+    carries a hash of the file: a new build's card replaces a cached one."""
+    import hashlib
+    from pathlib import Path
+
+    from homeassistant.components.frontend import add_extra_js_url
+    from homeassistant.components.http import StaticPathConfig
+
+    if hass.http is None:  # no web server (tests)
+        return
+    path = Path(__file__).parent / "frontend" / "load-juggler-priorities-card.js"
+    digest = await hass.async_add_executor_job(lambda: hashlib.sha1(path.read_bytes()).hexdigest()[:10])
+    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(path), False)])
+    add_extra_js_url(hass, f"{CARD_URL}?v={digest}")
+
+
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Load Juggler component."""
+    try:
+        await _register_card(hass)
+    except Exception:  # noqa: BLE001 - a card that will not load must not stop the integration
+        _LOGGER.exception("Load Juggler Priorities card not registered")
 
     async def handle_reset_service(call):
         """Handle the reset service call."""
@@ -617,6 +642,40 @@ async def async_setup(hass: HomeAssistant, config: dict):
             await store.async_save(refused)
 
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
+
+    async def handle_move_priority(call: ServiceCall):
+        """Move a load one place up (served sooner) or down its hub's configured
+        priority order - the Priorities card's arrows. Renumbers 1..N with the
+        hub priority-order page's own helper, so with numbers already 1..N only
+        the two swapped loads change (and reload)."""
+        from .config_flow.helpers import (
+            _apply_priority_order,
+            _controlled_devices,
+            _devices_by_priority,
+        )
+
+        reg = er.async_get(hass).async_get(call.data["entity_id"])
+        entry = hass.config_entries.async_get_entry(reg.config_entry_id) if reg else None
+        if entry is None or entry.domain != DOMAIN or entry.data.get(ENTRY_TYPE) != ENTRY_TYPE_LOAD:
+            raise ServiceValidationError(f"{call.data['entity_id']} is not an entity of a Load Juggler load")
+        devices = _controlled_devices(hass, entry.data.get(CONF_HUB_ENTRY_ID))
+        order = [e.entry_id for e in _devices_by_priority(devices)]
+        i = order.index(entry.entry_id)
+        j = i - 1 if call.data["direction"] == "up" else i + 1
+        if not 0 <= j < len(order):
+            return
+        order[i], order[j] = order[j], order[i]
+        _apply_priority_order(hass, devices, order)
+
+    hass.services.async_register(
+        DOMAIN,
+        "move_priority",
+        handle_move_priority,
+        schema=vol.Schema({
+            vol.Required("entity_id"): cv.entity_id,
+            vol.Required("direction"): vol.In(("up", "down")),
+        }),
+    )
 
     def _own_entity(entry_id: str, platform: str, suffix: str):
         """The entity_id of one of an entry's own entities, or None.

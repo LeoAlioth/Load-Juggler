@@ -2017,6 +2017,20 @@
         }
     },
     "services": {
+        "move_priority": {
+            "name": "Premakni prioriteto",
+            "description": "Premakne porabnika za eno mesto navzgor (napaja se prej) ali navzdol v vrstnem redu prioritet njegovega merilnega mesta. Porabniki se znova oštevilčijo 1..N, zato se običajno spremenita le porabnika, ki zamenjata mesti; vsak spremenjeni porabnik se ponovno naloži.",
+            "fields": {
+                "entity_id": {
+                    "name": "Entiteta porabnika",
+                    "description": "Katera koli entiteta porabnika, ki ga premikate."
+                },
+                "direction": {
+                    "name": "Smer",
+                    "description": "up = eno mesto prej, down = eno mesto pozneje."
+                }
+            }
+        },
         "reset_ocpp_evse": {
             "name": "Ponastavi OCPP EVSE",
             "description": "Počisti profile polnjenja in ponastavi polnilno postajo na minimalni tok. Polnilni postaji pošlje tudi intervala poročanja (MeterValueSampleInterval in ClockAlignedDataInterval), nastavljena na njeno frekvenco posodabljanja: integracija ocpp ob vsaki povezavi polnilne postaje v ta ključa zapiše svoja intervala (Meter interval in Idle interval), zato ponastavitev znova uveljavi vrednost Load Juggler.",
