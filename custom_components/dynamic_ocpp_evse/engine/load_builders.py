@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from functools import partial
 
 from ..calculations import LoadContext, CircuitGroup
-from ..calculations.models import INACTIVE_STATUSES
+from ..calculations.models import is_inactive_status
 from ..calculations.pacing import pace_cap_current
 from ..calculations.utils import managed_phase_draws
 from ..const import (
@@ -562,7 +562,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         excess_claim_current=(
             min_current
             if mode.behavior == BEHAVIOR_EXCESS
-            and connector_status not in INACTIVE_STATUSES
+            and not is_inactive_status(connector_status)
             else 0.0
         ),
         l1_phase=l1_phase,
@@ -1126,7 +1126,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         excess_claim_current=(
             min_current
             if mode.behavior == BEHAVIOR_EXCESS
-            and connector_status not in INACTIVE_STATUSES
+            and not is_inactive_status(connector_status)
             else 0.0
         ),
         draw_assumed=draw_assumed,
@@ -1504,7 +1504,7 @@ def _build_variable_load(hass, entry, voltage, load_entity_id, priority):
         draw_assumed = raw is _UNAVAILABLE
         per_leg = (_coerce(raw, None) or 0.0) / (voltage * phases) if voltage > 0 else 0.0
         draws[:phases] = [per_leg] * phases
-    elif connector_status not in INACTIVE_STATUSES:
+    elif not is_inactive_status(connector_status):
         draws[:phases] = [load_rt.get(VL_RT_ALLOWED_A) or 0.0] * phases
     # The legs it is sized on: the legs in use (over 1 A) when per-leg current
     # sensors say so, remembered while it draws nothing (a single-phase device
@@ -1547,7 +1547,7 @@ def _build_variable_load(hass, entry, voltage, load_entity_id, priority):
         excess_claim_current=(
             min_current
             if mode.behavior == BEHAVIOR_EXCESS
-            and connector_status not in INACTIVE_STATUSES
+            and not is_inactive_status(connector_status)
             else 0.0
         ),
         draw_assumed=draw_assumed,

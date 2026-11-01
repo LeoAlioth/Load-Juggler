@@ -16,7 +16,7 @@ from dataclasses import asdict, replace
 from typing import Optional
 
 from .models import (
-    INACTIVE_STATUSES,
+    is_inactive_status,
     SiteContext,
     LoadContext,
     PhaseConstraints,
@@ -116,7 +116,7 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     # connector and is always active: an off plug reports "Available", and
     # treating that as inactive would leave it stuck off forever.
     #
-    # The membership itself lives in models.INACTIVE_STATUSES, because the
+    # The membership itself lives in models.is_inactive_status, because the
     # publisher asks the same question of a load whose power monitor cannot be
     # read (engine/hub_result.py) - without the plug carve-out, which is a
     # distribution rule rather than a statement about drawing power.
@@ -132,12 +132,12 @@ def calculate_all_load_targets(site: SiteContext) -> None:
     active_loads = [
         c for c in managed
         if c.device_type == DEVICE_TYPE_PLUG
-        or c.connector_status not in INACTIVE_STATUSES
+        or not is_inactive_status(c.connector_status)
     ]
     inactive_loads = [
         c for c in managed
         if c.device_type != DEVICE_TYPE_PLUG
-        and c.connector_status in INACTIVE_STATUSES
+        and is_inactive_status(c.connector_status)
     ]
 
     _mode_summary = ", ".join(
