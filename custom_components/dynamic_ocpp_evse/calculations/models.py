@@ -206,6 +206,10 @@ class LoadContext:
     # the per-leg current those legs could be given (the phase advice reads it).
     potential_phases_mask: str = ""
     potential_current: float = 0
+    # A three-leg charger that may switch to one phase (it reports the
+    # capability and its option is on) - read by the engine's phase-switching
+    # step (calculations/phase_switch.py), never by the distribution.
+    phase_switchable: bool = False
 
     @property
     def reports_idle(self) -> bool:

@@ -661,12 +661,14 @@
                         "data": {
                             "charger_l1_phase": "Charger L1 → site phase",
                             "charger_l2_phase": "Charger L2 → site phase (optional)",
-                            "charger_l3_phase": "Charger L3 → site phase (optional)"
+                            "charger_l3_phase": "Charger L3 → site phase (optional)",
+                            "phase_switching": "Switch to one phase instead of pausing"
                         },
                         "data_description": {
                             "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
                             "charger_l2_phase": "Leave empty if the charger has no L2 (a 1-phase charger uses L1 only).",
-                            "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger)."
+                            "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger).",
+                            "phase_switching": "When three phases cannot reach the minimum current but one can, the charger charges on its L1 instead of pausing, and goes back to three phases once all three have room (at the earliest 10 minutes after the last change). Only for a charger that says it can switch (ConnectorSwitch3to1PhaseSupported); the Phase Mask sensor shows whether it does."
                         }
                     }
                 }
@@ -956,12 +958,14 @@
                         "data": {
                             "vl_phase_multi_above": "Advise multi-phase above",
                             "vl_phase_single_below": "Advise single-phase below",
-                            "vl_phase_min_interval": "Minimum time between phase advice changes"
+                            "vl_phase_min_interval": "Minimum time between phase advice changes",
+                            "vl_phase_entity_id": "Phase entity (optional)"
                         },
                         "data_description": {
                             "vl_phase_multi_above": "The Phase Advice sensor says multi when the allowed power over all the device's legs is above this. Advice only: Load Juggler never switches the device's phases; an automation of yours can.",
                             "vl_phase_single_below": "The Phase Advice sensor says single when the allowed power is below this. Between the two thresholds the last advice holds.",
-                            "vl_phase_min_interval": "The phase advice changes at most this often."
+                            "vl_phase_min_interval": "The phase advice changes at most this often.",
+                            "vl_phase_entity_id": "The device's own phase setting (a select or a number). The advice is written to it - 1 for one phase, 3 for all its legs - whenever it changes; the device's 0 A while it switches is not taken for a manual change. Leave empty to only publish the advice."
                         }
                     },
                     "forecast": {
@@ -1688,12 +1692,14 @@
                         "data": {
                             "charger_l1_phase": "Charger L1 → site phase",
                             "charger_l2_phase": "Charger L2 → site phase (optional)",
-                            "charger_l3_phase": "Charger L3 → site phase (optional)"
+                            "charger_l3_phase": "Charger L3 → site phase (optional)",
+                            "phase_switching": "Switch to one phase instead of pausing"
                         },
                         "data_description": {
                             "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
                             "charger_l2_phase": "Leave empty if the charger has no L2 (a 1-phase charger uses L1 only).",
-                            "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger)."
+                            "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger).",
+                            "phase_switching": "When three phases cannot reach the minimum current but one can, the charger charges on its L1 instead of pausing, and goes back to three phases once all three have room (at the earliest 10 minutes after the last change). Only for a charger that says it can switch (ConnectorSwitch3to1PhaseSupported); the Phase Mask sensor shows whether it does."
                         }
                     }
                 }
@@ -1966,12 +1972,14 @@
                         "data": {
                             "vl_phase_multi_above": "Advise multi-phase above",
                             "vl_phase_single_below": "Advise single-phase below",
-                            "vl_phase_min_interval": "Minimum time between phase advice changes"
+                            "vl_phase_min_interval": "Minimum time between phase advice changes",
+                            "vl_phase_entity_id": "Phase entity (optional)"
                         },
                         "data_description": {
                             "vl_phase_multi_above": "The Phase Advice sensor says multi when the allowed power over all the device's legs is above this. Advice only: Load Juggler never switches the device's phases; an automation of yours can.",
                             "vl_phase_single_below": "The Phase Advice sensor says single when the allowed power is below this. Between the two thresholds the last advice holds.",
-                            "vl_phase_min_interval": "The phase advice changes at most this often."
+                            "vl_phase_min_interval": "The phase advice changes at most this often.",
+                            "vl_phase_entity_id": "The device's own phase setting (a select or a number). The advice is written to it - 1 for one phase, 3 for all its legs - whenever it changes; the device's 0 A while it switches is not taken for a manual change. Leave empty to only publish the advice."
                         }
                     },
                     "forecast": {

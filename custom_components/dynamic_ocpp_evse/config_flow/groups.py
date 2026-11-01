@@ -50,14 +50,15 @@ _VARIABLE_LOAD = [
     ("site", ("charger_l1_phase", "charger_l2_phase", "charger_l3_phase", "load_priority"), False),
     ("readings", ("vl_current_l1_entity_id", "vl_current_l2_entity_id", "vl_current_l3_entity_id",
                   "vl_power_entity_id", "vl_connected_entity_id", "vl_charging_entity_id"), False),
-    ("phase_advice", ("vl_phase_multi_above", "vl_phase_single_below", "vl_phase_min_interval"), False),
+    ("phase_advice", ("vl_phase_multi_above", "vl_phase_single_below", "vl_phase_min_interval",
+                      "vl_phase_entity_id"), False),
     ("forecast", ("early_room_entity_id", "early_rate_entity_id", "pace_over_horizon", "catch_up_enabled"), False),
     ("timing", ("update_frequency", "vl_resend_interval", "solar_grace_period", "manual_override_timeout"), False),
 ]
 
 _CHARGER_CURRENT = [
     ("current", ("evse_minimum_charge_current", "evse_maximum_charge_current"), False),
-    ("phases", ("charger_l1_phase", "charger_l2_phase", "charger_l3_phase"), False),
+    ("phases", ("charger_l1_phase", "charger_l2_phase", "charger_l3_phase", "phase_switching"), False),
 ]
 
 _CHARGER_TIMING = [

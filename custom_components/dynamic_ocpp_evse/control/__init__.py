@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from homeassistant.core import Context
 
 from .. import units
-from ..const import MANUAL_ECHO_S
+from ..const import MANUAL_ECHO_S, PHASE_SWITCH_SETTLE_S, RT_PHASE_SWITCH_AT
 
 
 def stamp_command(sensor, now_mono):
@@ -61,6 +61,10 @@ def manual_change(load_rt, old, new):
     if new.context.id in load_rt.get("_lj_contexts", ()):
         return None
     now = time.monotonic()
+    # A device switching phases at our word drops its setpoint to 0 A for a few
+    # seconds (GitHub issue 21, an Alfen): its own doing, not a hand on it.
+    if now - load_rt.get(RT_PHASE_SWITCH_AT, -float("inf")) < PHASE_SWITCH_SETTLE_S:
+        return None
     for (entity_id, field), asked in load_rt.get("_commanded", {}).items():
         value, before = _field(new, field), _field(old, field)
         if entity_id != new.entity_id or value is None or _same(value, before):

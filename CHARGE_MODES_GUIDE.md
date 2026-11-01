@@ -700,6 +700,27 @@ It starts when that holds with more than 0.2 kWh to use; once on it holds while 
 
 The decision is recorded in `docs/design-decisions.md` (2026-10-17): a narrow, opt-in exception to the 2026-09-09 decision.
 
+### One phase instead of a pause
+
+Every mode above gives a charger at least its minimum current or nothing. A three-phase charger that can switch phases (it answers `true` to the OCPP key `ConnectorSwitch3to1PhaseSupported`) gets a third answer: one phase. It works the same in every mode, because the rule only asks whether three phases or one reach the minimum:
+
+```
+three phases reach the minimum              -> three phases
+three would pause it, one reaches it         -> one phase (its L1), at once
+on one phase, all three could take min + 1 A -> three phases, at the earliest 10 min after the last change
+```
+
+Three phases at the minimum always give more than one phase at the maximum (6 A x 3 = 4.1 kW against 16 A x 1 = 3.7 kW at 230 V), so "more power" and "no pause" are the same rule. One phase sits on the site phase the charger's L1 is wired to; what three would get is worked out every cycle from the pools left after the loads ranked ahead of it, the same way its permit is.
+
+```
+20 A breaker, house 2 / 16 / 1 A on A / B / C, charger 6-16 A three-phase
+three phases: B leaves 4 A < 6 A -> it would pause
+one phase on A: 18 A free -> 16 A, 3.7 kW
+house on B drops to 2 A -> three could take 16 A >= 7 A -> back to three 10 min after the switch
+```
+
+No car puts it back on three phases for the next session; Dynamic Control off or a car not charging keeps the count as it is. Turn it off per charger with *Switch to one phase instead of pausing* on its phase mapping page.
+
 ---
 
 ## Hot Water Tank Modes

@@ -17,12 +17,74 @@ from ..const import (
     DEFAULT_PHASE_VOLTAGE,
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
+    EVSE_RT_COMMANDED_PHASES,
+    EVSE_RT_PHASES,
+    EVSE_RT_PHASE_PROBE_AT,
+    EVSE_RT_PHASE_SUPPORTED,
+    OCPP_KEY_PHASE_SWITCH,
+    PHASE_SWITCH_PROBE_RETRY_S,
+    RT_PHASE_SWITCH_AT,
 )
-from ..helpers import detect_charge_rate_unit, get_entry_value
+from ..helpers import detect_charge_rate_unit, get_entry_value, stored_legs
 from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
+
+
+async def read_charger_setting(hass, devid, key):
+    """The value a charger holds for an OCPP configuration key (ocpp's
+    get_configuration), or None when it cannot be read."""
+    try:
+        got = await hass.services.async_call(
+            "ocpp", "get_configuration", {"devid": devid, "ocpp_key": key},
+            blocking=True, return_response=True,
+        )
+    except Exception as err:  # noqa: BLE001 - a read that fails decides nothing
+        _LOGGER.debug("could not read the charger's %s: %s", key, err)
+        return None
+    return got.get("value") if isinstance(got, dict) else None
+
+
+def told_phases(load_rt) -> int | None:
+    """The phase count a charger's profile carries (``numberPhases``): the
+    engine's decision for a charger that reports it can switch, None for one
+    that does not (or has not answered yet) - its profile then carries none."""
+    if load_rt.get(EVSE_RT_PHASE_SUPPORTED) is not True:
+        return None
+    return int(load_rt.get(EVSE_RT_PHASES, 3))
+
+
+def probe_phase_switching(sensor, now_mono: float) -> None:
+    """Ask a three-leg charger once whether it can switch between one and
+    three phases (ConnectorSwitch3to1PhaseSupported), in the background so a
+    slow charger never holds up the site cycle; asked again every
+    PHASE_SWITCH_PROBE_RETRY_S while it does not answer."""
+    load_rt = sensor._runtime()
+    if (
+        load_rt.get(EVSE_RT_PHASE_SUPPORTED) is not None
+        or now_mono < load_rt.get(EVSE_RT_PHASE_PROBE_AT, 0.0)
+        or len(stored_legs(sensor.config_entry)) != 3
+    ):
+        return
+    devid = get_entry_value(sensor.config_entry, CONF_OCPP_DEVICE_ID, None)
+    if not devid:
+        return
+    load_rt[EVSE_RT_PHASE_PROBE_AT] = now_mono + PHASE_SWITCH_PROBE_RETRY_S
+
+    async def _probe():
+        value = await read_charger_setting(sensor.hass, devid, OCPP_KEY_PHASE_SWITCH)
+        if value is None:
+            return
+        load_rt[EVSE_RT_PHASE_SUPPORTED] = str(value).strip().lower() == "true"
+        _LOGGER.info(
+            "%s: the charger %s switch between one and three phases (%s = %s)",
+            sensor._attr_name,
+            "can" if load_rt[EVSE_RT_PHASE_SUPPORTED] else "cannot",
+            OCPP_KEY_PHASE_SWITCH, value,
+        )
+
+    sensor.hass.async_create_task(_probe())
 
 
 async def send_ocpp_command(
@@ -112,6 +174,10 @@ async def send_ocpp_command(
                     sensor._attr_name,
                 )
 
+    # A charger that can switch is told its phase count on every profile, so
+    # one left on one phase (an option turned off, a restart) is put back.
+    told = told_phases(sensor._runtime())
+
     if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
         # Options-first (get_entry_value): the hub reconfigure/options flow
         # writes the edited voltage to entry.options, so reading entry.data
@@ -120,7 +186,9 @@ async def send_ocpp_command(
             get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
             or DEFAULT_PHASE_VOLTAGE
         )
-        phases_for_profile = sensor._car_active_phases or sensor._phases or 1
+        phases_for_profile = (
+            1 if told == 1 else sensor._car_active_phases or sensor._phases or 1
+        )
         limit_for_charger = round(limit * voltage * phases_for_profile, 0)
         rate_unit = "W"
         sensor._last_set_power = limit_for_charger
@@ -158,9 +226,10 @@ async def send_ocpp_command(
         )
     # Key order as before: the period list closes the schedule, the schedule
     # closes the profile.
-    schedule["chargingSchedulePeriod"] = [
-        {"startPeriod": 0, "limit": limit_for_charger}
-    ]
+    period = {"startPeriod": 0, "limit": limit_for_charger}
+    if told is not None:
+        period["numberPhases"] = told
+    schedule["chargingSchedulePeriod"] = [period]
     charging_profile["chargingSchedule"] = schedule
 
     ocpp_device_id = get_entry_value(sensor.config_entry, CONF_OCPP_DEVICE_ID, None)
@@ -237,5 +306,11 @@ async def send_ocpp_command(
     load_rt = sensor._runtime()
     load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
     load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
+    if told is not None:
+        if told != load_rt.get(EVSE_RT_COMMANDED_PHASES, 3):
+            # The charger now switches, with its few seconds at 0 A.
+            load_rt[RT_PHASE_SWITCH_AT] = now_mono
+            _LOGGER.info("%s: told to charge on %d phase(s)", sensor._attr_name, told)
+        load_rt[EVSE_RT_COMMANDED_PHASES] = told
     stamp_command(sensor, now_mono)
     return True

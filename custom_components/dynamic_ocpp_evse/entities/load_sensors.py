@@ -28,6 +28,11 @@ from ..const import (
     CONF_HUB_ENTRY_ID,
     DEFAULT_LOAD_PRIORITY,
     EVSE_RT_READOUT_WATCH,
+    EVSE_RT_PHASES,
+    EVSE_RT_PHASES_REASON,
+    EVSE_RT_PHASE_SUPPORTED,
+    CONF_PHASE_SWITCHING,
+    DEFAULT_PHASE_SWITCHING,
     LOAD_RT_SUN_PROBE,
     SG_RT_STATUS,
     VL_RT_OUTPUTS,
@@ -462,7 +467,25 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
             # The mask is read off the draw - the ASSUMED one while this
             # charger's readout is stuck (entities/readout.py).
             **estimate_attributes(self._readout_watch()),
+            **self._phase_switch_attributes(),
         }
+
+    def _phase_switch_attributes(self) -> dict:
+        """Phase switching (calculations/phase_switch.py), for a three-leg
+        charger: whether it can, the phase count it was put on and why."""
+        if len(self._wiring_mask) != 3:
+            return {}
+        rt = self._runtime()
+        supported = rt.get(EVSE_RT_PHASE_SUPPORTED)
+        if not get_entry_value(self.config_entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING):
+            state = "off"
+        else:
+            state = {True: "supported", False: "not supported"}.get(supported, "not asked yet")
+        attrs = {"phase_switching": state}
+        if state == "supported":
+            attrs["phases_in_use"] = rt.get(EVSE_RT_PHASES, 3)
+            attrs["phase_switch_reason"] = rt.get(EVSE_RT_PHASES_REASON)
+        return attrs
 
     def _read_site_data(self):
         """Read the live phase mask from hass.data (populated by the load processor)."""

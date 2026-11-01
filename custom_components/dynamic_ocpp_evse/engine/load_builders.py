@@ -20,6 +20,7 @@ from functools import partial
 from ..calculations import LoadContext, CircuitGroup
 from ..calculations.models import is_inactive_status
 from ..calculations.pacing import pace_cap_current
+from ..calculations.phase_switch import ONE, THREE, full_mask
 from ..calculations.utils import managed_phase_draws
 from ..const import (
     thermostat_defaults, behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
@@ -101,6 +102,11 @@ from ..const import (
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
     EVSE_RT_READOUT_WATCH,
+    EVSE_RT_PHASES,
+    EVSE_RT_PHASE_SUPPORTED,
+    EVSE_RT_COMMANDED_PHASES,
+    CONF_PHASE_SWITCHING,
+    DEFAULT_PHASE_SWITCHING,
     LEG_DRAWING_CURRENT,
     SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
@@ -262,7 +268,9 @@ def _watch_readout(hass, entry, load, load_rt, connector_status,
     )
     watch["normal_gap_s"] = readout_watch.normal_gap(watch)
     watch["cycle"] = {"status": connector_status, "commanded": commanded}
-    readout_watch.track_commands(watch, commanded, datetime.now(timezone.utc))
+    readout_watch.track_commands(
+        watch, commanded, datetime.now(timezone.utc), load_rt.get(EVSE_RT_COMMANDED_PHASES)
+    )
 
     if event == "left":
         _LOGGER.info(
@@ -526,6 +534,23 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     legs = stored_legs(entry)
     phases = int(get_entry_value(entry, CONF_PHASES, None) or len(legs) or 1)
 
+    # Phase switching (calculations/phase_switch.py): a three-leg charger that
+    # reports the capability, with its option on. On one phase it is built as a
+    # one-phase load on L1 - its draw spread over that leg, its mask L1's site
+    # phase - with what its three legs could take as its potential. Not
+    # switchable any more (option off, capability gone), it is put back on three
+    # and the next profile says so.
+    switchable = (
+        phases == THREE
+        and load_rt.get(EVSE_RT_PHASE_SUPPORTED) is True
+        and bool(get_entry_value(entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING))
+    )
+    if not switchable and load_rt.get(EVSE_RT_PHASES) == ONE:
+        load_rt[EVSE_RT_PHASES] = THREE
+    on_one = switchable and load_rt.get(EVSE_RT_PHASES) == ONE
+    if on_one:
+        phases = ONE
+
     # Read connector status from the charger's own status sensor - resolved
     # from the registries by metric classification (and cached per entry setup),
     # never composed from the charge point id: that guess is wrong for a renamed
@@ -568,7 +593,10 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         l1_phase=l1_phase,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
+        phase_switchable=switchable,
     )
+    if on_one:
+        load.potential_phases_mask = full_mask(load)
 
     # Get OCPP current draw for this load with fallback chain:
     # 1. Current Import per-phase entities (sensor.{id}_current_import_l1/l2/l3)

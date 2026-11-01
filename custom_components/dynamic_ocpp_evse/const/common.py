@@ -340,6 +340,14 @@ SETTLE_PERMIT_MARGIN = 1.0    # Amps - draw must be this far below last permit
 # that were carrying current when the reading froze.
 LEG_DRAWING_CURRENT = 1.0
 
+# Runtime key (any load's bucket): when Load Juggler last changed the device's
+# phase count (monotonic) - a charger's profile with another numberPhases, a
+# Variable Load's phase entity. For PHASE_SWITCH_SETTLE_S after it the device's
+# own 0 A dip while it switches is not a compliance failure
+# (control/compliance.py) nor a manual change (control.manual_change).
+RT_PHASE_SWITCH_AT = "_phase_switch_at"
+PHASE_SWITCH_SETTLE_S = 120
+
 # How far a W-encoded charging profile may legitimately let a leg's current
 # sit above the amps it was computed from, as a fraction: the limit is sent as
 # A x V x phases, and the charger converts it back with ITS voltage, not ours,

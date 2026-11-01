@@ -661,12 +661,14 @@
                         "data": {
                             "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
-                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)"
+                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
+                            "phase_switching": "Preklop na eno fazo namesto premora"
                         },
                         "data_description": {
                             "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
-                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna)."
+                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
+                            "phase_switching": "Kadar tri faze ne dosežejo minimalnega toka, ena pa ga, polnilna postaja polni na L1 namesto premora in se vrne na tri faze, ko je na vseh treh dovolj prostora (najprej 10 minut po zadnji menjavi). Le za polnilno postajo, ki sporoča, da preklop podpira (ConnectorSwitch3to1PhaseSupported); senzor Phase Mask pokaže, ali ga."
                         }
                     }
                 }
@@ -956,12 +958,14 @@
                         "data": {
                             "vl_phase_multi_above": "Svetuj večfazno nad",
                             "vl_phase_single_below": "Svetuj enofazno pod",
-                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz"
+                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz",
+                            "vl_phase_entity_id": "Entiteta faz (neobvezno)"
                         },
                         "data_description": {
                             "vl_phase_multi_above": "Senzor Phase Advice svetuje multi, ko je dovoljena moč po vseh fazah naprave nad to vrednostjo. Samo nasvet: Load Juggler nikoli ne preklopi faz naprave; to lahko naredi vaša avtomatizacija.",
                             "vl_phase_single_below": "Senzor Phase Advice svetuje single, ko je dovoljena moč pod to vrednostjo. Med pragovoma velja zadnji nasvet.",
-                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto."
+                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto.",
+                            "vl_phase_entity_id": "Nastavitev faz naprave (izbirnik ali število). Vanjo se zapiše nasvet - 1 za eno fazo, 3 za vse njene faze - ob vsaki spremembi; 0 A naprave med preklopom ne šteje za ročno spremembo. Pustite prazno, če naj se nasvet le objavlja."
                         }
                     },
                     "forecast": {
@@ -1688,12 +1692,14 @@
                         "data": {
                             "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
-                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)"
+                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
+                            "phase_switching": "Preklop na eno fazo namesto premora"
                         },
                         "data_description": {
                             "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
-                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna)."
+                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
+                            "phase_switching": "Kadar tri faze ne dosežejo minimalnega toka, ena pa ga, polnilna postaja polni na L1 namesto premora in se vrne na tri faze, ko je na vseh treh dovolj prostora (najprej 10 minut po zadnji menjavi). Le za polnilno postajo, ki sporoča, da preklop podpira (ConnectorSwitch3to1PhaseSupported); senzor Phase Mask pokaže, ali ga."
                         }
                     }
                 }
@@ -1966,12 +1972,14 @@
                         "data": {
                             "vl_phase_multi_above": "Svetuj večfazno nad",
                             "vl_phase_single_below": "Svetuj enofazno pod",
-                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz"
+                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz",
+                            "vl_phase_entity_id": "Entiteta faz (neobvezno)"
                         },
                         "data_description": {
                             "vl_phase_multi_above": "Senzor Phase Advice svetuje multi, ko je dovoljena moč po vseh fazah naprave nad to vrednostjo. Samo nasvet: Load Juggler nikoli ne preklopi faz naprave; to lahko naredi vaša avtomatizacija.",
                             "vl_phase_single_below": "Senzor Phase Advice svetuje single, ko je dovoljena moč pod to vrednostjo. Med pragovoma velja zadnji nasvet.",
-                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto."
+                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto.",
+                            "vl_phase_entity_id": "Nastavitev faz naprave (izbirnik ali število). Vanjo se zapiše nasvet - 1 za eno fazo, 3 za vse njene faze - ob vsaki spremembi; 0 A naprave med preklopom ne šteje za ročno spremembo. Pustite prazno, če naj se nasvet le objavlja."
                         }
                     },
                     "forecast": {

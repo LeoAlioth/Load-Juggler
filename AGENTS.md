@@ -116,6 +116,13 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   down, and control/inverter.send_inverter_soc_limit(lift=True) puts the slots at
 │   │                              #   full (hub_data["outage_precharge"]). Grid-tied + battery only; never touches
 │   │                              #   a Storm Reserve switch
+│   ├── phase_switch.py            # Phase switching (plan docs/plans/2026-11-01/phase-switching.md): ``decide`` - one phase
+│   │                              #   only when three would pause a switchable charger and one would not (at once), back to
+│   │                              #   three at min + 1 A no sooner than 10 min after the last change; ``single_phase_permit``
+│   │                              #   re-runs the whole calculation on a deep copy. The engine step is hub_calculation.
+│   │                              #   _apply_phase_switching (re-runs the calculation on a change); the profile's
+│   │                              #   numberPhases and the capability read are control/ocpp.py; the settling window after a
+│   │                              #   switch (RT_PHASE_SWITCH_AT) quiets compliance and control.manual_change
 │   ├── catch_up.py                # Per-load catch-up: a Solar Only / Solar Priority load may start below the target
 │                                  #   SOC when its max power can't keep up with the pacing energy (rate >= max W,
 │                                  #   latched per load); the engine sets LoadContext.catch_up_active

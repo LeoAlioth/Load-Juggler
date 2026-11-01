@@ -35,6 +35,7 @@ from ..calculations.outage_window import (
 )
 from ..calculations.pacing import pace_watts
 from ..calculations.models import is_inactive_status
+from ..calculations import phase_switch
 from homeassistant.util import dt as dt_util
 
 from ..const import (
@@ -116,6 +117,11 @@ from ..const import (
     SG_RT_MEMORY,
     SG_RT_NORMAL_DRAW,
     SG_RT_STATUS,
+    EVSE_RT_PHASES,
+    EVSE_RT_PHASES_REASON,
+    EVSE_RT_PHASES_SINCE,
+    PHASE_SWITCH_INTERVAL_S,
+    PHASE_SWITCH_UP_MARGIN,
     DOMAIN,
     GRID_STALE_TIMEOUT,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
@@ -1545,6 +1551,45 @@ def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
     return out
 
 
+def _apply_phase_switching(hass, site, now):
+    """Put each switchable charger on one or three phases (calculations/
+    phase_switch.decide) and, when any changed, run the calculation again so
+    this cycle's permits, pools and circuit groups are all on the new count.
+    The figures worked out earlier in the cycle (the Excess latch, the forecast
+    early start, catch-up) see the old count for this one cycle. State lives in
+    each load's runtime bucket; the builder reads it next cycle."""
+    loads_rt = hass.data[DOMAIN].get("loads", {})
+    changed = False
+    for load in site.loads:
+        rt = loads_rt.get(load.load_id)
+        if not load.phase_switchable or rt is None:
+            continue
+        on = rt.get(EVSE_RT_PHASES, phase_switch.THREE)
+        status = load.connector_status
+        phases, since, reason = phase_switch.decide(
+            on,
+            rt.get(EVSE_RT_PHASES_SINCE, -math.inf),
+            now,
+            connected=not (status == "Available" or units.is_unavailable_state(status)),
+            held=not load.dynamic_control or is_inactive_status(status),
+            permit=load.available_current,
+            min_current=load.min_current,
+            single_permit=lambda load_id=load.load_id: phase_switch.single_phase_permit(site, load_id),
+            potential=load.potential_current,
+            margin=PHASE_SWITCH_UP_MARGIN,
+            interval_s=PHASE_SWITCH_INTERVAL_S,
+        )
+        rt[EVSE_RT_PHASES_SINCE] = since
+        rt[EVSE_RT_PHASES_REASON] = reason
+        if phases != on:
+            _LOGGER.info("%s: %d -> %d phase(s) - %s", load.entity_id, on, phases, reason)
+            rt[EVSE_RT_PHASES] = phases
+            phase_switch.set_phases(load, phases)
+            changed = True
+    if changed:
+        calculate_all_load_targets(site)
+
+
 def _apply_grid_stale_fallback(site, grid_stale_duration):
     """Override the calculated permits once the grid CTs have been blind too long.
 
@@ -2147,6 +2192,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     # --- Calculate targets ---
     calculate_all_load_targets(site)
+    _apply_phase_switching(hass, site, time.monotonic())
     sg_states = _apply_sg_ready(hass, hub_runtime, site, excess_on, time.monotonic())
 
     grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)

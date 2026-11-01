@@ -78,6 +78,22 @@ def outputs(amps, legs, sized, voltage, max_amps):
     }
 
 
+def phase_value(advice, options=None):
+    """What to write to a device's phase entity for ``advice``: 1 for single,
+    3 for multi (all its legs, which is what a charger's phase setting calls
+    3 even on two). A select (``options``) gets the option that reads "1" /
+    "3", else the one whose digits are exactly that; None when it has neither."""
+    wanted = 1 if advice == SINGLE else 3
+    if options is None:
+        return wanted
+    for exact in (True, False):
+        for option in options:
+            text = str(option).strip()
+            if (text if exact else "".join(c for c in text if c.isdigit())) == str(wanted):
+                return option
+    return None
+
+
 def phase_advice(power_w, memory, now, multi_above, single_below, min_interval_s):
     """``(advice, reason, memory)``: whether the device should run on one leg or
     on all of them, from its allowed power. Advice only - nothing is written.
