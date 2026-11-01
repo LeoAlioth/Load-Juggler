@@ -566,13 +566,15 @@
                             "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava bojler. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da bojler porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja bojler) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -649,11 +651,13 @@
                         "name": "Tok polnjenja",
                         "data": {
                             "evse_minimum_charge_current": "Minimalni tok polnjenja",
-                            "evse_maximum_charge_current": "Maksimalni tok polnjenja"
+                            "evse_maximum_charge_current": "Maksimalni tok polnjenja",
+                            "dynamic_control_off_current": "Ko je dinamično upravljanje izklopljeno (neobvezno)"
                         },
                         "data_description": {
                             "evse_minimum_charge_current": "Najnižji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik - večina polnilnih postaj podpira 6 A. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
-                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje."
+                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
+                            "dynamic_control_off_current": "Tok, pri katerem ostane polnilna postaja, ko je dinamično upravljanje izklopljeno - njen največji, če ne nastavite drugega. Izpraznite polje, da polnilno postajo pustite, kot je: profil se ne pošlje, postaja obdrži zadnjega, dokler ne poteče, nato velja njena privzeta vrednost."
                         }
                     },
                     "phases": {
@@ -767,13 +771,15 @@
                             "climate_entity_id": "Termostat (entiteta climate)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate, ki regulira prostor. Load Juggler bere njeno temperaturo ter upravlja njeno vklopljenost in ciljno temperaturo.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -1610,13 +1616,15 @@
                             "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava bojler. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da bojler porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja bojler) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -1680,11 +1688,13 @@
                         "name": "Tok polnjenja",
                         "data": {
                             "evse_minimum_charge_current": "Minimalni tok polnjenja",
-                            "evse_maximum_charge_current": "Maksimalni tok polnjenja"
+                            "evse_maximum_charge_current": "Maksimalni tok polnjenja",
+                            "dynamic_control_off_current": "Ko je dinamično upravljanje izklopljeno (neobvezno)"
                         },
                         "data_description": {
                             "evse_minimum_charge_current": "Najnižji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik - večina polnilnih postaj podpira 6 A. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
-                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje."
+                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
+                            "dynamic_control_off_current": "Tok, pri katerem ostane polnilna postaja, ko je dinamično upravljanje izklopljeno - njen največji, če ne nastavite drugega. Izpraznite polje, da polnilno postajo pustite, kot je: profil se ne pošlje, postaja obdrži zadnjega, dokler ne poteče, nato velja njena privzeta vrednost."
                         }
                     },
                     "phases": {
@@ -1780,13 +1790,15 @@
                             "climate_entity_id": "Termostat (entiteta climate)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -2111,6 +2123,14 @@
                 "solar": "PV",
                 "battery": "Baterija",
                 "battery_control": "Upravljanje polnjenja baterije (zapisuje v razsmernik)"
+            }
+        },
+        "tank_dc_off_setpoint": {
+            "options": {
+                "normal": "Normalna temperatura",
+                "away": "Temperatura odsotnosti",
+                "boost": "Temperatura dviga",
+                "keep": "Pusti, kot je"
             }
         }
     },

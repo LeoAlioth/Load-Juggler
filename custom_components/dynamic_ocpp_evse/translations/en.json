@@ -566,13 +566,15 @@
                             "climate_entity_id": "Thermostat (climate or water heater entity)",
                             "heating_element_power": "Heating element power",
                             "tank_power_entity_id": "Power sensor (optional)",
-                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)"
+                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
+                            "dynamic_control_off_setpoint": "When Dynamic Control is off"
                         },
                         "data_description": {
                             "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater has no standard way of reporting whether it is heating: its power sensor measures it; without one Load Juggler reads the device's own status where it publishes one (a MELCloud heat pump does), and otherwise takes the tank as drawing the heating element power while it is colder than its target and not cooling - a falling temperature reads idle, inside the heater's own restart hysteresis.",
                             "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                             "tank_power_entity_id": "Optional sensor reporting the element's live power draw (for example the power sensor of the smart relay/outlet powering the tank) - used instead of the fixed rating when present.",
-                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too."
+                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
+                            "dynamic_control_off_setpoint": "Turning Dynamic Control off puts the thermostat once on this setpoint, heating allowed, and then leaves it to you. Leave as it is: nothing is written."
                         }
                     },
                     "site": {
@@ -649,11 +651,13 @@
                         "name": "Charge current",
                         "data": {
                             "evse_minimum_charge_current": "Minimum charge current",
-                            "evse_maximum_charge_current": "Maximum charge current"
+                            "evse_maximum_charge_current": "Maximum charge current",
+                            "dynamic_control_off_current": "When Dynamic Control is off (optional)"
                         },
                         "data_description": {
                             "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual - most chargers support 6A. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
-                            "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range."
+                            "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
+                            "dynamic_control_off_current": "The current the charger is held at while Dynamic Control is off - its maximum unless you set another. Clear it to leave the charger as it is: no profile is sent, and the charger keeps the last one until it runs out, then its own default."
                         }
                     },
                     "phases": {
@@ -767,13 +771,15 @@
                             "climate_entity_id": "Thermostat (climate entity)",
                             "heating_element_power": "Heating element power",
                             "tank_power_entity_id": "Power sensor (optional)",
-                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)"
+                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
+                            "dynamic_control_off_setpoint": "When Dynamic Control is off"
                         },
                         "data_description": {
                             "climate_entity_id": "The climate entity regulating the room. Load Juggler reads its temperature and controls its on/off state and target setpoint.",
                             "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                             "tank_power_entity_id": "Optional sensor reporting the element's live power draw (for example the power sensor of the smart relay/outlet powering the tank) - used instead of the fixed rating when present.",
-                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too."
+                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
+                            "dynamic_control_off_setpoint": "Turning Dynamic Control off puts the thermostat once on this setpoint, heating allowed, and then leaves it to you. Leave as it is: nothing is written."
                         }
                     },
                     "site": {
@@ -916,7 +922,7 @@
                             "vl_min": "The lowest setpoint the device runs at; below it the allowance is 0. In the setpoint unit (for example 6 A, or 1400 W).",
                             "vl_max": "The most the device may take. In the setpoint unit (for example 16 A, or 3700 W).",
                             "vl_bias": "Added to every setpoint above 0, for a device that delivers less than it is told. 0 for none.",
-                            "vl_fallback_setpoint": "Written to the setpoint entity when Load Juggler lets go of the device - the entry is reloaded, removed or disabled - in the setpoint unit (for example 6 A, or 0). Empty: nothing is written and the device keeps its last setpoint. A charger's profile runs out on its own; for a stop Load Juggler cannot write at (Home Assistant down), use the device's own fallback with the re-send interval."
+                            "vl_fallback_setpoint": "Written to the setpoint entity when Load Juggler lets go of the device - Dynamic Control is turned off, or the entry is reloaded, removed or disabled - in the setpoint unit (for example 6 A, or 0). Empty: nothing is written and the device keeps its last setpoint. A charger's profile runs out on its own; for a stop Load Juggler cannot write at (Home Assistant down), use the device's own fallback with the re-send interval."
                         }
                     },
                     "site": {
@@ -1610,13 +1616,15 @@
                             "climate_entity_id": "Thermostat (climate or water heater entity)",
                             "heating_element_power": "Heating element power",
                             "tank_power_entity_id": "Power sensor (optional)",
-                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)"
+                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
+                            "dynamic_control_off_setpoint": "When Dynamic Control is off"
                         },
                         "data_description": {
                             "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater has no standard way of reporting whether it is heating: its power sensor measures it; without one Load Juggler reads the device's own status where it publishes one (a MELCloud heat pump does), and otherwise takes the tank as drawing the heating element power while it is colder than its target and not cooling - a falling temperature reads idle, inside the heater's own restart hysteresis.",
                             "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                             "tank_power_entity_id": "Optional sensor reporting the element's live power draw (for example the power sensor of the smart relay/outlet powering the tank) - used instead of the fixed rating when present.",
-                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too."
+                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
+                            "dynamic_control_off_setpoint": "Turning Dynamic Control off puts the thermostat once on this setpoint, heating allowed, and then leaves it to you. Leave as it is: nothing is written."
                         }
                     },
                     "site": {
@@ -1680,11 +1688,13 @@
                         "name": "Charge current",
                         "data": {
                             "evse_minimum_charge_current": "Minimum charge current",
-                            "evse_maximum_charge_current": "Maximum charge current"
+                            "evse_maximum_charge_current": "Maximum charge current",
+                            "dynamic_control_off_current": "When Dynamic Control is off (optional)"
                         },
                         "data_description": {
                             "evse_minimum_charge_current": "The lowest current your charger supports. Check your charger's manual - most chargers support 6A. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
-                            "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range."
+                            "evse_maximum_charge_current": "The highest current your charger supports. Check your charger's manual. Also the matching slider's range and its starting value; a slider you have already set keeps its own value, clamped into the new range.",
+                            "dynamic_control_off_current": "The current the charger is held at while Dynamic Control is off - its maximum unless you set another. Clear it to leave the charger as it is: no profile is sent, and the charger keeps the last one until it runs out, then its own default."
                         }
                     },
                     "phases": {
@@ -1780,13 +1790,15 @@
                             "climate_entity_id": "Thermostat (climate entity)",
                             "heating_element_power": "Heating element power",
                             "tank_power_entity_id": "Power sensor (optional)",
-                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)"
+                            "tank_off_operation_mode": "Operation mode for off (water heater, optional)",
+                            "dynamic_control_off_setpoint": "When Dynamic Control is off"
                         },
                         "data_description": {
                             "climate_entity_id": "The climate or water heater entity regulating the tank. Load Juggler reads its temperature and controls its on/off state and target setpoint. A water heater has no standard way of reporting whether it is heating: its power sensor measures it; without one Load Juggler reads the device's own status where it publishes one (a MELCloud heat pump does), and otherwise takes the tank as drawing the heating element power while it is colder than its target and not cooling - a falling temperature reads idle, inside the heater's own restart hysteresis.",
                             "heating_element_power": "Rated power of the heating element - used for power allocation when no power sensor is configured. Starting value only: once the device exists, the matching slider owns this number, so editing here does not move a slider you have already set.",
                             "tank_power_entity_id": "Optional sensor reporting the element's live power draw (for example the power sensor of the smart relay/outlet powering the tank) - used instead of the fixed rating when present.",
-                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too."
+                            "tank_off_operation_mode": "A water heater only: its own operation mode that switches it off (for example stand_by on a Vaillant), as the entity lists it. Denied power, the tank is switched to it and back to the mode it was in once power returns. Empty: the tank is held at its lowest target instead - never turned off, which on a MELCloud heat pump powers down space heating too.",
+                            "dynamic_control_off_setpoint": "Turning Dynamic Control off puts the thermostat once on this setpoint, heating allowed, and then leaves it to you. Leave as it is: nothing is written."
                         }
                     },
                     "site": {
@@ -1930,7 +1942,7 @@
                             "vl_min": "The lowest setpoint the device runs at; below it the allowance is 0. In the setpoint unit (for example 6 A, or 1400 W).",
                             "vl_max": "The most the device may take. In the setpoint unit (for example 16 A, or 3700 W).",
                             "vl_bias": "Added to every setpoint above 0, for a device that delivers less than it is told. 0 for none.",
-                            "vl_fallback_setpoint": "Written to the setpoint entity when Load Juggler lets go of the device - the entry is reloaded, removed or disabled - in the setpoint unit (for example 6 A, or 0). Empty: nothing is written and the device keeps its last setpoint. A charger's profile runs out on its own; for a stop Load Juggler cannot write at (Home Assistant down), use the device's own fallback with the re-send interval."
+                            "vl_fallback_setpoint": "Written to the setpoint entity when Load Juggler lets go of the device - Dynamic Control is turned off, or the entry is reloaded, removed or disabled - in the setpoint unit (for example 6 A, or 0). Empty: nothing is written and the device keeps its last setpoint. A charger's profile runs out on its own; for a stop Load Juggler cannot write at (Home Assistant down), use the device's own fallback with the re-send interval."
                         }
                     },
                     "site": {
@@ -2111,6 +2123,14 @@
                 "solar": "PV",
                 "battery": "Battery",
                 "battery_control": "Battery charge management (writes to the inverter)"
+            }
+        },
+        "tank_dc_off_setpoint": {
+            "options": {
+                "normal": "Normal temperature",
+                "away": "Away temperature",
+                "boost": "Boost temperature",
+                "keep": "Leave as it is"
             }
         }
     },

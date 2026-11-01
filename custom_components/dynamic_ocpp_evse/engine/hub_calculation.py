@@ -1591,6 +1591,7 @@ def _apply_phase_switching(hass, site, now):
             above_s=now - above_at,
             hold_s=PHASE_SWITCH_UP_HOLD_S,
             interval_s=PHASE_SWITCH_INTERVAL_S,
+            resumable=load.dynamic_control and status != "Charging",
         )
         rt[EVSE_RT_PHASES_SINCE] = since
         rt[EVSE_RT_PHASES_REASON] = reason

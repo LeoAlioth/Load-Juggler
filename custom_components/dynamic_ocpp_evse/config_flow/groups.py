@@ -21,7 +21,8 @@ _PLUG = [
 ]
 
 _TANK = [
-    ("device", ("climate_entity_id", "heating_element_power", "tank_power_entity_id", "tank_off_operation_mode"), False),
+    ("device", ("climate_entity_id", "heating_element_power", "tank_power_entity_id", "tank_off_operation_mode",
+                "dynamic_control_off_setpoint"), False),
     ("site", ("connected_to_phase", "load_priority", "tank_prioritize_below_normal"), False),
     ("forecast", ("early_room_entity_id", "early_rate_entity_id"), False),
     _TIMING_LOAD,
@@ -57,7 +58,7 @@ _VARIABLE_LOAD = [
 ]
 
 _CHARGER_CURRENT = [
-    ("current", ("evse_minimum_charge_current", "evse_maximum_charge_current"), False),
+    ("current", ("evse_minimum_charge_current", "evse_maximum_charge_current", "dynamic_control_off_current"), False),
     ("phases", ("charger_l1_phase", "charger_l2_phase", "charger_l3_phase", "phase_switching"), False),
 ]
 

@@ -82,6 +82,13 @@ EVSE_RT_PHASE_SUPPORTED = "phase_switch_supported"
 EVSE_RT_PHASE_PROBE_AT = "phase_switch_probe_at"
 EVSE_RT_COMMANDED_PHASES = "commanded_phases"
 
+# Per-charger option: the current (A) the charger is held at while Dynamic Control
+# is off. Not stored or EVSE_DC_OFF_MAX: its maximum current (the behaviour before
+# the option); None (the field cleared): no profile at all - the charger keeps the
+# last one until it runs out (the owner, 2026-11-02).
+CONF_EVSE_DC_OFF_CURRENT = "dynamic_control_off_current"
+EVSE_DC_OFF_MAX = "max"
+
 # Per-charger option: switch between one and three phases when the charger can.
 CONF_PHASE_SWITCHING = "phase_switching"
 DEFAULT_PHASE_SWITCHING = True

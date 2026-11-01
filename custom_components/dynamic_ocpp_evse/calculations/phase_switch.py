@@ -63,6 +63,7 @@ def decide(
     above_s: float,
     hold_s: float,
     interval_s: float,
+    resumable: bool = False,
 ) -> tuple[int, float, str]:
     """``(phases, since, reason)`` for a switchable load this cycle.
 
@@ -72,12 +73,19 @@ def decide(
     on ``on`` phases; ``single_permit``: a callable giving what it would get on
     one (called only when three would pause it); ``potential``: per leg on all
     three while it runs on one; ``above_s``: how long ``potential`` has stayed
-    at or above the minimum plus ``margin`` (the caller keeps the clock).
+    at or above the minimum plus ``margin`` (the caller keeps the clock);
+    ``resumable``: Dynamic Control on and the charger not charging (paused, the
+    car pausing, not started, finishing) - on one phase it goes back to three
+    at once when three would reach the minimum, so the next charge starts on
+    three; the hold and the interval only guard a charge that is running
+    (GitHub issue 21, the owner 2026-11-01).
     """
     if not connected:
         if on == THREE:
             return THREE, since, "no car"
         return THREE, now, "no car - a new session starts on three phases"
+    if on == ONE and resumable and potential >= min_current:
+        return THREE, now, f"not charging - resumes on three phases ({potential:.1f} A each)"
     if held:
         return on, since, "not charging - phase count kept"
     if on == THREE:

@@ -28,6 +28,9 @@ from ..const import (
     CONF_TANK_NORMAL_TEMPERATURE,
     CONF_TANK_BOOST_TEMPERATURE,
     CONF_TANK_OFF_OPERATION_MODE,
+    CONF_TANK_DC_OFF_SETPOINT,
+    DEFAULT_TANK_DC_OFF_SETPOINT,
+    TANK_DC_OFF_KEEP,
     DEFAULT_TANK_AWAY_TEMPERATURE,
     DEFAULT_TANK_NORMAL_TEMPERATURE,
     DEFAULT_TANK_BOOST_TEMPERATURE,
@@ -595,3 +598,36 @@ async def _command_water_heater(hass, entity_id, state, permitted, setpoint, loa
         "temperature",
         target,
     )
+
+
+async def let_go_tank(hass, entry, load_rt) -> None:
+    """Dynamic Control turned off: put the thermostat, once, on the setpoint its
+    *When Dynamic Control is off* names (its normal temperature by default),
+    heating allowed - then it is the user's. ``keep`` leaves it as it is."""
+    which = get_entry_value(entry, CONF_TANK_DC_OFF_SETPOINT, DEFAULT_TANK_DC_OFF_SETPOINT)
+    entity = entry.data.get(CONF_CLIMATE_ENTITY_ID)
+    if which == TANK_DC_OFF_KEEP or not entity:
+        return
+    labels = ("away", "normal", "boost")
+    keys = (CONF_TANK_AWAY_TEMPERATURE, CONF_TANK_NORMAL_TEMPERATURE, CONF_TANK_BOOST_TEMPERATURE)
+    i = labels.index(which) if which in labels else 1
+    temp = load_rt.get(f"tank_{labels[i]}_temperature") or get_entry_value(
+        entry, keys[i], thermostat_defaults(entry.data.get(CONF_DEVICE_TYPE))[i]
+    )
+    try:
+        if entity.startswith("water_heater."):
+            await _command_water_heater(
+                hass, entity, hass.states.get(entity), True, temp, load_rt,
+                get_entry_value(entry, CONF_TANK_OFF_OPERATION_MODE, "") or "",
+            )
+        else:
+            await call_device(
+                hass, load_rt, "climate", "set_temperature",
+                {"entity_id": entity, "temperature": temp}, "temperature", temp,
+            )
+            await call_device(
+                hass, load_rt, "climate", "set_hvac_mode",
+                {"entity_id": entity, "hvac_mode": "heat"}, "state", "heat",
+            )
+    except Exception as e:  # noqa: BLE001 - the switch is off either way
+        _LOGGER.warning("%s: could not set %s to its %s temperature: %s", entry.title, entity, labels[i], e)
