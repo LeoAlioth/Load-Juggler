@@ -10,8 +10,10 @@ only - nothing here ever writes a phase.
 
 import logging
 
-from ..calculations.variable_load import outputs, phase_advice, setpoint
+from ..calculations.variable_load import SINGLE, outputs, phase_advice, phase_value, setpoint
 from ..const import (
+    CONF_VL_PHASE_ENTITY_ID,
+    RT_PHASE_SWITCH_AT,
     CONF_PHASE_VOLTAGE,
     CONF_VL_BIAS,
     CONF_VL_FALLBACK_SETPOINT,
@@ -51,12 +53,16 @@ def _attr(state, key):
 
 async def send_variable_load_command(
     sensor, limit: float, hub_entry, now_mono: float, potential: float | None = None,
+    offered: float = 0.0,
 ) -> None:
     """Publish this cycle's allowance (``limit``, amps per leg) and write it.
 
     ``potential``: per leg on all its configured legs while it runs on fewer
     (None otherwise) - the phase advice reads that, so a device on one leg is
     told to switch back when all its legs could take more than the threshold.
+    ``offered``: the engine's permit for it - for a load not running (Hold, not
+    connected, not charging) what it would be offered - so the advice of a held
+    load is what it would resume on, not the single of its 0 A (issue 21).
     """
     entry = sensor.config_entry
     load_rt = sensor._runtime()
@@ -71,7 +77,7 @@ async def send_variable_load_command(
     sensor._last_commanded_limit = limit
     published = outputs(limit, legs, load_rt.get(VL_RT_LEGS_IN_USE), voltage, max_amps)
     if len(legs) > 1:
-        advice_power = published["allowed_power"]
+        advice_power = round(max(limit, offered or 0.0) * voltage * len(load_rt.get(VL_RT_LEGS_IN_USE) or legs))
         if potential is not None:
             # capped at what the device takes on all its legs
             advice_power = round(
@@ -86,6 +92,7 @@ async def send_variable_load_command(
             60 * get_entry_value(entry, CONF_VL_PHASE_MIN_INTERVAL, DEFAULT_VL_PHASE_MIN_INTERVAL),
         )
         published.update(phase_advice=advice, phase_advice_reason=reason)
+        await _write_phase(sensor, load_rt, advice, now_mono)
     load_rt[VL_RT_OUTPUTS] = published
 
     target = get_entry_value(entry, CONF_VL_SETPOINT_ENTITY_ID, None)
@@ -122,6 +129,38 @@ async def send_variable_load_command(
             )
 
     stamp_command(sensor, now_mono)
+
+
+async def _write_phase(sensor, load_rt, advice, now_mono) -> None:
+    """Write the advice to the device's phase entity, when one is set and it
+    holds another value (1 / 3, calculations/variable_load.phase_value). A
+    change starts the settling window in which the device's 0 A while it
+    switches is not a manual change (control.manual_change)."""
+    target = get_entry_value(sensor.config_entry, CONF_VL_PHASE_ENTITY_ID, None)
+    state = sensor.hass.states.get(target) if target else None
+    if units.is_unavailable(state):
+        return
+    domain = target.split(".", 1)[0]
+    is_select = domain in ("select", "input_select")
+    value = phase_value(advice, state.attributes.get("options") if is_select else None)
+    if value is None:
+        _LOGGER.warning(
+            "Variable load %s: phase entity %s has no option for %s phase(s)",
+            sensor._attr_name, target, 1 if advice == SINGLE else 3,
+        )
+        return
+    held = state.state if is_select else units.read_number(sensor.hass, target)
+    if held == value or (not is_select and held is not None and abs(held - value) < 0.5):
+        return
+    load_rt[RT_PHASE_SWITCH_AT] = now_mono
+    service, key = ("select_option", "option") if is_select else ("set_value", "value")
+    try:
+        await call_device(
+            sensor.hass, load_rt, domain, service, {"entity_id": target, key: value}, "state", value,
+        )
+        _LOGGER.info("Variable load %s: phase entity %s -> %s", sensor._attr_name, target, value)
+    except Exception as e:
+        _LOGGER.warning("Variable load %s: phase write failed: %s", sensor._attr_name, e)
 
 
 async def write_fallback(hass, entry, load_rt=None) -> None:

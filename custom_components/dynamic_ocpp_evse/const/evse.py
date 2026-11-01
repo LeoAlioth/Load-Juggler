@@ -67,6 +67,31 @@ EVSE_RT_COMMANDED_RATE_UNIT = "commanded_rate_unit"
 # The stuck-readout watch's state (engine/readout_watch.py), plus the display
 # fields the builder adds for the load's Available Current attributes.
 EVSE_RT_READOUT_WATCH = "readout_watch"
+# Phase switching (calculations/phase_switch.py, docs/plans/2026-11-01/phase-switching.md):
+# the phase count the engine decided (1 or 3), since when (monotonic) and why;
+# whether the charger reports ConnectorSwitch3to1PhaseSupported (True / False,
+# None until read) and when to ask again; the phase count its last profile
+# carried (control/ocpp.py, after set_charge_rate returned).
+EVSE_RT_PHASES = "phase_switch_phases"
+EVSE_RT_PHASES_SINCE = "phase_switch_since"
+EVSE_RT_PHASES_REASON = "phase_switch_reason"
+EVSE_RT_PHASE_SUPPORTED = "phase_switch_supported"
+EVSE_RT_PHASE_PROBE_AT = "phase_switch_probe_at"
+EVSE_RT_COMMANDED_PHASES = "commanded_phases"
+
+# Per-charger option: switch between one and three phases when the charger can.
+CONF_PHASE_SWITCHING = "phase_switching"
+DEFAULT_PHASE_SWITCHING = True
+# The OCPP configuration key a charger answers "true" to when it can switch.
+OCPP_KEY_PHASE_SWITCH = "ConnectorSwitch3to1PhaseSupported"
+# A change back to three phases waits this long after the last change (the
+# owner, 2026-11-01); a change to one phase that saves a pause does not wait.
+PHASE_SWITCH_INTERVAL_S = 600
+# Three phases again only when all three legs could take the minimum plus this
+# (A) - a judgement, three dead bands, so a site at the edge does not bounce.
+PHASE_SWITCH_UP_MARGIN = 1.0
+# How often an unanswered capability read is tried again (s).
+PHASE_SWITCH_PROBE_RETRY_S = 600
 
 # EVSE default values
 DEFAULT_MIN_CHARGE_CURRENT = 6

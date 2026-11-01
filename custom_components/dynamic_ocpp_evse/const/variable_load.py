@@ -28,6 +28,8 @@ CONF_VL_CHARGING_ENTITY_ID = "vl_charging_entity_id"    # binary_sensor: off = n
 CONF_VL_PHASE_MULTI_ABOVE = "vl_phase_multi_above"      # W
 CONF_VL_PHASE_SINGLE_BELOW = "vl_phase_single_below"    # W
 CONF_VL_PHASE_MIN_INTERVAL = "vl_phase_min_interval"    # minutes between advice changes
+# select / input_select / number / input_number the advice is written to (1 / 3); none = advice only
+CONF_VL_PHASE_ENTITY_ID = "vl_phase_entity_id"
 CONF_VL_FALLBACK_SETPOINT = "vl_fallback_setpoint"      # written when the entry unloads; unset = nothing
 
 VL_UNIT_AMPS = "A"

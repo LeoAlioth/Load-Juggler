@@ -2,7 +2,14 @@
 
 ## 2.1.7
 
+### New Features
+
+- **A charger can switch to one phase instead of pausing**: a three-phase OCPP charger that says it can switch phases (it answers `true` to `ConnectorSwitch3to1PhaseSupported`, as a go-eCharger V4 does) now charges on one phase when three phases cannot reach its minimum current but one can - a busy phase, a full breaker or an import power limit that leaves 3.9 kW where three phases at 6 A need 4.1 kW. One phase at 6-16 A is 1.4-3.7 kW. It goes back to three phases once all three could take the minimum plus 1 A, at the earliest 10 minutes after the last change; the change to one phase happens at once, since waiting would be the pause it avoids. The phase count travels in the charging profile (`numberPhases`), goes out without waiting for the charger's update interval, and the charger's allowance restarts from its minimum on the new phase count. While the charger switches - a few seconds at 0 A - the compliance check and the stuck-readout watch do not take it for a fault. A charger with no car goes back to three phases; Dynamic Control off or a car not charging keeps the phase count. On by default; *Switch to one phase instead of pausing* on the charger's phase mapping page turns it off. The *Phase Mask* sensor shows `phase_switching` (supported / not supported / off), `phases_in_use` and `phase_switch_reason`.
+- **A Variable Load writes its phase advice** (GitHub issue 21): the new optional *Phase entity* on a Variable Load's phase advice settings - a select or a number on the device - receives the advice whenever it changes: 1 for single, 3 for multi. The device's own drop to 0 A while it switches is not taken for a manual change. Without it the advice is published as before.
+
 ### Bug Fixes
+
+- **A Variable Load's phase advice no longer turns to single in Hold**: held (or not connected, or not charging) its allowance is 0 A, and the advice read that as "single". It now reads what the load would be offered, so it resumes on all its legs when they have room (GitHub issue 21).
 
 - **A charger that is offline no longer keeps its share**: when a charger's connection to the ocpp integration drops, Home Assistant shows its status as *unavailable*, and Load Juggler counted that as a charger that may be charging - it kept allocating its full share to it, and the other loads got what was left. A second charger at a site with a 9.2 kW budget sat paused at 0.3 A with a car plugged in while the first, offline, held 13.3 A. An offline or unknown status now counts as not drawing, the same as *Available*.
 

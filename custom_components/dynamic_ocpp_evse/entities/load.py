@@ -47,6 +47,7 @@ from ..const import (
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_SOLAR_PRIORITY,
     EVSE_RT_READOUT_WATCH,
+    EVSE_RT_COMMANDED_PHASES,
     LOAD_RT_SUN_PROBE,
     VL_MODE_HOLD,
     VL_RT_LEGS_GREW,
@@ -63,7 +64,7 @@ from ..control.smoothing import apply_smoothing, cut_now
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
 from ..control import stamp_command
-from ..control.ocpp import send_ocpp_command
+from ..control.ocpp import probe_phase_switching, send_ocpp_command, told_phases
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
@@ -477,21 +478,42 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         legs_grew = device_type == DEVICE_TYPE_VARIABLE_LOAD and self._runtime().pop(
             VL_RT_LEGS_GREW, False
         )
-        if legs_grew:
+        # A charger the engine has put on another phase count than its last
+        # profile carried: the same restart, and the profile goes out now.
+        phase_due = False
+        if device_type == DEVICE_TYPE_EVSE:
+            probe_phase_switching(self, time.monotonic())
+            told = told_phases(self._runtime())
+            phase_due = told is not None and told != self._runtime().get(
+                EVSE_RT_COMMANDED_PHASES, 3
+            )
+            if phase_due and self._pause_started_at is not None:
+                # The pause was for the old phase count's shortage.
+                self._pause_started_at = None
+        if legs_grew or phase_due:
             # It now draws on more legs than it was sized on (switched back to
-            # three phases): the allowance it holds was sized for fewer legs.
+            # three phases), or on another phase count than it was last told:
+            # the allowance it holds was sized for other legs.
             # Restart the permit from the minimum - the new legs only rise
             # through the ramp - and let the cut (or the stop) go out now,
             # not at the command slot, without the one-cycle confirmation.
-            floor = self._variable_load_floor(hub_entry)
+            floor = (
+                self._variable_load_floor(hub_entry)
+                if legs_grew
+                else self._runtime().get("min_current") or get_entry_value(
+                    self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
+                )
+            )
             self._ema_current = self._schmitt_current = self._rate_limited_current = floor
             self._schmitt_state = "rising"
             self._short_last_cycle = True
             self._last_command_time = -float("inf")
             self._last_commanded_limit = None  # not the cut straight to the new permit
             _LOGGER.info(
-                "%s draws on more legs than it was sized on - restarting its allowance at %.1f A",
-                self._attr_name, floor,
+                "%s %s - restarting its allowance at %.1f A",
+                self._attr_name,
+                "draws on more legs than it was sized on" if legs_grew else "changes its phase count",
+                floor,
             )
         if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_VARIABLE_LOAD):
             self._available_current = apply_smoothing(
@@ -948,6 +970,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 await send_variable_load_command(
                     self, limit, hub_entry, now_mono,
                     (hub_data.get("load_potential") or {}).get(self.config_entry.entry_id),
+                    offered=hub_data.get("load_available", {}).get(self.config_entry.entry_id, 0.0),
                 )
         else:
             await check_profile_compliance(self, limit, dynamic_control_on)

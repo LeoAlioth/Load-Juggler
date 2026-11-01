@@ -38,6 +38,8 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
+    CONF_PHASE_SWITCHING,
+    DEFAULT_PHASE_SWITCHING,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_CHARGE_CONTROL_INTERVAL,
@@ -230,6 +232,7 @@ from ..const.sg_ready import (
 from ..const.variable_load import (
     CONF_VL_BIAS,
     CONF_VL_CHARGING_ENTITY_ID,
+    CONF_VL_PHASE_ENTITY_ID,
     CONF_VL_CONNECTED_ENTITY_ID,
     CONF_VL_CURRENT_L1_ENTITY_ID,
     CONF_VL_CURRENT_L2_ENTITY_ID,
@@ -1055,6 +1058,19 @@ def _charger_current_schema(
                     6, 80, 1, "A", required=True,
                 ),
                 *_leg_fields(defaults, hub_phases),
+                # Only a three-leg charger can switch; the engine also needs
+                # the charger to say it can (calculations/phase_switch.py).
+                *(
+                    [(
+                        vol.Required(
+                            CONF_PHASE_SWITCHING,
+                            default=defaults.get(CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING),
+                        ),
+                        bool,
+                    )]
+                    if hub_phases >= 3
+                    else []
+                ),
             ]
         )
     )
@@ -1711,6 +1727,7 @@ def _variable_load_schema(defaults: dict | None = None, hub_phases: int = 3) -> 
                 _num(CONF_VL_PHASE_MULTI_ABOVE, defaults, DEFAULT_VL_PHASE_MULTI_ABOVE, 0, 50000, 100, "W", required=True),
                 _num(CONF_VL_PHASE_SINGLE_BELOW, defaults, DEFAULT_VL_PHASE_SINGLE_BELOW, 0, 50000, 100, "W", required=True),
                 _num(CONF_VL_PHASE_MIN_INTERVAL, defaults, DEFAULT_VL_PHASE_MIN_INTERVAL, 0, 120, 1, "min", required=True),
+                _entity(CONF_VL_PHASE_ENTITY_ID, ["select", "input_select", "number", "input_number"]),
                 _entity(CONF_EARLY_ROOM_ENTITY_ID, ["sensor", "input_number"], ["energy", "energy_storage"]),
                 _entity(CONF_EARLY_RATE_ENTITY_ID, ["sensor", "input_number"], "power"),
                 _num(CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD, 0, 30, 1, "min", required=True),

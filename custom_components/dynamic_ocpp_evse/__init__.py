@@ -99,6 +99,7 @@ from .helpers import (
     strip_unfeatured_inverter_options,
 )
 from . import units
+from .control.ocpp import read_charger_setting
 from .control.sg_ready import release_relays
 from .control.variable_load import write_fallback
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
@@ -463,19 +464,6 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
 
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Load Juggler component."""
-    
-    async def _charger_setting(hass, devid, key):
-        """The value the charger holds for OCPP setting ``key`` (ocpp's
-        get_configuration), or None when it cannot be read."""
-        try:
-            got = await hass.services.async_call(
-                "ocpp", "get_configuration", {"devid": devid, "ocpp_key": key},
-                blocking=True, return_response=True,
-            )
-        except Exception as err:  # noqa: BLE001 - a read that fails decides nothing
-            _LOGGER.debug("could not read the charger's %s: %s", key, err)
-            return None
-        return got.get("value") if isinstance(got, dict) else None
 
     async def handle_reset_service(call):
         """Handle the reset service call."""
@@ -613,7 +601,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 entry.title, key, interval,
                 " (the charger needs a reboot to apply it)" if reboot else "",
             )
-            held = None if reboot else await _charger_setting(hass, ocpp_device_id, key)
+            held = None if reboot else await read_charger_setting(hass, ocpp_device_id, key)
             if held is not None and str(held).strip() != interval:
                 refused[key] = {"value": interval, "held": str(held), "at": dt_util.utcnow().isoformat()}
                 changed = True
