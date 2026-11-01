@@ -118,7 +118,7 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   a Storm Reserve switch
 │   ├── phase_switch.py            # Phase switching (plan docs/plans/2026-11-01/phase-switching.md): ``decide`` - one phase
 │   │                              #   only when three would pause a switchable charger and one would not (at once), back to
-│   │                              #   three at min + 1 A no sooner than 10 min after the last change; ``single_phase_permit``
+│   │                              #   three at min + 2 A held 5 min, no sooner than 10 min after the last change; ``single_phase_permit``
 │   │                              #   re-runs the whole calculation on a deep copy. The engine step is hub_calculation.
 │   │                              #   _apply_phase_switching (re-runs the calculation on a change); the profile's
 │   │                              #   numberPhases and the capability read are control/ocpp.py; the settling window after a

@@ -24,8 +24,8 @@ during Hold, and do not take the charger's 0 A dip during a switch for a manual 
   would not but one would. (Three phases at the minimum always deliver more than one at the maximum - 4.1 kW
   against 3.7 kW at 6/16 A - so "more power" and "avoid a pause" are the same rule.)
 - **Back to three:** when the load's current on all three legs (its potential, `_set_potential_current`) reaches
-  the minimum plus `PHASE_SWITCH_UP_MARGIN` (1 A, a judgement: the dead band's three times, so a site sitting at
-  the edge does not bounce).
+  the minimum plus `PHASE_SWITCH_UP_MARGIN` (2 A) and stays there without a break for `PHASE_SWITCH_UP_HOLD_S`
+  (5 min) - the owner, 2026-11-01, so a site sitting at the edge does not bounce.
 - **Spacing:** a change back to three waits `PHASE_SWITCH_INTERVAL_S` (10 min) since the last change. A change to
   one phase that saves a pause goes at once - waiting would be the pause it exists to avoid. So at most one
   round trip per 10 minutes.

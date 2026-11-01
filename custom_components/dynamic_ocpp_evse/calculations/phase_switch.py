@@ -4,8 +4,8 @@ A three-leg charger that can switch runs on three phases whenever three reach
 its minimum, and on one phase (its L1) only when three would pause it and one
 would not - three at the minimum always deliver more than one at the maximum,
 so "more power" and "avoid a pause" are the same rule. Back to three once all
-three legs could take the minimum plus a margin, no sooner than an interval
-after the last change; the change to one phase does not wait, since waiting
+three legs could take the minimum plus a margin for a hold time, no sooner than
+an interval after the last change; the change to one phase does not wait, since waiting
 would be the pause it exists to avoid. Design and the owner's answers:
 docs/plans/2026-11-01/phase-switching.md.
 """
@@ -60,6 +60,8 @@ def decide(
     single_permit,
     potential: float,
     margin: float,
+    above_s: float,
+    hold_s: float,
     interval_s: float,
 ) -> tuple[int, float, str]:
     """``(phases, since, reason)`` for a switchable load this cycle.
@@ -69,7 +71,8 @@ def decide(
     off or its status draws nothing - the count stays; ``permit``: what it got
     on ``on`` phases; ``single_permit``: a callable giving what it would get on
     one (called only when three would pause it); ``potential``: per leg on all
-    three while it runs on one.
+    three while it runs on one; ``above_s``: how long ``potential`` has stayed
+    at or above the minimum plus ``margin`` (the caller keeps the clock).
     """
     if not connected:
         if on == THREE:
@@ -90,10 +93,10 @@ def decide(
     need = min_current + margin
     if potential < need:
         return ONE, since, f"three phases would get {potential:.1f} A, under {need:.1f} A"
-    left = interval_s - (now - since)
+    left = max(interval_s - (now - since), hold_s - above_s)
     if left > 0:
         return ONE, since, (
             f"three phases would get {potential:.1f} A; back to three in "
-            f"{math.ceil(left / 60)} min (minimum time between changes)"
+            f"{math.ceil(left / 60)} min if it holds"
         )
     return THREE, now, f"three phases get {potential:.1f} A"
