@@ -14,6 +14,8 @@ from ..const import (
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_PAUSE_PROFILE_VALIDITY,
+    CONF_EVSE_DC_OFF_CURRENT,
+    EVSE_DC_OFF_MAX,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -857,12 +859,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             limit = math.ceil(self._available_current * 10) / 10 if self._available_current > 0 else 0.0
             self._pause_started_at = None
         elif not dynamic_control_on:
-            limit = round(float(max_charge_current), 1)
+            # The charger's *When Dynamic Control is off* current: its maximum
+            # unless set; cleared (None) sends nothing below.
+            off = get_entry_value(self.config_entry, CONF_EVSE_DC_OFF_CURRENT, EVSE_DC_OFF_MAX)
+            limit = round(float(max_charge_current if off in (EVSE_DC_OFF_MAX, None) else off), 1)
             self._pause_started_at = None
             _LOGGER.debug(
-                "Dynamic control OFF for %s - using max current %sA",
+                "Dynamic control OFF for %s - %s",
                 self._attr_name,
-                limit,
+                "left as it is" if off is None else f"held at {limit}A",
             )
         elif short:
             # A shortage the engine still sees as the command goes out: the
@@ -973,6 +978,12 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                     offered=hub_data.get("load_available", {}).get(self.config_entry.entry_id, 0.0),
                 )
         else:
+            if not dynamic_control_on and get_entry_value(
+                self.config_entry, CONF_EVSE_DC_OFF_CURRENT, EVSE_DC_OFF_MAX
+            ) is None:
+                # Left as it is: no profile - the charger keeps the last one until it runs out.
+                stamp_command(self, now_mono)
+                return
             await check_profile_compliance(self, limit, dynamic_control_on)
             # A pause's 0 A goes out once, valid for the pause profile validity
             # (default 1 h, or the rest of the pause if longer) on top of the

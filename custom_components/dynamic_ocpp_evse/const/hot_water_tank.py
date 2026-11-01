@@ -14,6 +14,12 @@ from .common import (
 CONF_CLIMATE_ENTITY_ID = "climate_entity_id"              # HA climate or water_heater entity (read + control)
 CONF_HEATING_ELEMENT_POWER = "heating_element_power"      # Element rating in watts
 CONF_TANK_POWER_ENTITY_ID = "tank_power_entity_id"        # Optional live power sensor
+# What the thermostat is put on, once, when Dynamic Control is turned off: one of its
+# own three setpoints, heating allowed, or "keep" - left as it is (the owner, 2026-11-02).
+CONF_TANK_DC_OFF_SETPOINT = "dynamic_control_off_setpoint"
+TANK_DC_OFF_KEEP = "keep"
+TANK_DC_OFF_OPTIONS = ("normal", "away", "boost", TANK_DC_OFF_KEEP)
+DEFAULT_TANK_DC_OFF_SETPOINT = "normal"
 CONF_TANK_OFF_OPERATION_MODE = "tank_off_operation_mode"  # Optional: a water heater's own operation mode for "off"
 CONF_TANK_AWAY_TEMPERATURE = "tank_away_temperature"      # Frost-protection / minimal setpoint
 CONF_TANK_NORMAL_TEMPERATURE = "tank_normal_temperature"  # Baseline setpoint

@@ -31,6 +31,10 @@ from homeassistant.helpers.entity_registry import (
 from homeassistant.helpers.selector import selector
 from .. import units
 from ..const import (
+    CONF_EVSE_DC_OFF_CURRENT,
+    EVSE_DC_OFF_MAX,
+    CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
+    DEFAULT_MAX_CHARGE_CURRENT,
     CONF_MANUAL_OVERRIDE_TIMEOUT,
     CONF_VL_CHARGING_ENTITY_ID,
     CONF_VL_PHASE_ENTITY_ID,
@@ -332,6 +336,19 @@ _STATION_ENTITY_KEYS = [
     CONF_EARLY_ROOM_ENTITY_ID,
     CONF_EARLY_RATE_ENTITY_ID,
 ]
+
+
+def normalize_dc_off_current(data: dict) -> None:
+    """A charger page's *When Dynamic Control is off* current, as stored: cleared
+    is None (left as it is), the maximum is EVSE_DC_OFF_MAX (so it follows a later
+    change of the maximum), anything else that current."""
+    value = data.get(CONF_EVSE_DC_OFF_CURRENT)
+    if value is None or value == "":
+        data[CONF_EVSE_DC_OFF_CURRENT] = None
+    elif float(value) == float(data.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)):
+        data[CONF_EVSE_DC_OFF_CURRENT] = EVSE_DC_OFF_MAX
+    else:
+        data[CONF_EVSE_DC_OFF_CURRENT] = float(value)
 
 
 def _normalize_optional_inputs(

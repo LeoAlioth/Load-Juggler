@@ -27,6 +27,8 @@ from .const import (
     CONF_MANUAL_OVERRIDE_TIMEOUT, manual_override_default,
 )
 from .control import manual_change
+from .control.hot_water_tank import let_go_tank
+from .control.variable_load import write_fallback
 from .units import minutes_of
 from .control.inverter import soc_targets
 from .helpers import get_entry_value, hub_has_battery
@@ -210,8 +212,23 @@ class DynamicControlSwitch(LoadEntityMixin, _FlagSwitch):
         await super().async_turn_on(**kwargs)
 
     async def async_turn_off(self, **kwargs):
+        was_on = bool(self.is_on) and not self._resumes_at  # controlled, not in an override
         self._cancel_resume()
         await super().async_turn_off(**kwargs)
+        if was_on:
+            await self._let_go()
+
+    async def _let_go(self) -> None:
+        """Dynamic Control turned off: write, once, what the load's settings say
+        it is left at - a thermostat its normal temperature (or away / boost,
+        or kept), a Variable Load its fallback setpoint (none: kept). A charger
+        is held at its *When Dynamic Control is off* current by its own command
+        cycle (entities/load.py); a plug and a power station are left as they are."""
+        kind = behaviour_type(self.config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE))
+        if kind == DEVICE_TYPE_HOT_WATER_TANK:
+            await let_go_tank(self.hass, self.config_entry, self._runtime())
+        elif kind == DEVICE_TYPE_VARIABLE_LOAD:
+            await write_fallback(self.hass, self.config_entry, self._runtime())
 
     def _set(self, on: bool) -> None:
         self._attr_is_on = on

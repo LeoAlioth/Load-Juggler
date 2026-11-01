@@ -113,6 +113,16 @@ def test_back_to_three_only_once_the_margin_held_five_minutes():
     assert _decide(on=ONE, since=0.0, now=5000.0, potential=8.0, above_s=300.0)[:2] == (THREE, 5000.0)
 
 
+def test_not_charging_resumes_on_three_when_three_reach_the_minimum():
+    # paused on one phase, three would get 6.5 A: back to three at once - no hold, no interval
+    phases, since, reason = _decide(on=ONE, since=900.0, now=1000.0, potential=6.5, above_s=0.0, resumable=True)
+    assert (phases, since) == (THREE, 1000.0) and "resumes on three" in reason
+    # three would not reach the minimum: stays on one (no flip-flop while paused for lack of room)
+    assert _decide(on=ONE, since=900.0, potential=5.0, resumable=True)[0] == ONE
+    # charging: the hold and the interval still apply
+    assert _decide(on=ONE, since=900.0, now=1000.0, potential=9.0, resumable=False)[0] == ONE
+
+
 def test_held_keeps_the_phase_count():
     assert _decide(on=ONE, since=5.0, held=True, potential=16.0)[:2] == (ONE, 5.0)
     assert _decide(on=THREE, held=True, permit=0.0, single_permit=lambda: 16.0)[0] == THREE
