@@ -4,7 +4,7 @@
   "documentation": "https://github.com/LeoAlioth/Load-Juggler",
   "issue_tracker": "https://github.com/LeoAlioth/Load-Juggler/issues",
   "dependencies": [],
-  "after_dependencies": ["ocpp"],
+  "after_dependencies": ["ocpp", "http", "frontend"],
   "codeowners": ["@LeoAlioth"],
   "version": "2.1.7",
   "requirements": [],
