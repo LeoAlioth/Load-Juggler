@@ -42,6 +42,10 @@ from ..const import (
     BEHAVIOR_BINARY_EXCESS,
     BEHAVIOR_EXCESS,
     CONF_AUTO_DETECT_PHASE_MAPPING,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
+    CONF_DEVICE_TYPE,
     CONF_BATTERY_SOC_HYSTERESIS,
     CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BINARY_MIN_OFF_TIME,
@@ -136,7 +140,7 @@ from ..calculations.utils import (
     household_per_phase,
     managed_phase_draws,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, stored_legs
 from ..registry import get_inverters_for_hub
 from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
@@ -1666,12 +1670,31 @@ def _build_group_data(site):
     return group_data
 
 
-def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
+def _save_phase_remap(hass, remap) -> bool:
+    """Write an auto-detected charger mapping into its entry's options, as
+    Configure would (the update listener reloads the entry). Only the legs
+    the charger has set, so its phase count stays. False when the load is
+    not an EVSE entry - its remap then lives in the runtime state only."""
+    entry = hass.config_entries.async_get_entry(remap["load_id"])
+    if entry is None or entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE) != DEVICE_TYPE_EVSE:
+        return False
+    keys = (CONF_CHARGER_L1_PHASE, CONF_CHARGER_L2_PHASE, CONF_CHARGER_L3_PHASE)
+    new = {
+        key: remap[f"l{i + 1}_phase"]
+        for i, key in enumerate(keys[: len(stored_legs(entry))])
+    }
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **new})
+    _LOGGER.warning("AutoDetect: saved the phase mapping of %s: %s", entry.title, new)
+    return True
+
+
+def _run_auto_detection(hass, hub_entry, auto_detect_state, smoothed_phases, site):
     """Run the CT-inversion and phase-mapping detectors for this cycle.
 
-    Returns the notifications to publish. Any phase remap it works out is
-    stored in ``auto_detect_state`` for the NEXT cycle to apply (see
-    _apply_phase_remaps) - never mid-calculation.
+    Returns the notifications to publish. A phase remap it works out for a
+    charger is saved into the charger's options (the next cycle builds on
+    them); for any other load it is stored in ``auto_detect_state`` for the
+    NEXT cycle to apply (see _apply_phase_remaps) - never mid-calculation.
     """
     # --- Auto-detection (inversion + phase mapping) ---
     # auto_detect_state is initialized by the caller before the first use.
@@ -1691,14 +1714,16 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
             smoothed_phases,
             site.loads,
             hub_entry.entry_id,
+            site=site,
         )
         for notif in pm_results:
-            # Store auto-remap for next cycle
+            # Save (a charger) or store for the next cycle (any other load)
             remap = notif.pop("auto_remap", None)
             if remap:
-                auto_detect_state.setdefault("phase_remap", {})[remap["load_id"]] = (
-                    remap
-                )
+                if not _save_phase_remap(hass, remap):
+                    auto_detect_state.setdefault("phase_remap", {})[
+                        remap["load_id"]
+                    ] = remap
                 # Reset correlation state so re-detection runs with new mapping
                 # (allows 2-phase detection to verify/correct after 1-phase remap)
                 pm_state = auto_detect_state.get("phase_map", {})
@@ -2209,7 +2234,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     group_data = _build_group_data(site)
 
     auto_notifications = _run_auto_detection(
-        hub_entry, auto_detect_state, smoothed_phases, site
+        hass, hub_entry, auto_detect_state, smoothed_phases, site
     )
 
     hub_status, hub_warnings = _build_hub_status(

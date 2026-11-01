@@ -498,3 +498,57 @@ class TestTwoPhaseDetection:
         cs = state["phase_map"]["c1"]
         # No 2-phase data accumulated (charger.phases < 3)
         assert sum(cs.get("score_2ph", {"A": 0, "B": 0, "C": 0}).values()) == 0
+
+
+# ===========================================================================
+# Phase mapping by level: a steady one-leg draw the step check cannot see
+# ===========================================================================
+
+class TestPhaseMappingLevel:
+    """A one-leg draw while nothing generates must sit on a phase whose import
+    covers it (the third site, 2026-11-01: Stara mapped to A, drawing 16 A on
+    B for an hour; no notification)."""
+
+    @staticmethod
+    def _run(grid, l1_phase="A", seconds=600, step=2.0, draw=16.0, **site):
+        """A steady draw on L1 against a constant grid, every ``step`` s;
+        returns [(time, notification), ...]."""
+        defaults = dict(solar_is_metered=True, solar_production_total=0.0)
+        defaults.update(site)
+        state, out, t = {}, [], 0.0
+        charger = _make_charger(l1_current=draw, l1_phase=l1_phase)
+        ctx = SiteContext(loads=[charger], **defaults)
+        while t <= seconds:
+            for n in check_phase_mapping(state, list(grid), [charger], "hub1",
+                                         site=ctx, now=t):
+                out.append((t, n))
+            t += step
+        return out
+
+    def test_the_third_site_case_notifies_then_remaps_with_a_swap(self):
+        # A imports ~1 A, B the car plus the house, C the house
+        out = self._run((1.2, 20.1, 2.4))
+        assert [n["title"].split(":")[0] for _, n in out] == [
+            "Load Juggler — Phase Mismatch",
+            "Load Juggler — Phase Mapping Auto-Corrected",
+        ]
+        (t_note, _), (t_remap, remap) = out
+        assert 150 <= t_note <= 200     # 60 s hold + 6 points x 20 s
+        assert 330 <= t_remap <= 380    # ... + 15 points x 20 s
+        assert {k: remap["auto_remap"][k] for k in ("l1_phase", "l2_phase", "l3_phase")} \
+            == {"l1_phase": "B", "l2_phase": "A", "l3_phase": "C"}
+        assert "saved in the charger's settings" in remap["message"]
+
+    def test_correct_mapping_beside_a_heavy_house_phase_stays_quiet(self):
+        # The car on A; B carries 18 A of house - both cover, no verdict
+        assert self._run((17.0, 18.0, 2.0), seconds=3600) == []
+
+    def test_correct_mapping_alone_is_confirmed_not_flagged(self):
+        assert self._run((17.0, 2.0, 2.0), seconds=3600) == []
+
+    def test_not_judged_while_anything_generates(self):
+        assert self._run((1.2, 20.1, 2.4), solar_production_total=900.0) == []
+
+    def test_a_short_spell_never_counts(self):
+        # Shorter than the hold: a smoothed grid lagging a ramp
+        assert self._run((1.2, 20.1, 2.4), seconds=58) == []
