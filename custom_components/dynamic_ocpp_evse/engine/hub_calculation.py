@@ -122,9 +122,11 @@ from ..const import (
     SG_RT_NORMAL_DRAW,
     SG_RT_STATUS,
     EVSE_RT_PHASES,
+    EVSE_RT_PHASES_ABOVE_AT,
     EVSE_RT_PHASES_REASON,
     EVSE_RT_PHASES_SINCE,
     PHASE_SWITCH_INTERVAL_S,
+    PHASE_SWITCH_UP_HOLD_S,
     PHASE_SWITCH_UP_MARGIN,
     DOMAIN,
     GRID_STALE_TIMEOUT,
@@ -1570,6 +1572,11 @@ def _apply_phase_switching(hass, site, now):
             continue
         on = rt.get(EVSE_RT_PHASES, phase_switch.THREE)
         status = load.connector_status
+        if on == phase_switch.ONE and load.potential_current >= load.min_current + PHASE_SWITCH_UP_MARGIN:
+            above_at = rt.setdefault(EVSE_RT_PHASES_ABOVE_AT, now)
+        else:
+            rt.pop(EVSE_RT_PHASES_ABOVE_AT, None)
+            above_at = now
         phases, since, reason = phase_switch.decide(
             on,
             rt.get(EVSE_RT_PHASES_SINCE, -math.inf),
@@ -1581,6 +1588,8 @@ def _apply_phase_switching(hass, site, now):
             single_permit=lambda load_id=load.load_id: phase_switch.single_phase_permit(site, load_id),
             potential=load.potential_current,
             margin=PHASE_SWITCH_UP_MARGIN,
+            above_s=now - above_at,
+            hold_s=PHASE_SWITCH_UP_HOLD_S,
             interval_s=PHASE_SWITCH_INTERVAL_S,
         )
         rt[EVSE_RT_PHASES_SINCE] = since

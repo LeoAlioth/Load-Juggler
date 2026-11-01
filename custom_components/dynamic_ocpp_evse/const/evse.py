@@ -75,6 +75,9 @@ EVSE_RT_READOUT_WATCH = "readout_watch"
 EVSE_RT_PHASES = "phase_switch_phases"
 EVSE_RT_PHASES_SINCE = "phase_switch_since"
 EVSE_RT_PHASES_REASON = "phase_switch_reason"
+# Since when (monotonic) the load on one phase could take the minimum plus the
+# margin on all three legs; cleared the cycle it cannot.
+EVSE_RT_PHASES_ABOVE_AT = "phase_switch_above_at"
 EVSE_RT_PHASE_SUPPORTED = "phase_switch_supported"
 EVSE_RT_PHASE_PROBE_AT = "phase_switch_probe_at"
 EVSE_RT_COMMANDED_PHASES = "commanded_phases"
@@ -88,8 +91,9 @@ OCPP_KEY_PHASE_SWITCH = "ConnectorSwitch3to1PhaseSupported"
 # owner, 2026-11-01); a change to one phase that saves a pause does not wait.
 PHASE_SWITCH_INTERVAL_S = 600
 # Three phases again only when all three legs could take the minimum plus this
-# (A) - a judgement, three dead bands, so a site at the edge does not bounce.
-PHASE_SWITCH_UP_MARGIN = 1.0
+# (A) without a break for PHASE_SWITCH_UP_HOLD_S (the owner, 2026-11-01).
+PHASE_SWITCH_UP_MARGIN = 2.0
+PHASE_SWITCH_UP_HOLD_S = 300
 # How often an unanswered capability read is tried again (s).
 PHASE_SWITCH_PROBE_RETRY_S = 600
 

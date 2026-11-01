@@ -9,6 +9,7 @@ it on phase B. Three phases at the 6 A minimum need 4.1 kW, there were 3.9 kW,
 and Charger Nova was paused; one phase on A would have run at 16 A.
 """
 
+import math
 import pytest
 
 from custom_components.dynamic_ocpp_evse.calculations.models import (
@@ -72,7 +73,8 @@ def test_on_one_phase_the_potential_is_what_three_legs_could_take():
 
 def _decide(on=THREE, since=0.0, now=1000.0, **kw):
     args = dict(connected=True, held=False, permit=0.0, min_current=6.0,
-                single_permit=lambda: 0.0, potential=0.0, margin=1.0, interval_s=600)
+                single_permit=lambda: 0.0, potential=0.0, margin=2.0,
+                above_s=math.inf, hold_s=300, interval_s=600)
     args.update(kw)
     return decide(on, since, now, **args)
 
@@ -95,13 +97,20 @@ def test_three_kept_when_one_phase_does_not_reach_the_minimum_either():
 
 
 def test_back_to_three_only_after_the_interval_and_above_the_margin():
-    # under minimum + margin: stays
-    assert _decide(on=ONE, since=0.0, now=2000.0, potential=6.5)[0] == ONE
+    # under minimum + margin (6 + 2 A): stays
+    assert _decide(on=ONE, since=0.0, now=2000.0, potential=7.5)[0] == ONE
     # enough, but within 10 minutes of the last change: stays, and says when
     phases, _, reason = _decide(on=ONE, since=900.0, now=1000.0, potential=9.0)
     assert phases == ONE and "back to three in 9 min" in reason
     # enough and the interval is over
     assert _decide(on=ONE, since=0.0, now=601.0, potential=9.0)[:2] == (THREE, 601.0)
+
+
+def test_back_to_three_only_once_the_margin_held_five_minutes():
+    # interval long over, but above the margin only for 2 minutes: stays, says when
+    phases, _, reason = _decide(on=ONE, since=0.0, now=5000.0, potential=8.0, above_s=120.0)
+    assert phases == ONE and "back to three in 3 min" in reason
+    assert _decide(on=ONE, since=0.0, now=5000.0, potential=8.0, above_s=300.0)[:2] == (THREE, 5000.0)
 
 
 def test_held_keeps_the_phase_count():
