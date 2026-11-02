@@ -143,7 +143,9 @@ class LoadJugglerPrioritiesCard extends HTMLElement {
     const arrow = (dir, enabled) => `<button class="arrow" data-move="${dir}" data-entity="${esc(r.entity)}"
         ${enabled && !busy ? "" : "disabled"} title="${dir === "up" ? "Move up (served sooner)" : "Move down (served later)"}">${dir === "up" ? "▲" : "▼"}</button>`;
     return `<div class="row ${off ? "off" : ""}">
-      <span class="badge" title="Effective priority ${r.eff ?? "–"}: the order this load is served in right now, after its mode's urgency tier and its configured priority.">${r.eff ?? "–"}</span>
+      <span class="badge" title="Effective priority ${r.eff ?? "–"}: the order this load is served in right now.
+It depends on the mode the load is in: a more urgent mode is served first whatever the configured priority, which only decides within a mode's tier.
+E.g. a boiler keeping its normal temperature goes before an EVSE in Solar Only, but surplus that is left over (Excess) goes to the EVSE before the boiler boosts.">${r.eff ?? "–"}</span>
       <div class="main">
         <div class="line">
           <a class="name" data-device="${esc(r.device)}" title="Settings">${running ? "⚡ " : ""}${esc(r.name)}</a>
