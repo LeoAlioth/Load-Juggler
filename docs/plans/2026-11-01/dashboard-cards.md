@@ -9,10 +9,13 @@ dashboard sections that needed `config-template-card`, `plotly-graph` and helper
 
 - Plain JavaScript custom elements, no build step and no dependencies, one file
   per card under the integration's `frontend/` folder.
-- Each integration serves its file and loads it on every dashboard itself
-  (`StaticPathConfig` + `add_extra_js_url`, the URL carries a hash of the file
-  so a new build replaces a cached one) - no dashboard resource to add by hand.
-  Load Insights already does this for `load-insights-card.js`.
+- Each integration serves its file and keeps it a dashboard resource itself
+  (`StaticPathConfig` + a Lovelace resource of type module, created or updated
+  at setup; the URL carries a hash of the file so a new build replaces a cached
+  one) - no dashboard resource to add by hand. Not `add_extra_js_url`: HA's
+  frontend (2026.10) installs a custom-element registry polyfill after those
+  modules run and forgets what they defined (2026-11-02). With dashboard
+  resources kept in YAML, the integration logs the URL to add by hand.
 - Options are edited in the card's visual editor through `getConfigForm`
   (HA's schema form), so no editor element is written by hand.
 - Theme variables only (`--primary-text-color`, `--divider-color`, ...), and HA's

@@ -151,8 +151,9 @@ custom_components/dynamic_ocpp_evse/
 │   ├── freshness.py               # Pure producer-freshness predicate behind every sensor's `available`
 │   └── mixins.py                  # LoadJugglerEntity base + device mixins + SiteFreshnessMixin /
 │                                  #   SiteCycleConsumerMixin (push readers) / SiteCycleWorkerMixin (async per-cycle actuators)
-├── frontend/                      # Dashboard cards, plain JS, served and loaded by __init__._register_card (no resource
-│   │                              #   to add): load-juggler-priorities-card.js - lanes by urgency tier (Effective Priority
+├── frontend/                      # Dashboard cards, plain JS, served by __init__._register_card and kept a Lovelace resource
+│   │                              #   by _ensure_lovelace_resource (never add_extra_js_url - HA 2026.10's registry polyfill
+│   │                              #   forgets what those define): load-juggler-priorities-card.js - lanes by urgency tier (Effective Priority
 │   │                              #   sensor's urgency_tier), draw / allowance, the move_priority arrows, a popup of the
 │   │                              #   load's entities (spec docs/plans/2026-11-01/dashboard-cards.md)
 ├── detection_patterns.py          # Per-brand entity-naming patterns for grid CT auto-detection (GRID_CT, brand
