@@ -450,6 +450,7 @@ pytest run as everything else. The one local way to run it is the uv venv in `de
 
 - `docs/live-sites.md`: the live sites, their settings that differ from defaults, and measured behaviour (dated). Read it before interpreting live behaviour.
 - `docs/design-decisions.md`: deliberate behaviour that looks like a bug (solar modes, Solar Only from the battery above target, config flag meaning).
+- `docs/reference.md`: what the README leaves out - Variable Load, off-grid, several inverters, the battery and PV clipping forecast, every setting, services, troubleshooting. The README stays a short front page (2026-11-02): put new detail there, not in the README.
 - Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
 - Distribution Modes Guide: `DISTRIBUTION_MODES_GUIDE.md`
 - Release notes: `RELEASE_NOTES.md`
