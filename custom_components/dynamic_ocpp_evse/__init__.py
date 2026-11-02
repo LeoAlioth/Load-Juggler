@@ -465,14 +465,36 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
 CARD_URL = "/dynamic_ocpp_evse/load-juggler-priorities-card.js"
 
 
+async def _ensure_lovelace_resource(hass: HomeAssistant, url: str) -> None:
+    """Keep one Lovelace resource (a module) for ``url``, its ``?v=`` hash updated to this build's.
+
+    A resource, not frontend.add_extra_js_url: HA's frontend (2026.10) swaps in a scoped custom-element
+    registry polyfill after the extra modules have run, and forgets what they defined ("Custom element
+    doesn't exist"); resources load after it, like every HACS card (2026-11-02). A copy of Load
+    Insights' - change both."""
+    from homeassistant.components.lovelace.const import LOVELACE_DATA
+
+    data = hass.data.get(LOVELACE_DATA)
+    if data is None or data.resource_mode != "storage":
+        _LOGGER.warning("Dashboard resources are kept in YAML - add %s (type module) by hand", url)
+        return
+    resources = data.resources
+    await resources.async_get_info()  # loads the stored list before it is read
+    base = url.split("?")[0]
+    mine = [item for item in resources.async_items() if item.get("url", "").split("?")[0] == base]
+    if not mine:
+        await resources.async_create_item({"res_type": "module", "url": url})
+    elif mine[0]["url"] != url or mine[0].get("type") != "module":
+        await resources.async_update_item(mine[0]["id"], {"res_type": "module", "url": url})
+
+
 async def _register_card(hass: HomeAssistant) -> None:
-    """Serve the Priorities card and load it on every dashboard, so it needs no
+    """Serve the Priorities card and keep it a dashboard resource, so it needs no
     resource added by hand (docs/plans/2026-11-01/dashboard-cards.md). Its URL
     carries a hash of the file: a new build's card replaces a cached one."""
     import hashlib
     from pathlib import Path
 
-    from homeassistant.components.frontend import add_extra_js_url
     from homeassistant.components.http import StaticPathConfig
 
     if hass.http is None:  # no web server (tests)
@@ -480,7 +502,7 @@ async def _register_card(hass: HomeAssistant) -> None:
     path = Path(__file__).parent / "frontend" / "load-juggler-priorities-card.js"
     digest = await hass.async_add_executor_job(lambda: hashlib.sha1(path.read_bytes()).hexdigest()[:10])
     await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(path), False)])
-    add_extra_js_url(hass, f"{CARD_URL}?v={digest}")
+    await _ensure_lovelace_resource(hass, f"{CARD_URL}?v={digest}")
 
 
 async def async_setup(hass: HomeAssistant, config: dict):
