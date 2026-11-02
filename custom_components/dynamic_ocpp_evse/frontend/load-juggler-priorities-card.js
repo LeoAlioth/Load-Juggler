@@ -143,13 +143,13 @@ class LoadJugglerPrioritiesCard extends HTMLElement {
     const arrow = (dir, enabled) => `<button class="arrow" data-move="${dir}" data-entity="${esc(r.entity)}"
         ${enabled && !busy ? "" : "disabled"} title="${dir === "up" ? "Move up (served sooner)" : "Move down (served later)"}">${dir === "up" ? "▲" : "▼"}</button>`;
     return `<div class="row ${off ? "off" : ""}">
-      <span class="badge">${r.eff ?? "–"}</span>
+      <span class="badge" title="Effective priority ${r.eff ?? "–"}: the order this load is served in right now, after its mode's urgency tier and its configured priority.">${r.eff ?? "–"}</span>
       <div class="main">
         <div class="line">
           <a class="name" data-device="${esc(r.device)}" title="Settings">${running ? "⚡ " : ""}${esc(r.name)}</a>
           <span class="val">${off ? `<span class="dim">not allowed</span>`
             : `<b class="${running ? "lit" : ""}">${drawTxt}</b><span class="dim"> / ${allowTxt} ${this._unit}</span>`}</span>
-          <span class="set">${arrow("up", r.conf > lo)}<span class="setn">set ${r.conf}</span>${arrow("down", r.conf < hi)}</span>
+          <span class="set">${arrow("up", r.conf > lo)}<span class="setn" title="Configured priority P${r.conf}: the place you gave this load among all loads. The arrows move it one place; within its urgency tier it decides who is served first.">P${r.conf}</span>${arrow("down", r.conf < hi)}</span>
         </div>
         <div class="bar"><div style="width:${pct}%"></div></div>
       </div></div>`;

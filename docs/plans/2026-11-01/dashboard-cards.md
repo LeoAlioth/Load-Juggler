@@ -45,7 +45,7 @@ priorities come out of it, and lets the owner reorder them.
     allowance is its configured power (Device Power / Element Power), since the
     raw permit is only a ceiling. An allowance of 0 dims the row and reads
     "not allowed",
-  - **up / down arrows around "set N"**, the configured priority.
+  - **up / down arrows around "PN"**, the configured priority (hover explains it, and the circle's effective priority).
 - **A / W switch** in the header (`unit: A` or `W` sets the start): watts use the
   site voltage the engine measured and the load's phase count; an on/off load's
   allowance in W is its configured power exactly.
