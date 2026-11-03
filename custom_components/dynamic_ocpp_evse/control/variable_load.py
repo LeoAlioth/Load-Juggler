@@ -13,6 +13,7 @@ import logging
 from ..calculations.variable_load import SINGLE, outputs, phase_advice, phase_value, setpoint
 from ..const import (
     CONF_VL_PHASE_ENTITY_ID,
+    EVSE_MODE_HOLD,
     RT_PHASE_SWITCH_AT,
     CONF_PHASE_VOLTAGE,
     CONF_VL_BIAS,
@@ -83,16 +84,21 @@ async def send_variable_load_command(
             advice_power = round(
                 min(potential, variable_load_amps(entry, voltage, len(legs))[1]) * voltage * len(legs)
             )
-        advice, reason, load_rt[VL_RT_ADVICE] = phase_advice(
-            advice_power,
-            load_rt.get(VL_RT_ADVICE),
-            now_mono,
-            get_entry_value(entry, CONF_VL_PHASE_MULTI_ABOVE, DEFAULT_VL_PHASE_MULTI_ABOVE),
-            get_entry_value(entry, CONF_VL_PHASE_SINGLE_BELOW, DEFAULT_VL_PHASE_SINGLE_BELOW),
-            60 * get_entry_value(entry, CONF_VL_PHASE_MIN_INTERVAL, DEFAULT_VL_PHASE_MIN_INTERVAL),
-        )
-        published.update(phase_advice=advice, phase_advice_reason=reason)
-        await _write_phase(sensor, load_rt, advice, now_mono)
+        if sensor._operating_mode == EVSE_MODE_HOLD.key and load_rt.get(VL_RT_ADVICE):
+            # Hold claims nothing, so there is no allowance to judge a phase
+            # count by: the advice stays as it was (GitHub issue 21).
+            published.update(phase_advice=load_rt[VL_RT_ADVICE][0], phase_advice_reason="held (Hold mode)")
+        else:
+            advice, reason, load_rt[VL_RT_ADVICE] = phase_advice(
+                advice_power,
+                load_rt.get(VL_RT_ADVICE),
+                now_mono,
+                get_entry_value(entry, CONF_VL_PHASE_MULTI_ABOVE, DEFAULT_VL_PHASE_MULTI_ABOVE),
+                get_entry_value(entry, CONF_VL_PHASE_SINGLE_BELOW, DEFAULT_VL_PHASE_SINGLE_BELOW),
+                60 * get_entry_value(entry, CONF_VL_PHASE_MIN_INTERVAL, DEFAULT_VL_PHASE_MIN_INTERVAL),
+            )
+            published.update(phase_advice=advice, phase_advice_reason=reason)
+            await _write_phase(sensor, load_rt, advice, now_mono)
     load_rt[VL_RT_OUTPUTS] = published
 
     target = get_entry_value(entry, CONF_VL_SETPOINT_ENTITY_ID, None)
