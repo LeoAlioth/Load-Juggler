@@ -29,7 +29,7 @@ from __future__ import annotations
 import itertools
 import os
 import re
-from typing import Dict, Mapping, Optional, Sequence
+from typing import Dict, Mapping, Optional, Sequence, Tuple
 
 # device_class -> our field prefix
 KIND_BY_DEVICE_CLASS = {
@@ -257,6 +257,88 @@ def phase_mapping(votes: Mapping[str, Mapping[str, float]], phases: Sequence[str
         if s > best_score:
             best, best_score = perm, s
     return dict(zip(channels, best))
+
+
+def voltage_votes(mine: Mapping[str, Sequence[Tuple[float, float]]],
+                  grid: Mapping[str, Sequence[Tuple[float, float]]],
+                  step_s: float = 10.0, hold_s: float = 60.0) -> Dict[str, Dict[str, float]]:
+    """Votes for ``phase_mapping`` from VOLTAGES: how well each of a device's
+    per-phase voltages tracks each of the grid meter's, as the correlation of
+    the two sampled every ``step_s`` (a reading held up to ``hold_s``).
+
+    A balanced three-phase inverter casts no vote by its steps - its ramps hit
+    every phase alike - but each phase's voltage wanders by its own volt or
+    two, and the device's reading of a conductor tracks the grid meter's
+    reading of the same conductor far better than the others'. Home's SE17K
+    against its M1 over two days: 0.98 on the matched pairs, 0.75 on the rest -
+    and the inverter's a and b are the meter's b and a (2026-10-23). Negative
+    correlations count as none."""
+    votes: Dict[str, Dict[str, float]] = {}
+    series = {("m", c): list(rows) for c, rows in mine.items()} | {("g", p): list(rows) for p, rows in grid.items()}
+    if not mine or not grid or not all(series.values()):
+        return votes
+    t0 = max(rows[0][0] for rows in series.values())
+    t1 = min(rows[-1][0] for rows in series.values())
+    if t1 <= t0:
+        return votes
+    grid_t = [t0 + k * step_s for k in range(int((t1 - t0) / step_s) + 1)]
+
+    def sampled(rows):
+        out, i = [], 0
+        for t in grid_t:
+            while i + 1 < len(rows) and rows[i + 1][0] <= t:
+                i += 1
+            out.append(rows[i][1] if rows[i][0] <= t <= rows[i][0] + hold_s else None)
+        return out
+
+    at = {k: sampled(rows) for k, rows in series.items()}
+    for c in mine:
+        votes[c] = {}
+        for p in grid:
+            pairs = [(x, y) for x, y in zip(at[("m", c)], at[("g", p)]) if x is not None and y is not None]
+            if len(pairs) < 3:
+                votes[c][p] = 0.0
+                continue
+            mx, my = sum(x for x, _ in pairs) / len(pairs), sum(y for _, y in pairs) / len(pairs)
+            sx = sum((x - mx) ** 2 for x, _ in pairs) ** 0.5
+            sy = sum((y - my) ** 2 for _, y in pairs) ** 0.5
+            r = sum((x - mx) * (y - my) for x, y in pairs) / (sx * sy) if sx and sy else 0.0
+            votes[c][p] = max(0.0, r)
+    return votes
+
+
+def share_split(total: Sequence[Tuple[float, float]], volts: Mapping[str, Sequence[Tuple[float, float]]],
+                amps: Mapping[str, Sequence[Tuple[float, float]]], mapping: Mapping[str, str],
+                phases: Sequence[str] = ("a", "b", "c")) -> Dict[str, list]:
+    """A three-phase device's one total split onto the grid's phases by each
+    of its phases' V x I share, each phase's current and voltage held forward
+    onto the total's stamps; ``mapping`` is the device's phase -> the grid's
+    (phase_mapping over voltage_votes). Thirds where a phase has no volts or
+    amps. The share carries the phase-voltage unbalance the third ignores: at
+    Home 6 W of the inverter's output at the median, 136 W at a 15 kW noon
+    (2026-10-23)."""
+    out: Dict[str, list] = {p: [] for p in phases}
+    own = [c for c in mapping if c in volts and c in amps and volts[c] and amps[c]]
+    if len(own) < len(phases) or not total:
+        return {p: [(t, w / len(phases)) for t, w in total] for p in phases}
+    idx = {c: [0, 0] for c in own}
+
+    def held(rows, i, t):
+        while i + 1 < len(rows) and rows[i + 1][0] <= t:
+            i += 1
+        return rows[i][1] if rows[i][0] <= t else None, i
+
+    for t, w in total:
+        va = {}
+        for c in own:
+            v, idx[c][0] = held(volts[c], idx[c][0], t)
+            a, idx[c][1] = held(amps[c], idx[c][1], t)
+            va[c] = (v or 0.0) * (a or 0.0) if v is not None and a is not None else None
+        s = sum(x for x in va.values() if x) if all(x is not None for x in va.values()) else 0.0
+        for c in own:
+            share = va[c] / s if s > 0 else 1.0 / len(phases)
+            out[mapping[c]].append((t, w * share))
+    return out
 
 
 def support(votes: Mapping[str, Mapping[str, float]], mapping: Mapping[str, str]) -> float:
