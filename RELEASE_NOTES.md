@@ -15,7 +15,7 @@
 
 ### Bug Fixes
 
-- **A Variable Load's phase advice no longer turns to single in Hold**: held (or not connected, or not charging) its allowance is 0 A, and the advice read that as "single". It now reads what the load would be offered, so it resumes on all its legs when they have room (GitHub issue 21).
+- **A Variable Load's phase advice no longer turns to single in Hold**: held (or not connected, or not charging) its allowance is 0 A, and the advice read that as "single". Not connected or not charging, it now reads what the load would be offered, so it resumes on all its legs when they have room; in Hold the advice stays as it was, so a load resumes on the phase count it had (GitHub issue 21).
 
 - **A charger that is offline no longer keeps its share**: when a charger's connection to the ocpp integration drops, Home Assistant shows its status as *unavailable*, and Load Juggler counted that as a charger that may be charging - it kept allocating its full share to it, and the other loads got what was left. A second charger at a site with a 9.2 kW budget sat paused at 0.3 A with a car plugged in while the first, offline, held 13.3 A. An offline or unknown status now counts as not drawing, the same as *Available*.
 
