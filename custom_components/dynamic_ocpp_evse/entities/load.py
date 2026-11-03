@@ -51,7 +51,7 @@ from ..const import (
     EVSE_RT_READOUT_WATCH,
     EVSE_RT_COMMANDED_PHASES,
     LOAD_RT_SUN_PROBE,
-    VL_MODE_HOLD,
+    EVSE_MODE_HOLD,
     VL_RT_LEGS_GREW,
     VL_RT_SIZED_COUNT,
 )
@@ -535,8 +535,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         else:
             self._available_current = raw_permit
         if (
-            device_type == DEVICE_TYPE_VARIABLE_LOAD
-            and self._operating_mode == VL_MODE_HOLD.key
+            device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_VARIABLE_LOAD)
+            and self._operating_mode == EVSE_MODE_HOLD.key
         ):
             # Hold: nothing allowed. The engine claims nothing for it, but an
             # inactive load is still offered what is left over.

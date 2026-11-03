@@ -91,7 +91,7 @@ def _charger(hub, **options):
     )
 
 
-async def _run(hass, name, cycles, *, supported=True, house_b=None, status=None, **options):
+async def _run(hass, name, cycles, *, supported=True, house_b=None, status=None, mode=None, **options):
     """The charger drawing what it was told on the phases the engine put it
     on; ``house_b(i)`` / ``status(i)`` vary phase B's house and the connector."""
     hub = _hub(name)
@@ -112,7 +112,7 @@ async def _run(hass, name, cycles, *, supported=True, house_b=None, status=None,
 
     return await close_loop(
         hass, hub, entry, cycles, plant, at="2026-11-01 10:00:00+00:00",
-        load_data={EVSE_RT_PHASE_SUPPORTED: supported},
+        load_data={EVSE_RT_PHASE_SUPPORTED: supported, **({"operating_mode": mode} if mode else {})},
     ), entry
 
 
@@ -149,6 +149,26 @@ async def test_no_car_puts_it_back_on_three(hass):
     trace, _ = await _run(hass, "pswe", 30, status=lambda i: "Charging" if i < 15 else "Available")
     assert trace[10]["phases"] == 1
     assert trace[-1]["phases"] == 3
+
+
+async def test_hold_gives_the_charger_nothing_and_does_not_switch_it_to_one_phase(hass):
+    """Hold on an OCPP charger: its limit is 0 and it claims nothing, with phase
+    B free enough for three phases the whole time - and the 0 A is not read as
+    a reason to go to one phase (GitHub issue 21)."""
+    trace, _ = await _run(hass, "pswh", 60, house_b=lambda i: 2.0, mode="Hold")
+    assert all(r["permit"] == 0 for r in trace), [r["permit"] for r in trace][:10]
+    assert {r["phases"] for r in trace} == {3}
+
+
+def test_hold_is_a_mode_of_the_charger_and_the_variable_load_but_not_the_power_station():
+    from custom_components.dynamic_ocpp_evse.const import (
+        DEVICE_TYPE_EVSE, DEVICE_TYPE_POWER_STATION, DEVICE_TYPE_VARIABLE_LOAD,
+    )
+    from custom_components.dynamic_ocpp_evse.const.modes import modes_for
+
+    held = lambda device: "Hold" in [m.key for m in modes_for(device)[0]]  # noqa: E731
+    assert held(DEVICE_TYPE_EVSE) and held(DEVICE_TYPE_VARIABLE_LOAD)
+    assert not held(DEVICE_TYPE_POWER_STATION)
 
 
 def _sensor(hass, entry, rt):

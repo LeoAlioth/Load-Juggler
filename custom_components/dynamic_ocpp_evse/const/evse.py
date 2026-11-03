@@ -142,10 +142,18 @@ EVSE_MODE_EXCESS = OperatingMode(
     key="Excess", label="Excess", priority=EXCESS_URGENCY_TIER, icon="mdi:solar-power-variant",
     behavior=BEHAVIOR_EXCESS,
 )
+# Hold: the limit goes to 0 (or the entity's own minimum when it cannot take 0)
+# and the load claims nothing. An OCPP charger and a Variable Load have it; a
+# power station shares the four modes above without it.
+EVSE_MODE_HOLD = OperatingMode(
+    key="Hold", label="Hold", priority=EXCESS_URGENCY_TIER, icon="mdi:pause-circle-outline",
+    behavior=BEHAVIOR_EXCESS,
+)
 OPERATING_MODES_EVSE = [
     EVSE_MODE_STANDARD,
     EVSE_MODE_SOLAR_PRIORITY,
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_EXCESS,
 ]
+OPERATING_MODES_EVSE_HOLD = [*OPERATING_MODES_EVSE, EVSE_MODE_HOLD]
 DEFAULT_OPERATING_MODE_EVSE = EVSE_MODE_STANDARD
