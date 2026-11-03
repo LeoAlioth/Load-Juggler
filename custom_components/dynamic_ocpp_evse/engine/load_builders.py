@@ -85,7 +85,7 @@ from ..const import (
     CONF_VL_CURRENT_L2_ENTITY_ID,
     CONF_VL_CURRENT_L3_ENTITY_ID,
     CONF_VL_POWER_ENTITY_ID,
-    VL_MODE_HOLD,
+    EVSE_MODE_HOLD,
     VL_RT_ALLOWED_A,
     VL_RT_LEGS_IN_USE,
     VL_RT_LEGS_GREW,
@@ -587,6 +587,7 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         excess_claim_current=(
             min_current
             if mode.behavior == BEHAVIOR_EXCESS
+            and mode.key != EVSE_MODE_HOLD.key
             and not is_inactive_status(connector_status)
             else 0.0
         ),
@@ -1509,7 +1510,7 @@ def _build_variable_load(hass, entry, voltage, load_entity_id, priority):
     # Only an explicit "off" gates: an unreadable sensor says nothing.
     if connected == "off":
         connector_status = "Available"
-    elif charging == "off" or mode.key == VL_MODE_HOLD.key:
+    elif charging == "off" or mode.key == EVSE_MODE_HOLD.key:
         connector_status = "Finishing"
     else:
         connector_status = "Charging"

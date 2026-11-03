@@ -11,6 +11,8 @@
 
 - **What a load is left at when Dynamic Control is turned off**: a new setting per load. An OCPP charger is held at *When Dynamic Control is off* - its maximum current unless set, as before; cleared, it gets no profile and keeps its last one until that runs out. A hot water tank or room thermostat is put once on its normal temperature (or its away or boost temperature, or left as it is), heating allowed, and then left to you. A Variable Load writes its fallback setpoint when Dynamic Control is turned off too, not only when the entry unloads. Smart loads and power stations are left as they are, as before.
 
+- **A Hold mode for the OCPP charger** (GitHub issue 21): the charger's mode list now has *Hold*, as a Variable Load already had. A held charger is given a 0 A limit and claims nothing from the site; its status reads *Hold*.
+
 ### Bug Fixes
 
 - **A Variable Load's phase advice no longer turns to single in Hold**: held (or not connected, or not charging) its allowance is 0 A, and the advice read that as "single". It now reads what the load would be offered, so it resumes on all its legs when they have room (GitHub issue 21).
