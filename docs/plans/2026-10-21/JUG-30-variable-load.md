@@ -47,9 +47,7 @@ connected / charging entities covers it.
 
 ## Testing
 
-Unit and closed-loop tests like the other loads (the rig in `dev/tests/closed_loop.py`). Live: the owner
-suggests the third site (Andrej's); only when there is a dev version and only on the owner's word. The
-reporter offered to test; **no reply on the issue until a dev version is ready** (owner, 2026-10-21).
+Unit and closed-loop tests like the other loads (the rig in `dev/tests/closed_loop.py`). Live: none on the owner's sites (decided 2026-10-21): the reporter of GitHub issue 21 tests the pre-release on his Alfen and reports back; the owner has told him on the issue that a pre-release follows. Andrej's chargers are not a target: both are already driven through OCPP, so a second writer or a second reading of the same draw would only disturb them.
 
 ## Open implementation points
 
