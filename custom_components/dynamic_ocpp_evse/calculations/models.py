@@ -150,6 +150,13 @@ class LoadContext:
     # "household_lockstep" | "reading_predates_limit", "since": UTC
     # datetime}``. Set by the HA layer.
     draw_estimate: dict | None = None
+    # A charger awaiting the first reading since its limit was raised is not
+    # raised further this cycle (engine/load_builders._await_new_reading): its
+    # allocation is trimmed to this AFTER the distribution, so the room it is
+    # about to climb into is kept, not handed to the loads ranked behind it
+    # (lowering max_current did that: the third site's Nova, priority 2, rose
+    # 6 -> 12.5 -> 6 A with every reading of Stara's, 2026-11-05). None = no hold.
+    raise_hold: float | None = None
 
     # The current this load will draw the moment the Excess verdict starts it -
     # its rating for a binary load (a plug in Excess mode, a tank whose mode

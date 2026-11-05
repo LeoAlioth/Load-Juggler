@@ -349,7 +349,9 @@ def _await_new_reading(load, watch, status, commanded, reported_at,
     # followed: in the closed loop the limit ran from 21.7 A to the car's
     # 32 A maximum and the grid 2 kW past its allowance before a reading
     # caught up. A cut is the car's own limit coming down, and stays allowed.
-    load.max_current = min(load.max_current, float(commanded))
+    # A trim after the distribution, not a lower maximum: the room stays the
+    # charger's rather than going to the loads ranked behind it.
+    load.raise_hold = float(commanded)
 
 
 def _assume(load, watch, assumed, evidence, since):

@@ -182,6 +182,12 @@ def calculate_all_load_targets(site: SiteContext) -> None:
         finally:
             site.loads = all_loads
             site.excess_potential_claims = ()
+        # A charger held at its limit until a new reading (LoadContext.raise_hold)
+        # keeps its share of the distribution, trimmed to that limit; the rest
+        # stays unused for that cycle instead of going down the ranking.
+        for load in active_loads:
+            if load.raise_hold is not None and load.allocated_current > load.raise_hold:
+                load.allocated_current = load.raise_hold
 
     site.pool_snapshot = _pool_snapshot(
         site, (physical_pool, solar_pool, excess_pool), pools_left,
