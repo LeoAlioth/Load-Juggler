@@ -2658,6 +2658,37 @@ async def test_charge_pause_cancelled_on_mode_change(
     )
 
 
+@pytest.mark.parametrize("how", ["reset", "back_from_fault"])
+async def test_a_reset_or_a_charger_back_from_faulted_ends_the_charge_pause(
+    hass, mock_hub_entry, mock_charger_entry, charger_sensor, mock_call, how,
+):
+    """Reset OCPP ends a charge pause, and so does the charger coming back from
+    Faulted: the third site's go-e, reset out of a fault while Load Juggler still
+    had it paused, came back on its own default, and the pause's 0 A was sent
+    again and stopped it 20 s later (2026-11-05). The shortage still decides
+    afresh: here it is on this cycle only, so nothing re-arms."""
+    from custom_components.dynamic_ocpp_evse.const import EVSE_RT_CLEAR_PAUSE
+
+    load_rt = hass.data[DOMAIN]["loads"][mock_charger_entry.entry_id]
+    load_rt["operating_mode"] = "Solar Only"
+    charger_sensor._had_runnable_permit = True
+    charger_sensor._short_last_cycle = True
+    status = charger_sensor._connector_status_entity
+    if how == "back_from_fault":
+        hass.states.async_set(status, "Faulted")
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._pause_started_at is not None
+
+    if how == "reset":
+        load_rt[EVSE_RT_CLEAR_PAUSE] = True
+    else:
+        hass.states.async_set(status, "Charging")
+    charger_sensor._short_last_cycle = False
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._pause_started_at is None
+    assert EVSE_RT_CLEAR_PAUSE not in load_rt
+
+
 async def test_charge_pause_remaining_seconds_attribute(
     hass,
     mock_hub_entry,

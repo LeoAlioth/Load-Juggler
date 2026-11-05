@@ -19,6 +19,8 @@
 
 - **A charger that is offline no longer keeps its share**: when a charger's connection to the ocpp integration drops, Home Assistant shows its status as *unavailable*, and Load Juggler counted that as a charger that may be charging - it kept allocating its full share to it, and the other loads got what was left. A second charger at a site with a 9.2 kW budget sat paused at 0.3 A with a car plugged in while the first, offline, held 13.3 A. An offline or unknown status now counts as not drawing, the same as *Available*.
 
+- **A reset ends a charge pause**: pressing *Reset OCPP* now ends a pause the charger is in, and so does a charger coming back from *Faulted*. A charger that faulted was given no allowance and so paused; when it came back - rebooted, on its own default current - Load Juggler saw it drawing during the pause and sent the pause's 0 A again, stopping it 20 seconds after it came back. Whether there is room for it is then decided afresh.
+
 - **A second charger no longer wanders up and down while the first one is raised**: after raising a charger, Load Juggler does not raise it further until the charger reports a new reading, since the car may still be climbing to the new limit. That hold lowered the charger's maximum for those seconds, so the distribution handed the room it was about to take to the next charger. In *Priority* mode with an import limit binding, the second charger went from 6 A to 12.5 A and back with every 30 s reading of the first, where it should have stayed at its 6 A minimum. The first charger now keeps its share while it waits: it is only held at its limit, and the room it is climbing into stays unused for those seconds instead of going down the order.
 
 ### Improvements

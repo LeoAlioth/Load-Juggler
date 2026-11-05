@@ -83,6 +83,7 @@ from .const import (
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
+    EVSE_RT_CLEAR_PAUSE,
     EVSE_RT_COMMANDED_LIMIT,
     MIGRATE_PLUG_SOLAR_ONLY_FLAG,
     modes_for,
@@ -592,6 +593,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         load_rt = hass.data.get(DOMAIN, {}).get("loads", {}).get(entry_id)
         if load_rt is not None:
             load_rt.pop(EVSE_RT_COMMANDED_LIMIT, None)
+            load_rt[EVSE_RT_CLEAR_PAUSE] = True   # a reset ends any charge pause
 
         script = Script(hass, sequence, "Reset OCPP EVSE", DOMAIN)
         await script.async_run(context=call.context)
