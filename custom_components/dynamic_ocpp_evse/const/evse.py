@@ -92,6 +92,12 @@ EVSE_DC_OFF_MAX = "max"
 # Per-charger option: switch between one and three phases when the charger can.
 CONF_PHASE_SWITCHING = "phase_switching"
 DEFAULT_PHASE_SWITCHING = True
+# Per-charger option: a charger that can switch is told its phase count
+# (numberPhases) on every profile. Off: no profile carries it, as before 2.1.7,
+# and phase switching cannot work (JUG-41: whether a 0 A with it is what faults
+# the third site's go-e; the owner, 2026-11-05).
+CONF_SEND_NUMBER_PHASES = "send_number_phases"
+DEFAULT_SEND_NUMBER_PHASES = True
 # The OCPP configuration key a charger answers "true" to when it can switch.
 OCPP_KEY_PHASE_SWITCH = "ConnectorSwitch3to1PhaseSupported"
 # No phase change with a car connected sooner than this after the last one, in

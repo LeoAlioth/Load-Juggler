@@ -45,6 +45,8 @@ from ..const import (
     CONF_CHARGER_L3_PHASE,
     CONF_PHASE_SWITCHING,
     DEFAULT_PHASE_SWITCHING,
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_CHARGE_CONTROL_INTERVAL,
@@ -1067,13 +1069,22 @@ def _charger_current_schema(
                 # Only a three-leg charger can switch; the engine also needs
                 # the charger to say it can (calculations/phase_switch.py).
                 *(
-                    [(
-                        vol.Required(
-                            CONF_PHASE_SWITCHING,
-                            default=defaults.get(CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING),
+                    [
+                        (
+                            vol.Required(
+                                CONF_PHASE_SWITCHING,
+                                default=defaults.get(CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING),
+                            ),
+                            bool,
                         ),
-                        bool,
-                    )]
+                        (
+                            vol.Required(
+                                CONF_SEND_NUMBER_PHASES,
+                                default=defaults.get(CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES),
+                            ),
+                            bool,
+                        ),
+                    ]
                     if hub_phases >= 3
                     else []
                 ),

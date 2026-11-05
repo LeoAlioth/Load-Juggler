@@ -38,6 +38,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PHASE_SWITCHING,
     CONF_PHASE_VOLTAGE,
+    CONF_SEND_NUMBER_PHASES,
     CONF_VL_PHASE_ENTITY_ID,
     DOMAIN,
     ENTRY_TYPE,
@@ -145,6 +146,30 @@ async def test_a_charger_that_cannot_switch_stays_on_three(hass):
 async def test_the_option_off_keeps_three(hass):
     trace, _ = await _run(hass, "pswd", 20, **{CONF_PHASE_SWITCHING: False})
     assert {r["phases"] for r in trace} == {3}
+
+
+async def test_no_phase_count_sent_keeps_three(hass):
+    """*Send the phase count* off: switching travels in numberPhases, so none."""
+    trace, _ = await _run(hass, "pswn", 20, **{CONF_SEND_NUMBER_PHASES: False})
+    assert {r["phases"] for r in trace} == {3}
+
+
+async def test_the_profile_carries_no_phase_count_with_the_option_off(hass):
+    """JUG-41: a 0 A (or any limit) without numberPhases, as 2.1.6 sent it."""
+    hub = _hub("pswo")
+    entry = _charger(hub, charge_rate_unit="A", **{CONF_SEND_NUMBER_PHASES: False})
+    calls = []
+
+    async def set_charge_rate(call):
+        calls.append(call.data["custom_profile"]["chargingSchedule"]["chargingSchedulePeriod"][0])
+
+    hass.services.async_register("ocpp", "set_charge_rate", set_charge_rate)
+    hass.states.async_set(STATUS, "Charging")
+    rt = {EVSE_RT_PHASE_SUPPORTED: True}
+    sensor = _sensor(hass, entry, rt)
+    for limit in (0.0, 10.0):
+        assert await send_ocpp_command(sensor, limit, hub, 50.0, effective_status="Charging")
+        assert calls[-1]["limit"] == limit and "numberPhases" not in calls[-1]
 
 
 async def test_no_car_puts_it_back_on_three(hass):
