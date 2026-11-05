@@ -107,6 +107,11 @@ PHASE_SWITCH_PAUSE_S = 60
 PHASE_SWITCH_PAUSE_MAX_S = 180
 # When the pause before a phase switch began (monotonic), None outside one.
 EVSE_RT_PHASE_PAUSE_AT = "phase_switch_pause_at"
+# Set by Reset OCPP: the load's next cycle drops any charge pause it is in (the
+# owner, 2026-11-05: a reset clears pauses). A charger back from Faulted drops
+# it too - its reboot lost the pause's 0 A, and re-sending it stopped the third
+# site's go-e again 20 s after it came back.
+EVSE_RT_CLEAR_PAUSE = "clear_pause"
 # Three phases again only when all three legs could take the minimum plus this
 # (A) without a break for PHASE_SWITCH_UP_HOLD_S (the owner, 2026-11-01).
 PHASE_SWITCH_UP_MARGIN = 2.0

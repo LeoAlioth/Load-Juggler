@@ -51,6 +51,7 @@ from ..const import (
     EVSE_RT_READOUT_WATCH,
     EVSE_RT_COMMANDED_PHASES,
     EVSE_RT_PHASE_PAUSE_AT,
+    EVSE_RT_CLEAR_PAUSE,
     LOAD_RT_SUN_PROBE,
     EVSE_MODE_HOLD,
     VL_RT_LEGS_GREW,
@@ -213,6 +214,9 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # the tz-aware values written later is a comparison landmine.
         self._last_update = None
         self._pause_started_at = None
+        # The connector status last seen (not unavailable), so a charger back
+        # from Faulted ends a charge pause - see _async_apply.
+        self._prev_connector_status = None
         # The pause whose 0 A profile reached the charger (its _pause_started_at),
         # so the rest of that pause sends nothing - see the EVSE command below -
         # and when that profile is due a refresh (monotonic).
@@ -437,6 +441,18 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
 
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode
+
+        # A reset (Reset OCPP) or a charger back from Faulted ends a charge pause:
+        # the reset cleared the pause's 0 A, a fault's reboot lost it, and re-sent
+        # it stopped the third site's go-e again 20 s after it came back (2026-11-05).
+        status_now = units.state_or_unknown(self.hass.states.get(self._connector_status_entity))
+        readable = not units.is_unavailable_state(status_now)
+        back_from_fault = readable and self._prev_connector_status == "Faulted" and status_now != "Faulted"
+        if (self._runtime().pop(EVSE_RT_CLEAR_PAUSE, False) or back_from_fault) and self._pause_started_at is not None:
+            _LOGGER.info("%s: charge pause ended by a reset", self._attr_name)
+            self._pause_started_at = None
+        if readable:
+            self._prev_connector_status = status_now
 
 
         # The site-level republish into hass.data is the hub coordinator's job
