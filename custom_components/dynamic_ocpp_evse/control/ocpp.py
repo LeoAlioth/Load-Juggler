@@ -19,9 +19,12 @@ from ..const import (
     EVSE_RT_COMMANDED_RATE_UNIT,
     EVSE_RT_COMMANDED_PHASES,
     EVSE_RT_PHASES,
+    EVSE_RT_PHASE_PAUSE_AT,
     EVSE_RT_PHASE_PROBE_AT,
     EVSE_RT_PHASE_SUPPORTED,
     OCPP_KEY_PHASE_SWITCH,
+    PHASE_SWITCH_PAUSE_MAX_S,
+    PHASE_SWITCH_PAUSE_S,
     PHASE_SWITCH_PROBE_RETRY_S,
     RT_PHASE_SWITCH_AT,
 )
@@ -53,6 +56,33 @@ def told_phases(load_rt) -> int | None:
     if load_rt.get(EVSE_RT_PHASE_SUPPORTED) is not True:
         return None
     return int(load_rt.get(EVSE_RT_PHASES, 3))
+
+
+def phase_pause_over(started: float, draw: float | None, now_mono: float) -> bool:
+    """Whether the pause before a phase change, begun at ``started``, has done
+    its job: PHASE_SWITCH_PAUSE_S held and the charger drawing under 1 A, or
+    PHASE_SWITCH_PAUSE_MAX_S held whatever it reports."""
+    paused = now_mono - started
+    return paused >= PHASE_SWITCH_PAUSE_MAX_S or (paused >= PHASE_SWITCH_PAUSE_S and (draw or 0.0) < 1.0)
+
+
+def phase_switch_pause(
+    load_rt, told: int | None, limit: float, draw: float | None, now_mono: float
+) -> tuple[float, int | None]:
+    """The ``(limit, numberPhases)`` to send while a phase change is due: a
+    charger that would draw is first held at 0 A on its old count for at least
+    PHASE_SWITCH_PAUSE_S and until it draws under 1 A (PHASE_SWITCH_PAUSE_MAX_S
+    at most), and only then told the new count - no switching under load (the
+    owner, 2026-11-05). A 0 A command needs no pause. Keeps its clock in
+    ``load_rt[EVSE_RT_PHASE_PAUSE_AT]``."""
+    commanded = load_rt.get(EVSE_RT_COMMANDED_PHASES, 3)
+    if told is None or told == commanded or limit <= 0:
+        load_rt.pop(EVSE_RT_PHASE_PAUSE_AT, None)
+        return limit, told
+    if phase_pause_over(load_rt.setdefault(EVSE_RT_PHASE_PAUSE_AT, now_mono), draw, now_mono):
+        load_rt.pop(EVSE_RT_PHASE_PAUSE_AT, None)
+        return limit, told
+    return 0.0, commanded
 
 
 def probe_phase_switching(sensor, now_mono: float) -> None:
@@ -91,6 +121,7 @@ async def send_ocpp_command(
     sensor, limit: float, hub_entry, now_mono: float,
     effective_status: str | None = None,
     hold_s: float | None = None,
+    draw: float | None = None,
 ) -> bool:
     """Send OCPP charging profile to an EVSE charger.
 
@@ -130,6 +161,28 @@ async def send_ocpp_command(
         )
         stamp_command(sensor, now_mono)
         return
+
+    # A charger that can switch is told its phase count on every profile, so
+    # one left on one phase (an option turned off, a restart) is put back.
+    # ``draw``: the charger's reported current (A, the engine's figure), which
+    # tells when the pause before a phase change has taken hold.
+    load_rt = sensor._runtime()
+    was_pausing = EVSE_RT_PHASE_PAUSE_AT in load_rt
+    paused_from = limit
+    limit, told = phase_switch_pause(load_rt, told_phases(load_rt), limit, draw, now_mono)
+    if limit != paused_from:
+        if was_pausing:
+            # Its 0 A went out when the pause began, valid for all of it; sent
+            # again it would restart a go-e's charging cycle.
+            stamp_command(sensor, now_mono)
+            return False
+        _LOGGER.info(
+            "%s: paused (0 A) before switching to %d phase(s)",
+            sensor._attr_name, told_phases(load_rt),
+        )
+        hold_s = max(hold_s or 0, PHASE_SWITCH_PAUSE_MAX_S)
+        # Compliance and the manual-change check stay quiet through the pause too.
+        load_rt[RT_PHASE_SWITCH_AT] = now_mono
 
     # ``hold_s``: a pause's 0 A stays valid that much longer (the rest of the
     # pause), so it is sent once - see entities/load.py. Returns whether the
@@ -173,10 +226,6 @@ async def send_ocpp_command(
                     "Could not detect charge rate unit for %s, defaulting to Amperes",
                     sensor._attr_name,
                 )
-
-    # A charger that can switch is told its phase count on every profile, so
-    # one left on one phase (an option turned off, a restart) is put back.
-    told = told_phases(sensor._runtime())
 
     if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
         # Options-first (get_entry_value): the hub reconfigure/options flow
@@ -295,6 +344,8 @@ async def send_ocpp_command(
         )
     except Exception as e:
         _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", sensor._attr_name, e)
+        if limit != paused_from:
+            load_rt.pop(EVSE_RT_PHASE_PAUSE_AT, None)   # the pause never reached it
         return
 
     # Recorded only after the command was actually sent successfully.
@@ -303,7 +354,6 @@ async def send_ocpp_command(
     # (engine/readout_watch.py) judges the charger's reported draw against the
     # limit it actually holds, and blind mode assumes exactly this figure. The
     # unit matters only for the tolerance a W-encoded profile is given.
-    load_rt = sensor._runtime()
     load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
     load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
     if told is not None:

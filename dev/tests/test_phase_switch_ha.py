@@ -44,6 +44,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_LOAD,
     EVSE_RT_COMMANDED_PHASES,
+    EVSE_RT_PHASE_PAUSE_AT,
     EVSE_RT_PHASE_SUPPORTED,
     EVSE_RT_PHASES,
     PHASE_SWITCH_SETTLE_S,
@@ -51,6 +52,7 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.control import manual_change
 from custom_components.dynamic_ocpp_evse.control.ocpp import (
+    phase_switch_pause,
     probe_phase_switching,
     send_ocpp_command,
 )
@@ -194,13 +196,42 @@ async def test_the_profile_carries_the_phase_count_and_marks_the_switch(hass):
     rt = {EVSE_RT_PHASE_SUPPORTED: True, EVSE_RT_PHASES: 1}
     sensor = _sensor(hass, entry, rt)
 
-    assert await send_ocpp_command(sensor, 10.0, hub, 50.0, effective_status="Charging")
-    assert calls[-1]["numberPhases"] == 1
-    assert rt[EVSE_RT_COMMANDED_PHASES] == 1 and rt[RT_PHASE_SWITCH_AT] == 50.0
+    # a drawing charger is first paused at 0 A on its old count ...
+    assert await send_ocpp_command(sensor, 10.0, hub, 50.0, effective_status="Charging", draw=30.0)
+    assert (calls[-1]["limit"], calls[-1]["numberPhases"]) == (0.0, 3)
+    assert rt[EVSE_RT_COMMANDED_PHASES] == 3 and rt[RT_PHASE_SWITCH_AT] == 50.0
+    # valid for the longest pause on top of the usual validity, so sent once
+    # ... held for at least 60 s, even with the draw gone, sending nothing ...
+    assert not await send_ocpp_command(sensor, 10.0, hub, 100.0, effective_status="Charging", draw=0.0)
+    # ... and while it still draws (a reading not yet in) ...
+    assert not await send_ocpp_command(sensor, 10.0, hub, 120.0, effective_status="Charging", draw=29.0)
+    assert len(calls) == 1
+    # ... then the new count with the limit
+    assert await send_ocpp_command(sensor, 10.0, hub, 130.0, effective_status="Charging", draw=0.0)
+    assert (calls[-1]["limit"], calls[-1]["numberPhases"]) == (10.0, 1)
+    assert rt[EVSE_RT_COMMANDED_PHASES] == 1 and rt[RT_PHASE_SWITCH_AT] == 130.0
+    assert EVSE_RT_PHASE_PAUSE_AT not in rt
 
     rt[EVSE_RT_PHASE_SUPPORTED] = None   # not answered yet: no numberPhases
-    assert await send_ocpp_command(sensor, 10.0, hub, 60.0, effective_status="Charging")
+    assert await send_ocpp_command(sensor, 10.0, hub, 140.0, effective_status="Charging")
     assert "numberPhases" not in calls[-1]
+
+
+def test_the_pause_before_a_switch():
+    rt = {EVSE_RT_COMMANDED_PHASES: 3}
+    # nothing due, or a 0 A command anyway: no pause
+    assert phase_switch_pause(rt, 3, 10.0, 30.0, 0.0) == (10.0, 3)
+    assert phase_switch_pause(rt, 1, 0.0, 0.0, 0.0) == (0.0, 1)
+    assert EVSE_RT_PHASE_PAUSE_AT not in rt
+    # a reading that never drops: the new count after 180 s at the most
+    assert phase_switch_pause(rt, 1, 10.0, 30.0, 0.0) == (0.0, 3)
+    assert phase_switch_pause(rt, 1, 10.0, 30.0, 179.0) == (0.0, 3)
+    assert phase_switch_pause(rt, 1, 10.0, 30.0, 180.0) == (10.0, 1)
+    # the engine changes its mind during the pause: the pause ends, nothing switches
+    rt = {EVSE_RT_COMMANDED_PHASES: 3}
+    phase_switch_pause(rt, 1, 10.0, 30.0, 0.0)
+    assert phase_switch_pause(rt, 3, 10.0, 30.0, 10.0) == (10.0, 3)
+    assert EVSE_RT_PHASE_PAUSE_AT not in rt
 
 
 async def test_the_capability_is_read_once_in_the_background(hass):
@@ -263,11 +294,13 @@ async def test_the_variable_load_writes_its_phase_entity(hass):
     assert rt[RT_PHASE_SWITCH_AT] == 70.0
 
 
-async def test_a_phase_change_goes_out_at_once_and_three_restarts_at_the_minimum(hass):
+async def test_a_phase_change_pauses_first_and_three_restarts_at_the_minimum(hass):
     """The whole hub cycle - engine, load processor, OCPP call - with a 45 s
-    command slot: the profile with the new phase count does not wait for the
-    slot, and the way back to three ramps up from the 6 A minimum, never
-    starting at the 16 A one phase was allowed."""
+    command slot: a phase change first holds the charger at 0 A on its old
+    count (at once, not at the slot) and sends the new count 60 s later - not
+    at the slot, and with no profile in between; the way back to three, ten
+    minutes after the change, pauses the same way and ramps up from the 6 A
+    minimum, never starting at the 16 A one phase was allowed."""
     from custom_components.dynamic_ocpp_evse.const import CONF_UPDATE_FREQUENCY, EVSE_RT_COMMANDED_LIMIT
     from custom_components.dynamic_ocpp_evse.sensor import LoadJugglerDeviceSensor, async_run_hub_cycle
 
@@ -308,10 +341,15 @@ async def test_a_phase_change_goes_out_at_once_and_three_restarts_at_the_minimum
             await async_run_hub_cycle(hass, hub)
             clock.now += 2
 
+    # the first cycle: 0 A on three phases, nothing more until the pause is over
+    assert sent[0] == (10_000.0, 0.0, 3)
     ones = [s for s in sent if s[2] == 1]
-    assert ones and ones[0][0] == 10_000.0          # on the first cycle
+    assert ones and ones[0][0] == 10_060.0 and ones[0][1] > 0
+    assert [s for s in sent if 10_000.0 < s[0] < 10_060.0] == []
+    # back to three: the engine decides ten minutes after its change (10 600 s,
+    # no multiple of the 45 s slot), pauses on one phase, sends three 60 s later
+    assert (10_600.0, 0.0, 1) in sent
     back = next(s for s in sent if s[2] == 3 and s[0] > ones[0][0])
-    # on the very cycle ten minutes are up - 600 s is no multiple of the 45 s slot
-    assert back[0] == ones[0][0] + 600
+    assert back[0] == 10_660.0
     # one ramp step above the minimum at most, nowhere near one phase's 16 A
     assert 6.0 <= back[1] <= 9.0

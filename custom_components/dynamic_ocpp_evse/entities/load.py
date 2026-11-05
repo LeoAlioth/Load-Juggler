@@ -50,6 +50,7 @@ from ..const import (
     EVSE_MODE_SOLAR_PRIORITY,
     EVSE_RT_READOUT_WATCH,
     EVSE_RT_COMMANDED_PHASES,
+    EVSE_RT_PHASE_PAUSE_AT,
     LOAD_RT_SUN_PROBE,
     EVSE_MODE_HOLD,
     VL_RT_LEGS_GREW,
@@ -66,7 +67,7 @@ from ..control.smoothing import apply_smoothing, cut_now
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
 from ..control import stamp_command
-from ..control.ocpp import probe_phase_switching, send_ocpp_command, told_phases
+from ..control.ocpp import phase_pause_over, probe_phase_switching, send_ocpp_command, told_phases
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
@@ -509,7 +510,14 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             self._ema_current = self._schmitt_current = self._rate_limited_current = floor
             self._schmitt_state = "rising"
             self._short_last_cycle = True
-            self._last_command_time = -float("inf")
+            # During the pause before the switch (control/ocpp.phase_switch_pause)
+            # its 0 A went out on the first cycle; the next send waits for the
+            # pause to be over, not every 2-s cycle of it.
+            pause_at = self._runtime().get(EVSE_RT_PHASE_PAUSE_AT)
+            if pause_at is None or phase_pause_over(
+                pause_at, hub_data.get("load_draw", {}).get(self.config_entry.entry_id), time.monotonic()
+            ):
+                self._last_command_time = -float("inf")
             self._last_commanded_limit = None  # not the cut straight to the new permit
             _LOGGER.info(
                 "%s %s - restarting its allowance at %.1f A",
@@ -1026,6 +1034,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                     self.config_entry.entry_id
                 ),
                 hold_s=hold_s,
+                draw=hub_data.get("load_draw", {}).get(self.config_entry.entry_id),
             )
             if hold_s is not None and sent:
                 self._pause_sent_for = self._pause_started_at
