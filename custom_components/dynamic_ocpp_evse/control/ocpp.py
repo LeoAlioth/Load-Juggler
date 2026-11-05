@@ -2,6 +2,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from ..const import (
     CONF_OCPP_DEVICE_ID,
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
     CONF_OCPP_PROFILE_TIMEOUT,
     DEFAULT_OCPP_PROFILE_TIMEOUT,
     CONF_STACK_LEVEL,
@@ -49,11 +51,14 @@ async def read_charger_setting(hass, devid, key):
     return got.get("value") if isinstance(got, dict) else None
 
 
-def told_phases(load_rt) -> int | None:
+def told_phases(load_rt, entry) -> int | None:
     """The phase count a charger's profile carries (``numberPhases``): the
     engine's decision for a charger that reports it can switch, None for one
-    that does not (or has not answered yet) - its profile then carries none."""
-    if load_rt.get(EVSE_RT_PHASE_SUPPORTED) is not True:
+    that does not (or has not answered yet), or whose *Send the phase count*
+    option is off - its profile then carries none."""
+    if load_rt.get(EVSE_RT_PHASE_SUPPORTED) is not True or not get_entry_value(
+        entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES
+    ):
         return None
     return int(load_rt.get(EVSE_RT_PHASES, 3))
 
@@ -169,7 +174,9 @@ async def send_ocpp_command(
     load_rt = sensor._runtime()
     was_pausing = EVSE_RT_PHASE_PAUSE_AT in load_rt
     paused_from = limit
-    limit, told = phase_switch_pause(load_rt, told_phases(load_rt), limit, draw, now_mono)
+    limit, told = phase_switch_pause(
+        load_rt, told_phases(load_rt, sensor.config_entry), limit, draw, now_mono
+    )
     if limit != paused_from:
         if was_pausing:
             # Its 0 A went out when the pause began, valid for all of it; sent
@@ -178,7 +185,7 @@ async def send_ocpp_command(
             return False
         _LOGGER.info(
             "%s: paused (0 A) before switching to %d phase(s)",
-            sensor._attr_name, told_phases(load_rt),
+            sensor._attr_name, told_phases(load_rt, sensor.config_entry),
         )
         hold_s = max(hold_s or 0, PHASE_SWITCH_PAUSE_MAX_S)
         # Compliance and the manual-change check stay quiet through the pause too.

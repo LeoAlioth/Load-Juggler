@@ -33,6 +33,8 @@ from ..const import (
     EVSE_RT_PHASE_SUPPORTED,
     CONF_PHASE_SWITCHING,
     DEFAULT_PHASE_SWITCHING,
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
     LOAD_RT_SUN_PROBE,
     SG_RT_STATUS,
     VL_RT_OUTPUTS,
@@ -481,11 +483,12 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
             return {}
         rt = self._runtime()
         supported = rt.get(EVSE_RT_PHASE_SUPPORTED)
-        if not get_entry_value(self.config_entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING):
+        sends = bool(get_entry_value(self.config_entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES))
+        if not sends or not get_entry_value(self.config_entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING):
             state = "off"
         else:
             state = {True: "supported", False: "not supported"}.get(supported, "not asked yet")
-        attrs = {"phase_switching": state}
+        attrs = {"phase_switching": state, "phase_count_sent": sends and supported is True}
         if state == "supported":
             attrs["phases_in_use"] = rt.get(EVSE_RT_PHASES, 3)
             attrs["phase_switch_reason"] = rt.get(EVSE_RT_PHASES_REASON)

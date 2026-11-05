@@ -107,6 +107,8 @@ from ..const import (
     EVSE_RT_COMMANDED_PHASES,
     CONF_PHASE_SWITCHING,
     DEFAULT_PHASE_SWITCHING,
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
     LEG_DRAWING_CURRENT,
     SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
@@ -546,6 +548,8 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         phases == THREE
         and load_rt.get(EVSE_RT_PHASE_SUPPORTED) is True
         and bool(get_entry_value(entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING))
+        # Switching travels in the profile's phase count: without it, none.
+        and bool(get_entry_value(entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES))
     )
     if not switchable and load_rt.get(EVSE_RT_PHASES) == ONE:
         load_rt[EVSE_RT_PHASES] = THREE

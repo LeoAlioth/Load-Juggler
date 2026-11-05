@@ -502,7 +502,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         phase_due = False
         if device_type == DEVICE_TYPE_EVSE:
             probe_phase_switching(self, time.monotonic())
-            told = told_phases(self._runtime())
+            told = told_phases(self._runtime(), self.config_entry)
             phase_due = told is not None and told != self._runtime().get(
                 EVSE_RT_COMMANDED_PHASES, 3
             )
