@@ -99,9 +99,9 @@ def test_three_kept_when_one_phase_does_not_reach_the_minimum_either():
 def test_back_to_three_only_after_the_interval_and_above_the_margin():
     # under minimum + margin (6 + 2 A): stays
     assert _decide(on=ONE, since=0.0, now=2000.0, potential=7.5)[0] == ONE
-    # enough, but within 10 minutes of the last change: stays, and says when
+    # enough, but within 10 minutes of the last change: stays, and says why
     phases, _, reason = _decide(on=ONE, since=900.0, now=1000.0, potential=9.0)
-    assert phases == ONE and "back to three in 9 min" in reason
+    assert phases == ONE and "last change 2 min ago" in reason
     # enough and the interval is over
     assert _decide(on=ONE, since=0.0, now=601.0, potential=9.0)[:2] == (THREE, 601.0)
 
@@ -114,13 +114,27 @@ def test_back_to_three_only_once_the_margin_held_five_minutes():
 
 
 def test_not_charging_resumes_on_three_when_three_reach_the_minimum():
-    # paused on one phase, three would get 6.5 A: back to three at once - no hold, no interval
-    phases, since, reason = _decide(on=ONE, since=900.0, now=1000.0, potential=6.5, above_s=0.0, resumable=True)
+    # paused on one phase, three would get 6.5 A: back to three without the hold
+    phases, since, reason = _decide(on=ONE, since=0.0, now=1000.0, potential=6.5, above_s=0.0, resumable=True)
     assert (phases, since) == (THREE, 1000.0) and "resumes on three" in reason
     # three would not reach the minimum: stays on one (no flip-flop while paused for lack of room)
-    assert _decide(on=ONE, since=900.0, potential=5.0, resumable=True)[0] == ONE
-    # charging: the hold and the interval still apply
-    assert _decide(on=ONE, since=900.0, now=1000.0, potential=9.0, resumable=False)[0] == ONE
+    assert _decide(on=ONE, since=0.0, potential=5.0, resumable=True)[0] == ONE
+    # charging: the hold still applies
+    assert _decide(on=ONE, since=0.0, now=1000.0, potential=9.0, above_s=0.0, resumable=False)[0] == ONE
+
+
+def test_the_chargers_own_stop_for_a_switch_does_not_switch_it_back():
+    """The third site's go-e, 2026-11-05 18:00: put on one phase at 18:00:01,
+    it stopped to switch (SuspendedEVSE, so "not charging") and three phases
+    would have got 7.4 A - it was switched back at 18:00:05. Within the
+    interval nothing changes, in either direction."""
+    phases, since, reason = _decide(on=ONE, since=996.0, now=1000.0, potential=7.4, resumable=True)
+    assert (phases, since) == (ONE, 996.0) and "phase count kept" in reason
+    # nor straight back to one after a return to three (18:01:33, 90 s later)
+    assert _decide(on=THREE, since=910.0, now=1000.0, permit=0.0, single_permit=lambda: 16.0)[:2] == (THREE, 910.0)
+    # once the interval is over both directions work again
+    assert _decide(on=ONE, since=399.0, now=1000.0, potential=7.4, resumable=True)[0] == THREE
+    assert _decide(on=THREE, since=399.0, now=1000.0, permit=0.0, single_permit=lambda: 16.0)[0] == ONE
 
 
 def test_held_keeps_the_phase_count():
@@ -128,9 +142,11 @@ def test_held_keeps_the_phase_count():
     assert _decide(on=THREE, held=True, permit=0.0, single_permit=lambda: 16.0)[0] == THREE
 
 
-def test_no_car_goes_back_to_three():
-    assert _decide(on=ONE, since=5.0, connected=False)[:2] == (THREE, 1000.0)
+def test_no_car_goes_back_to_three_without_holding_up_the_next_session():
+    assert _decide(on=ONE, since=5.0, connected=False)[:2] == (THREE, 5.0)
     assert _decide(on=THREE, since=5.0, connected=False)[:2] == (THREE, 5.0)
+    # unplugged within the interval: still back to three (nothing draws)
+    assert _decide(on=ONE, since=990.0, connected=False)[0] == THREE
 
 
 @pytest.mark.parametrize("phases, mask, potential", [(ONE, "A", "ABC"), (THREE, "ABC", "")])

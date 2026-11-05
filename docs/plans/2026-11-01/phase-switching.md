@@ -26,10 +26,17 @@ during Hold, and do not take the charger's 0 A dip during a switch for a manual 
 - **Back to three:** when the load's current on all three legs (its potential, `_set_potential_current`) reaches
   the minimum plus `PHASE_SWITCH_UP_MARGIN` (2 A) and stays there without a break for `PHASE_SWITCH_UP_HOLD_S`
   (5 min) - the owner, 2026-11-01, so a site sitting at the edge does not bounce.
-- **Spacing:** a change back to three waits `PHASE_SWITCH_INTERVAL_S` (10 min) since the last change. A change to
-  one phase that saves a pause goes at once - waiting would be the pause it exists to avoid. So at most one
-  round trip per 10 minutes.
-- **Mid-session:** allowed. The go-e interrupts charging for a few seconds by itself.
+- **Spacing (changed 2026-11-05):** with a car connected no change comes within `PHASE_SWITCH_INTERVAL_S` (10 min)
+  of the last one, in either direction, the "not charging - resumes on three" rule included. The first version let
+  a change to one phase go at once and let a charger that was not charging return to three at once; the go-e's own
+  stop for a switch (SuspendedEVSE) read as "not charging", and the third site's charger was switched 3 -> 1 -> 3
+  within 2-8 s, three times in two minutes (2026-11-05 18:00-18:02). The owner: switching that quickly must never
+  happen. No car: back to three at once, `since` kept.
+- **Mid-session (changed 2026-11-05):** allowed, but never under load. `control/ocpp.phase_switch_pause` holds a
+  drawing charger at 0 A on its old count (sent once, valid for `PHASE_SWITCH_PAUSE_MAX_S` on top of the usual
+  validity) for at least `PHASE_SWITCH_PAUSE_S` (60 s) and until it draws under 1 A, at most
+  `PHASE_SWITCH_PAUSE_MAX_S` (180 s), then sends the new `numberPhases` with the limit. Vendors do the same:
+  myenergi waits 90 s, Easee pauses and starts a new session, the go-e itself stops ~35 s to switch.
 - **Held:** Dynamic Control off, or a connector status that is not drawing (`is_inactive_status`, which includes
   the SuspendedEV idle rewrite to Finishing): the phase count stays as it is. No car (Available): back to three,
   so a new session starts on three.
@@ -52,8 +59,9 @@ during Hold, and do not take the charger's 0 A dip during a switch for a manual 
    does not answer; cached in the runtime bucket (`EVSE_RT_PHASE_SUPPORTED`).
 5. **Command** - `control/ocpp.py`: a charger that supports switching gets `numberPhases` (1 or 3) in its schedule
    period on every profile, so a charger left on one phase by a disabled option or a restart is put back. A W
-   profile is encoded with that phase count. A change goes out at once (the command slot is skipped, as for a
-   cut), and the permit pipeline restarts from the minimum - the Variable Load's "legs grew" reset, now for both.
+   profile is encoded with that phase count. A change starts its pause at once (the command slot is skipped, as for
+   a cut) and the new count goes out the cycle the pause is over, not at the slot; the permit pipeline restarts
+   from the minimum - the Variable Load's "legs grew" reset, now for both.
 6. **Settling** - after a phase change (`RT_PHASE_SWITCH_AT`): the readout watch counts the change as a command
    that moved the limit (`track_commands` keys on limit and phases), so the reading taken before it is replaced by
    the assumed draw on the new legs until a newer one arrives; compliance does not judge for
