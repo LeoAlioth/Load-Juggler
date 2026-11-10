@@ -372,8 +372,13 @@ def _check_entity_availability(hass, hub_entry, members) -> list:
         ("Base consumption sensor", CONF_BASE_CONSUMPTION_ENTITY_ID),
         ("Pacing energy sensor", CONF_PACING_ENERGY_ENTITY_ID),
         ("Pacing horizon sensor", CONF_PACING_HORIZON_ENTITY_ID),
-        ("Next full charge sensor", CONF_FORECAST_EXCESS_FULL_ENTITY_ID),
     ))
+    # Unknown is an answer for this one, not a dropout: the forecast never
+    # reaches a full pack (_no_full_in_sight), and the early start is simply
+    # off. Unavailable still warns.
+    full = get_entry_value(hub_entry, CONF_FORECAST_EXCESS_FULL_ENTITY_ID, None)
+    if full and units.is_unavailable(hass.states.get(full)) and not _no_full_in_sight(hass.states.get(full)):
+        unavailable.append(("Next full charge sensor", full))
     # Per-inverter entries: their output and battery sensors feed the fleet
     # aggregation, which fails open member-by-member - the status sensor is
     # where a dropout becomes visible, named per inverter.
@@ -920,6 +925,13 @@ def _read_pacing(hass, hub_entry, hub_runtime, now: datetime | None = None):
     return energy, max((horizon - now).total_seconds() / 3600.0, 0.0)
 
 
+def _no_full_in_sight(state) -> bool:
+    """A next-full-charge sensor that is up but has no time: Load Insights' Next
+    full charge reads unknown when its forecast never reaches a full pack
+    (2026-11-10; it was unavailable, and the hub status took that for a dropout)."""
+    return units.is_unknown(state)
+
+
 def _read_full_hours(hass, hub_entry, hub_runtime, pacing, now: datetime | None = None):
     """Hours until the battery is next full by the forecast, 0 once that time has
     passed - what the early-start rule counts back from
@@ -927,13 +939,19 @@ def _read_full_hours(hass, hub_entry, hub_runtime, pacing, now: datetime | None 
 
     The ``next full charge`` entity's timestamp; the pacing horizon's hours stand
     in while it is not configured (``pacing`` is ``_read_pacing``'s pair). None -
-    the early start is off - when it is configured but unreadable past
+    the early start is off - when it reads unknown (the forecast never gets the
+    pack full, _no_full_in_sight), or when it is configured but unreadable past
     INPUT_STALE_TIMEOUT, like the pacing entities.
     """
     entity = get_entry_value(hub_entry, CONF_FORECAST_EXCESS_FULL_ENTITY_ID, None)
     if not entity:
         return pacing[1] if pacing is not None else None
     held = hub_runtime.setdefault("_full_hold", {})
+    if _no_full_in_sight(hass.states.get(entity)):
+        # the forecast never gets the pack full: no early start, and nothing to hold
+        held.pop("full", None)
+        hub_runtime.setdefault("_input_stale_since", {}).pop("full", None)
+        return None
     value = _stale_guard(hub_runtime, held, "full", _read_horizon(hass, entity), None)
     if value is _UNAVAILABLE:  # a dropout inside the stale timeout: hold
         value = held.get("full")
