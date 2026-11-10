@@ -100,11 +100,14 @@ CONF_SEND_NUMBER_PHASES = "send_number_phases"
 DEFAULT_SEND_NUMBER_PHASES = True
 # The OCPP configuration key a charger answers "true" to when it can switch.
 OCPP_KEY_PHASE_SWITCH = "ConnectorSwitch3to1PhaseSupported"
-# No phase change with a car connected sooner than this after the last one, in
-# either direction (the owner, 2026-11-05: on 2026-11-05 the third site's go-e
-# was switched to one phase and back within 2-8 s, three times in two minutes,
-# because its own stop for the switch read as "not charging").
-PHASE_SWITCH_INTERVAL_S = 600
+# Per-charger option: no phase change with a car connected sooner than this
+# many minutes after the last one, in either direction (the owner, 2026-11-05:
+# on 2026-11-05 the third site's go-e was switched to one phase and back within
+# 2-8 s, three times in two minutes, because its own stop for the switch read
+# as "not charging"). A fixed 10 min until 2026-11-10, then an option, 15 by
+# default (the owner).
+CONF_PHASE_SWITCH_INTERVAL = "phase_switch_interval"
+DEFAULT_PHASE_SWITCH_INTERVAL = 15
 # A charger that draws is paused (0 A, its old phase count) before its new
 # phase count goes out: at least PHASE_SWITCH_PAUSE_S, until it draws under
 # 1 A, but no longer than PHASE_SWITCH_PAUSE_MAX_S (a reading that never comes)

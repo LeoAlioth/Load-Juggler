@@ -105,6 +105,8 @@ from ..const import (
     EVSE_RT_PHASES,
     EVSE_RT_PHASE_SUPPORTED,
     EVSE_RT_COMMANDED_PHASES,
+    CONF_PHASE_SWITCH_INTERVAL,
+    DEFAULT_PHASE_SWITCH_INTERVAL,
     CONF_PHASE_SWITCHING,
     DEFAULT_PHASE_SWITCHING,
     CONF_SEND_NUMBER_PHASES,
@@ -601,6 +603,9 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
         phase_switchable=switchable,
+        phase_switch_interval_s=60.0 * float(
+            get_entry_value(entry, CONF_PHASE_SWITCH_INTERVAL, DEFAULT_PHASE_SWITCH_INTERVAL)
+        ),
     )
     if on_one:
         load.potential_phases_mask = full_mask(load)

@@ -217,6 +217,8 @@ class LoadContext:
     # capability and its option is on) - read by the engine's phase-switching
     # step (calculations/phase_switch.py), never by the distribution.
     phase_switchable: bool = False
+    # With a car connected, no phase change sooner than this after the last (s).
+    phase_switch_interval_s: float = 900.0
 
     @property
     def reports_idle(self) -> bool:
