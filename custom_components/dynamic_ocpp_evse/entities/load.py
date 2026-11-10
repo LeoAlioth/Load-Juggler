@@ -213,6 +213,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # None (not datetime.min) until the first one - a naive sentinel next to
         # the tz-aware values written later is a comparison landmine.
         self._last_update = None
+        # (available, state, attributes but last_update) as last written - see async_process
+        self._last_written = None
         self._pause_started_at = None
         # The connector status last seen (not unavailable), so a charger back
         # from Faulted ends a charge pause - see _async_apply.
@@ -383,9 +385,19 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             )
         # Polling is off and there is no coordinator listener, so this is the
         # one place the entity's state reaches HA. Skipped before the entity is
-        # registered (a hub tick can precede HA adding the entity).
+        # registered (a hub tick can precede HA adding the entity). Written only
+        # when something besides last_update changed: the stamp moves every
+        # cycle, so every cycle was a new state - at Home three idle loads at 0 A
+        # wrote ~1 kB each every 5-10 s, each a new attributes row in the
+        # recorder (2026-11-10). Availability is compared too, so a load that
+        # stops being processed still turns unavailable.
         if self.hass is not None and self.entity_id:
-            self.async_write_ha_state()
+            attrs = dict(self.extra_state_attributes)
+            attrs.pop("last_update", None)
+            seen = (self.available, self._state, attrs)
+            if seen != self._last_written:
+                self._last_written = seen
+                self.async_write_ha_state()
 
     async def _async_apply(self, hub_data):
         """The body of async_process - see its docstring."""
