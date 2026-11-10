@@ -26,7 +26,7 @@ during Hold, and do not take the charger's 0 A dip during a switch for a manual 
 - **Back to three:** when the load's current on all three legs (its potential, `_set_potential_current`) reaches
   the minimum plus `PHASE_SWITCH_UP_MARGIN` (2 A) and stays there without a break for `PHASE_SWITCH_UP_HOLD_S`
   (5 min) - the owner, 2026-11-01, so a site sitting at the edge does not bounce.
-- **Spacing (changed 2026-11-05):** with a car connected no change comes within `PHASE_SWITCH_INTERVAL_S` (10 min)
+- **Spacing (changed 2026-11-05):** with a car connected no change comes within the charger's *Minimum time between phase changes* (`phase_switch_interval`, 15 min by default; a fixed 10 min until 2026-11-10)
   of the last one, in either direction, the "not charging - resumes on three" rule included. The first version let
   a change to one phase go at once and let a charger that was not charging return to three at once; the go-e's own
   stop for a switch (SuspendedEVSE) read as "not charging", and the third site's charger was switched 3 -> 1 -> 3

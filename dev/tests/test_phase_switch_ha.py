@@ -36,6 +36,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_A_CURRENT_ENTITY_ID,
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
+    CONF_PHASE_SWITCH_INTERVAL,
     CONF_PHASE_SWITCHING,
     CONF_PHASE_VOLTAGE,
     CONF_SEND_NUMBER_PHASES,
@@ -127,14 +128,22 @@ async def test_one_phase_instead_of_a_pause_when_phase_b_is_full(hass):
     assert min(r["i"] for r in trace if r["phases"] == 1) < 5
 
 
-async def test_back_to_three_only_after_ten_minutes(hass):
+async def test_back_to_three_only_after_fifteen_minutes(hass):
     # phase B frees at cycle 30 (60 s): three would fit, but the switch to one
-    # was made at the start, so three waits for ten minutes after it
-    trace, _ = await _run(hass, "pswb", 340, house_b=lambda i: 16.0 if i < 30 else 2.0)
+    # was made at the start, so three waits for fifteen minutes after it
+    trace, _ = await _run(hass, "pswb", 490, house_b=lambda i: 16.0 if i < 30 else 2.0)
     first_one = min(r["i"] for r in trace if r["phases"] == 1)
     back = min(r["i"] for r in trace if r["i"] > first_one and r["phases"] == 3)
-    assert (back - first_one) * 2 >= 600
+    assert (back - first_one) * 2 >= 900
     assert trace[-1]["permit"] >= 6
+
+
+async def test_the_minimum_time_between_changes_is_the_chargers_option(hass):
+    trace, _ = await _run(hass, "pswi", 340, house_b=lambda i: 16.0 if i < 30 else 2.0,
+                          **{CONF_PHASE_SWITCH_INTERVAL: 5})
+    first_one = min(r["i"] for r in trace if r["phases"] == 1)
+    back = min(r["i"] for r in trace if r["i"] > first_one and r["phases"] == 3)
+    assert 300 <= (back - first_one) * 2 < 900
 
 
 async def test_a_charger_that_cannot_switch_stays_on_three(hass):
@@ -361,7 +370,7 @@ async def test_a_phase_change_pauses_first_and_three_restarts_at_the_minimum(has
         hass.states.async_set(f"sensor.{SLUG}_current", f"{draw:.2f}", AMPS)
 
     with clocked(accept) as clock:
-        for i in range(400):
+        for i in range(550):
             world(16.0 if i < 20 else 2.0)
             await async_run_hub_cycle(hass, hub)
             clock.now += 2
@@ -371,10 +380,10 @@ async def test_a_phase_change_pauses_first_and_three_restarts_at_the_minimum(has
     ones = [s for s in sent if s[2] == 1]
     assert ones and ones[0][0] == 10_060.0 and ones[0][1] > 0
     assert [s for s in sent if 10_000.0 < s[0] < 10_060.0] == []
-    # back to three: the engine decides ten minutes after its change (10 600 s,
-    # no multiple of the 45 s slot), pauses on one phase, sends three 60 s later
-    assert (10_600.0, 0.0, 1) in sent
+    # back to three: the engine decides fifteen minutes after its change
+    # (10 900 s), pauses on one phase, sends three 60 s later
+    assert (10_900.0, 0.0, 1) in sent
     back = next(s for s in sent if s[2] == 3 and s[0] > ones[0][0])
-    assert back[0] == 10_660.0
+    assert back[0] == 10_960.0
     # one ramp step above the minimum at most, nowhere near one phase's 16 A
     assert 6.0 <= back[1] <= 9.0

@@ -125,7 +125,6 @@ from ..const import (
     EVSE_RT_PHASES_ABOVE_AT,
     EVSE_RT_PHASES_REASON,
     EVSE_RT_PHASES_SINCE,
-    PHASE_SWITCH_INTERVAL_S,
     PHASE_SWITCH_UP_HOLD_S,
     PHASE_SWITCH_UP_MARGIN,
     DOMAIN,
@@ -1590,7 +1589,7 @@ def _apply_phase_switching(hass, site, now):
             margin=PHASE_SWITCH_UP_MARGIN,
             above_s=now - above_at,
             hold_s=PHASE_SWITCH_UP_HOLD_S,
-            interval_s=PHASE_SWITCH_INTERVAL_S,
+            interval_s=load.phase_switch_interval_s,
             resumable=load.dynamic_control and status != "Charging",
         )
         rt[EVSE_RT_PHASES_SINCE] = since
