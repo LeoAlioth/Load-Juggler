@@ -666,7 +666,6 @@
                             "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
                             "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
-                            "phase_switching": "Preklop na eno fazo namesto premora",
                             "phase_switch_interval": "Najkrajši čas med menjavama faz",
                             "send_number_phases": "Pošlji število faz v profilu polnjenja"
                         },
@@ -674,7 +673,6 @@
                             "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
                             "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
-                            "phase_switching": "Kadar tri faze ne dosežejo minimalnega toka, ena pa ga, polnilna postaja polni na L1 namesto premora in se vrne na tri faze, ko je na vseh treh dovolj prostora (najprej po spodnjem najkrajšem času od zadnje menjave). Le za polnilno postajo, ki sporoča, da preklop podpira (ConnectorSwitch3to1PhaseSupported); senzor Phase Mask pokaže, ali ga.",
                             "phase_switch_interval": "Ko je avto priključen, se število faz v tem času spremeni največ enkrat, v katero koli smer: polnilna postaja se za preklop ustavi, vsak preklop pa obremeni njen kontaktor.",
                             "send_number_phases": "Polnilna postaja, ki preklop podpira, v vsakem profilu polnjenja dobi število faz (numberPhases), zato se tista, ki je ostala na eni fazi, vrne na tri. Izklopljeno: profili števila faz ne nosijo, kot pred 2.1.7, in preklop faz ne deluje."
                         }
@@ -1707,7 +1705,6 @@
                             "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
                             "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
-                            "phase_switching": "Preklop na eno fazo namesto premora",
                             "phase_switch_interval": "Najkrajši čas med menjavama faz",
                             "send_number_phases": "Pošlji število faz v profilu polnjenja"
                         },
@@ -1715,7 +1712,6 @@
                             "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
                             "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
-                            "phase_switching": "Kadar tri faze ne dosežejo minimalnega toka, ena pa ga, polnilna postaja polni na L1 namesto premora in se vrne na tri faze, ko je na vseh treh dovolj prostora (najprej po spodnjem najkrajšem času od zadnje menjave). Le za polnilno postajo, ki sporoča, da preklop podpira (ConnectorSwitch3to1PhaseSupported); senzor Phase Mask pokaže, ali ga.",
                             "phase_switch_interval": "Ko je avto priključen, se število faz v tem času spremeni največ enkrat, v katero koli smer: polnilna postaja se za preklop ustavi, vsak preklop pa obremeni njen kontaktor.",
                             "send_number_phases": "Polnilna postaja, ki preklop podpira, v vsakem profilu polnjenja dobi število faz (numberPhases), zato se tista, ki je ostala na eni fazi, vrne na tri. Izklopljeno: profili števila faz ne nosijo, kot pred 2.1.7, in preklop faz ne deluje."
                         }

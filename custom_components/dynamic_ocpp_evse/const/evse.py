@@ -89,9 +89,22 @@ EVSE_RT_COMMANDED_PHASES = "commanded_phases"
 CONF_EVSE_DC_OFF_CURRENT = "dynamic_control_off_current"
 EVSE_DC_OFF_MAX = "max"
 
-# Per-charger option: switch between one and three phases when the charger can.
+# Phase switching is the charger's Phase Switching select (select.py), published
+# into the runtime as EVSE_RT_PHASE_MODE: Auto (switch to one phase instead of a
+# pause), Three phases (never switch), One phase (always on its L1). The stored
+# option below was the Configure checkbox before 2.1.7; it only seeds the
+# select's first value (on: Auto, off: Three phases).
 CONF_PHASE_SWITCHING = "phase_switching"
 DEFAULT_PHASE_SWITCHING = True
+EVSE_RT_PHASE_MODE = "phase_mode"
+PHASE_MODE_AUTO = "Auto"
+PHASE_MODE_THREE = "Three phases"
+PHASE_MODE_ONE = "One phase"
+PHASE_MODES = [PHASE_MODE_AUTO, PHASE_MODE_THREE, PHASE_MODE_ONE]
+# When the charger last went to one phase (ISO, UTC) and how many times it has:
+# the Last Switch to One Phase sensor shows and restores them.
+EVSE_RT_ONE_PHASE_AT = "one_phase_at"
+EVSE_RT_ONE_PHASE_COUNT = "one_phase_count"
 # Per-charger option: a charger that can switch is told its phase count
 # (numberPhases) on every profile. Off: no profile carries it, as before 2.1.7,
 # and phase switching cannot work (JUG-41: whether a 0 A with it is what faults

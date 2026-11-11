@@ -107,8 +107,7 @@ from ..const import (
     EVSE_RT_COMMANDED_PHASES,
     CONF_PHASE_SWITCH_INTERVAL,
     DEFAULT_PHASE_SWITCH_INTERVAL,
-    CONF_PHASE_SWITCHING,
-    DEFAULT_PHASE_SWITCHING,
+    PHASE_MODE_THREE,
     CONF_SEND_NUMBER_PHASES,
     DEFAULT_SEND_NUMBER_PHASES,
     LEG_DRAWING_CURRENT,
@@ -136,7 +135,7 @@ from ..const import (
 )
 from ..calculations import sg_ready
 from ..calculations.variable_load import sized_legs as vl_sized_legs
-from ..helpers import get_entry_value, stored_legs, variable_load_amps
+from ..helpers import get_entry_value, phase_mode, stored_legs, variable_load_amps
 from ..ocpp_discovery import ocpp_connector_status_entity
 from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
@@ -541,15 +540,15 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     phases = int(get_entry_value(entry, CONF_PHASES, None) or len(legs) or 1)
 
     # Phase switching (calculations/phase_switch.py): a three-leg charger that
-    # reports the capability, with its option on. On one phase it is built as a
-    # one-phase load on L1 - its draw spread over that leg, its mask L1's site
-    # phase - with what its three legs could take as its potential. Not
-    # switchable any more (option off, capability gone), it is put back on three
-    # and the next profile says so.
+    # reports the capability, its Phase Switching select not on Three phases. On
+    # one phase it is built as a one-phase load on L1 - its draw spread over that
+    # leg, its mask L1's site phase - with what its three legs could take as its
+    # potential. Not switchable any more (Three phases, capability gone), it is
+    # put back on three and the next profile says so.
     switchable = (
         phases == THREE
         and load_rt.get(EVSE_RT_PHASE_SUPPORTED) is True
-        and bool(get_entry_value(entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING))
+        and phase_mode(entry, load_rt) != PHASE_MODE_THREE
         # Switching travels in the profile's phase count: without it, none.
         and bool(get_entry_value(entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES))
     )

@@ -5,6 +5,8 @@ from homeassistant.core import HomeAssistant, callback
 from datetime import timedelta
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from .const import (
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
     CONF_BATTERY_SOC_ENTITY_ID,
     CONF_CHARGE_LIMIT_ENTITY_ID,
     CONF_DEVICE_TYPE,
@@ -49,6 +51,7 @@ from .entities.load_sensors import (
     LoadJugglerDeviceStatusSensor,
     LoadJugglerEffectivePrioritySensor,
     LoadJugglerPhaseMaskSensor,
+    LoadJugglerOnePhaseSensor,
     LoadJugglerPlugStatusSensor,
     LoadJugglerSgReadyStatusSensor,
     LoadJugglerStationStatusSensor,
@@ -390,6 +393,11 @@ async def async_setup_entry(
         entities.append(
             LoadJugglerPhaseMaskSensor(hass, config_entry, hub_entry, name, entity_id)
         )
+        # Beside the Phase Switching select (select.py): only where it can switch.
+        if get_entry_value(config_entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES):
+            entities.append(
+                LoadJugglerOnePhaseSensor(hass, config_entry, hub_entry, name, entity_id)
+            )
 
     # A variable load publishes its allowance (JUG-30). Per-leg figures and the
     # phase advice only with more than one leg: on one they say nothing more.

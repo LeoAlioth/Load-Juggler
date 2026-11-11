@@ -59,7 +59,7 @@ _VARIABLE_LOAD = [
 
 _CHARGER_CURRENT = [
     ("current", ("evse_minimum_charge_current", "evse_maximum_charge_current", "dynamic_control_off_current"), False),
-    ("phases", ("charger_l1_phase", "charger_l2_phase", "charger_l3_phase", "phase_switching", "phase_switch_interval", "send_number_phases"), False),
+    ("phases", ("charger_l1_phase", "charger_l2_phase", "charger_l3_phase", "phase_switch_interval", "send_number_phases"), False),
 ]
 
 _CHARGER_TIMING = [
