@@ -46,6 +46,8 @@ from ..const import (
     CONF_SEND_NUMBER_PHASES,
     DEFAULT_SEND_NUMBER_PHASES,
     CONF_PHASE_SWITCH_INTERVAL,
+    CONF_PHASE_SWITCH_UP_MARGIN,
+    DEFAULT_PHASE_SWITCH_UP_MARGIN,
     DEFAULT_PHASE_SWITCH_INTERVAL,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_CONTROL_DEADBAND_W,
@@ -1074,6 +1076,10 @@ def _charger_current_schema(
                         _num(
                             CONF_PHASE_SWITCH_INTERVAL, defaults, DEFAULT_PHASE_SWITCH_INTERVAL,
                             1, 120, 1, "min", required=True,
+                        ),
+                        _num(
+                            CONF_PHASE_SWITCH_UP_MARGIN, defaults, DEFAULT_PHASE_SWITCH_UP_MARGIN,
+                            0, 5000, 1000, "W", required=True,
                         ),
                         (
                             vol.Required(

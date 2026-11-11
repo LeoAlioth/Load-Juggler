@@ -4,7 +4,8 @@ A three-leg charger that can switch runs on three phases whenever three reach
 its minimum, and on one phase (its L1) only when three would pause it and one
 would not - three at the minimum always deliver more than one at the maximum,
 so "more power" and "avoid a pause" are the same rule. Back to three once all
-three legs could take the minimum plus a margin for a hold time. With a car
+three legs could take the minimum and three would give at least a margin (W, per
+charger) more than one phase gets now, for a hold time. With a car
 connected no change comes sooner than an interval after the last one, in either
 direction: a charger stops to switch, and that stop must not read as a reason to
 switch back (the owner, 2026-11-05). Design and the owner's answers:
@@ -49,6 +50,18 @@ def single_phase_permit(site: SiteContext, load_id: str) -> float:
     return load.available_current
 
 
+def three_phase_gain_w(potential: float, permit: float, voltage: float) -> float:
+    """What three phases at ``potential`` A each would give more than one phase
+    at ``permit`` A (W)."""
+    return (THREE * potential - permit) * voltage
+
+
+def three_beats_one(potential: float, min_current: float, gain_w: float, margin_w: float) -> bool:
+    """Three phases are worth going back to: every leg at the minimum or more,
+    and at least ``margin_w`` more power than one phase gets now."""
+    return potential >= min_current and gain_w >= margin_w
+
+
 def decide(
     on: int,
     since: float,
@@ -60,7 +73,8 @@ def decide(
     min_current: float,
     single_permit,
     potential: float,
-    margin: float,
+    gain_w: float,
+    margin_w: float,
     above_s: float,
     hold_s: float,
     interval_s: float,
@@ -74,8 +88,9 @@ def decide(
     off or its status draws nothing - the count stays; ``permit``: what it got
     on ``on`` phases; ``single_permit``: a callable giving what it would get on
     one (called only when three would pause it); ``potential``: per leg on all
-    three while it runs on one; ``above_s``: how long ``potential`` has stayed
-    at or above the minimum plus ``margin`` (the caller keeps the clock);
+    three while it runs on one; ``gain_w``: what three would give more than one
+    phase gets now (``three_phase_gain_w``); ``above_s``: how long
+    ``three_beats_one`` has held (the caller keeps the clock);
     ``resumable``: Dynamic Control on and the charger not charging (paused, the
     car pausing, not started, finishing) - on one phase it goes back to three
     without the hold when three would reach the minimum, so the next charge
@@ -117,9 +132,11 @@ def decide(
                 f"one phase gets {single:.1f} A"
             )
         return THREE, since, f"neither reaches {min_current:.1f} A (one phase: {single:.1f} A)"
-    need = min_current + margin
-    if potential < need:
-        return ONE, since, f"three phases would get {potential:.1f} A, under {need:.1f} A"
+    if potential < min_current or gain_w < margin_w:
+        return ONE, since, (
+            f"three phases would get {potential:.1f} A each, {gain_w:+.0f} W against one phase, "
+            f"under the {margin_w:.0f} W margin"
+        )
     left = hold_s - above_s
     if left > 0:
         return ONE, since, (

@@ -130,7 +130,6 @@ from ..const import (
     EVSE_RT_ONE_PHASE_COUNT,
     PHASE_MODE_ONE,
     PHASE_SWITCH_UP_HOLD_S,
-    PHASE_SWITCH_UP_MARGIN,
     DOMAIN,
     GRID_STALE_TIMEOUT,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
@@ -1575,7 +1574,10 @@ def _apply_phase_switching(hass, site, now):
             continue
         on = rt.get(EVSE_RT_PHASES, phase_switch.THREE)
         status = load.connector_status
-        if on == phase_switch.ONE and load.potential_current >= load.min_current + PHASE_SWITCH_UP_MARGIN:
+        gain_w = phase_switch.three_phase_gain_w(load.potential_current, load.available_current, site.voltage)
+        if on == phase_switch.ONE and phase_switch.three_beats_one(
+            load.potential_current, load.min_current, gain_w, load.phase_switch_up_margin_w
+        ):
             above_at = rt.setdefault(EVSE_RT_PHASES_ABOVE_AT, now)
         else:
             rt.pop(EVSE_RT_PHASES_ABOVE_AT, None)
@@ -1590,7 +1592,8 @@ def _apply_phase_switching(hass, site, now):
             min_current=load.min_current,
             single_permit=lambda load_id=load.load_id: phase_switch.single_phase_permit(site, load_id),
             potential=load.potential_current,
-            margin=PHASE_SWITCH_UP_MARGIN,
+            gain_w=gain_w,
+            margin_w=load.phase_switch_up_margin_w,
             above_s=now - above_at,
             hold_s=PHASE_SWITCH_UP_HOLD_S,
             interval_s=load.phase_switch_interval_s,
