@@ -164,6 +164,9 @@ One entry per inverter - everything physically attached to it, including its PV 
 | Min/Max charge current | Charger operating range (A) | 6A / 16A |
 | Priority | Distribution priority (1=highest) | 1 |
 | L1/L2/L3 phase mapping | Which site phase each charger leg uses. L1 is required; leave L2/L3 empty for a 1- or 2-phase charger. Two legs cannot share a phase | A/B/C |
+| Minimum time between phase changes | Three-phase chargers that can switch: with a car connected the phase count changes at most once in this time, in either direction (minutes) | 15 |
+| Extra power needed to go back to three phases | On one phase, back to three only when three would give at least this much more power than one phase gets now, every leg at its minimum, for 5 minutes (W, 100 W steps) | 1000 |
+| Send the phase count in charging profiles | Profiles carry `numberPhases`. Off: as before 2.1.7, and phase switching cannot work | On |
 | Charge rate unit | Amps or Watts (auto-detected) | Auto |
 | Profile validity mode | Absolute (timestamp) or Relative (duration) | Absolute |
 | OCPP profile timeout | Profile validity duration (seconds) | 120 |
@@ -179,6 +182,10 @@ One entry per inverter - everything physically attached to it, including its PV 
 | Restart if it stops drawing | Power-cycles the plug - off for 30 s, then on - once it has drawn under 10 W for *Restart after* while Load Juggler wants it on and its switch is on: for a device behind the plug that cuts out on its own (an EV charger on over-temperature) and stays off with the relay on. Only a load that drew lately (at least a tenth of its usual draw - the absorption rate sensor, else the set power - in the 30 minutes before) is restarted; the restarts then back off to 1, 3, 6, 12 and 24 hours apart, staying at 24, until the load draws again for 5 minutes or the setting is toggled. The Status sensor shows *Restarted (no draw 10 min)* and a `restart_count` attribute. Needs the power monitoring entity | Off |
 | Restart after | How long the plug must draw under 10 W before it is restarted (minutes) | 10 |
 | Priority | Distribution priority (1=highest) | 1 |
+
+### Phase switching (three-phase OCPP chargers)
+
+A three-phase charger that answers `true` to `ConnectorSwitch3to1PhaseSupported` (a go-eCharger V4 does) gets a **Phase Switching** select: *Auto* charges on one phase (its L1) when three phases would pause it and one would not, and goes back to three as the setting above says; *Three phases* never switches; *One phase* always charges on L1 (with a car on three phases it still waits out the minimum time). The select is unavailable until the charger has said it can switch. The **Last Switch to One Phase** sensor shows when it last went to one phase (unknown: never), its `switches` attribute how many times, and the **Phase Mask** sensor's `phase_switching`, `phases_in_use` and `phase_switch_reason` attributes say what it is doing and why. The charger is held at 0 A for at least 60 s before a switch. Details and the reasoning: [CHARGE_MODES_GUIDE.md](../CHARGE_MODES_GUIDE.md).
 
 ## Services & Automations
 
