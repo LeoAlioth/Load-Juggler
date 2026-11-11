@@ -280,3 +280,69 @@ scenarios:
         allocated: 0   # Finishing → 0
       load_3:
         allocated: 16  # Priority 3: 32-16=16A remaining, gets 16A max
+
+  # ========== A charger gone offline: Home Assistant's lower-case "unavailable" ==========
+  # Andrej's site, 2026-11-01: the old charger's ocpp sensors read "unavailable"
+  # (lower case, as Home Assistant writes an offline entity), which the engine
+  # did not count as inactive - it kept its whole share and the second charger,
+  # car plugged in, got 0.3 A. Offline must free the capacity like Finishing.
+
+  - name: "offline-higher-prio-charger-frees-its-share"
+    description: "Higher priority charger offline (lower-case unavailable) - lower priority gets full capacity"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 3.0
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        connector_status: "unavailable"
+      - entity_id: "load_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      load_1:
+        allocated: 0   # offline -> inactive -> 0
+      load_2:
+        allocated: 16  # the whole 22 A free, capped at 16 A max
+
+  - name: "unknown-higher-prio-charger-frees-its-share"
+    description: "Higher priority charger with a lower-case unknown status - lower priority gets full capacity"
+    human_verified: false
+    site:
+      voltage: 230
+      main_breaker_rating: 25
+      max_import_power: 5750
+      distribution_mode: priority
+      solar_production: 0
+      phase_a_consumption: 3.0
+    loads:
+      - entity_id: "load_1"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 1
+        connector_status: "unknown"
+      - entity_id: "load_2"
+        operating_mode: "Standard"
+        min_current: 6
+        max_current: 16
+        phases: 1
+        priority: 2
+    expected:
+      load_1:
+        allocated: 0
+      load_2:
+        allocated: 16

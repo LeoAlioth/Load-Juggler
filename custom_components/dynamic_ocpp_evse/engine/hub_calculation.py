@@ -34,13 +34,18 @@ from ..calculations.outage_window import (
     precharge_window,
 )
 from ..calculations.pacing import pace_watts
-from ..calculations.models import INACTIVE_STATUSES
+from ..calculations.models import is_inactive_status
+from ..calculations import phase_switch
 from homeassistant.util import dt as dt_util
 
 from ..const import (
     BEHAVIOR_BINARY_EXCESS,
     BEHAVIOR_EXCESS,
     CONF_AUTO_DETECT_PHASE_MAPPING,
+    CONF_CHARGER_L1_PHASE,
+    CONF_CHARGER_L2_PHASE,
+    CONF_CHARGER_L3_PHASE,
+    CONF_DEVICE_TYPE,
     CONF_BATTERY_SOC_HYSTERESIS,
     CONF_BATTERY_SOC_FREEZE_FLOOR,
     CONF_BINARY_MIN_OFF_TIME,
@@ -116,6 +121,15 @@ from ..const import (
     SG_RT_MEMORY,
     SG_RT_NORMAL_DRAW,
     SG_RT_STATUS,
+    EVSE_RT_PHASES,
+    EVSE_RT_PHASES_ABOVE_AT,
+    EVSE_RT_PHASES_REASON,
+    EVSE_RT_PHASES_SINCE,
+    EVSE_RT_PHASE_MODE,
+    EVSE_RT_ONE_PHASE_AT,
+    EVSE_RT_ONE_PHASE_COUNT,
+    PHASE_MODE_ONE,
+    PHASE_SWITCH_UP_HOLD_S,
     DOMAIN,
     GRID_STALE_TIMEOUT,
     HOUSEHOLD_HOLD_BRIDGE_SECONDS,
@@ -130,7 +144,7 @@ from ..calculations.utils import (
     household_per_phase,
     managed_phase_draws,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, stored_legs
 from ..registry import get_inverters_for_hub
 from .. import units
 from .auto_detect import check_inversion, check_phase_mapping
@@ -1366,7 +1380,7 @@ def _apply_sun_probe(hass, hub_entry, hub_runtime, site):
             and not load.unmetered
             and (
                 load.device_type == DEVICE_TYPE_PLUG
-                or load.connector_status not in INACTIVE_STATUSES
+                or not is_inactive_status(load.connector_status)
             )
             and max(load.get_site_phase_draw()) < load.max_current - DEAD_BAND
         ),
@@ -1545,6 +1559,61 @@ def _apply_sg_ready(hass, hub_runtime, site, excess_on, now):
     return out
 
 
+def _apply_phase_switching(hass, site, now):
+    """Put each switchable charger on one or three phases (calculations/
+    phase_switch.decide) and, when any changed, run the calculation again so
+    this cycle's permits, pools and circuit groups are all on the new count.
+    The figures worked out earlier in the cycle (the Excess latch, the forecast
+    early start, catch-up) see the old count for this one cycle. State lives in
+    each load's runtime bucket; the builder reads it next cycle."""
+    loads_rt = hass.data[DOMAIN].get("loads", {})
+    changed = False
+    for load in site.loads:
+        rt = loads_rt.get(load.load_id)
+        if not load.phase_switchable or rt is None:
+            continue
+        on = rt.get(EVSE_RT_PHASES, phase_switch.THREE)
+        status = load.connector_status
+        gain_w = phase_switch.three_phase_gain_w(load.potential_current, load.available_current, site.voltage)
+        if on == phase_switch.ONE and phase_switch.three_beats_one(
+            load.potential_current, load.min_current, gain_w, load.phase_switch_up_margin_w
+        ):
+            above_at = rt.setdefault(EVSE_RT_PHASES_ABOVE_AT, now)
+        else:
+            rt.pop(EVSE_RT_PHASES_ABOVE_AT, None)
+            above_at = now
+        phases, since, reason = phase_switch.decide(
+            on,
+            rt.get(EVSE_RT_PHASES_SINCE, -math.inf),
+            now,
+            connected=not (status == "Available" or units.is_unavailable_state(status)),
+            held=not load.dynamic_control or is_inactive_status(status),
+            permit=load.available_current,
+            min_current=load.min_current,
+            single_permit=lambda load_id=load.load_id: phase_switch.single_phase_permit(site, load_id),
+            potential=load.potential_current,
+            gain_w=gain_w,
+            margin_w=load.phase_switch_up_margin_w,
+            above_s=now - above_at,
+            hold_s=PHASE_SWITCH_UP_HOLD_S,
+            interval_s=load.phase_switch_interval_s,
+            resumable=load.dynamic_control and status != "Charging",
+            forced_one=rt.get(EVSE_RT_PHASE_MODE) == PHASE_MODE_ONE,
+        )
+        rt[EVSE_RT_PHASES_SINCE] = since
+        rt[EVSE_RT_PHASES_REASON] = reason
+        if phases != on:
+            _LOGGER.info("%s: %d -> %d phase(s) - %s", load.entity_id, on, phases, reason)
+            rt[EVSE_RT_PHASES] = phases
+            if phases == phase_switch.ONE:
+                rt[EVSE_RT_ONE_PHASE_AT] = dt_util.utcnow().isoformat()
+                rt[EVSE_RT_ONE_PHASE_COUNT] = rt.get(EVSE_RT_ONE_PHASE_COUNT, 0) + 1
+            phase_switch.set_phases(load, phases)
+            changed = True
+    if changed:
+        calculate_all_load_targets(site)
+
+
 def _apply_grid_stale_fallback(site, grid_stale_duration):
     """Override the calculated permits once the grid CTs have been blind too long.
 
@@ -1621,12 +1690,31 @@ def _build_group_data(site):
     return group_data
 
 
-def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
+def _save_phase_remap(hass, remap) -> bool:
+    """Write an auto-detected charger mapping into its entry's options, as
+    Configure would (the update listener reloads the entry). Only the legs
+    the charger has set, so its phase count stays. False when the load is
+    not an EVSE entry - its remap then lives in the runtime state only."""
+    entry = hass.config_entries.async_get_entry(remap["load_id"])
+    if entry is None or entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE) != DEVICE_TYPE_EVSE:
+        return False
+    keys = (CONF_CHARGER_L1_PHASE, CONF_CHARGER_L2_PHASE, CONF_CHARGER_L3_PHASE)
+    new = {
+        key: remap[f"l{i + 1}_phase"]
+        for i, key in enumerate(keys[: len(stored_legs(entry))])
+    }
+    hass.config_entries.async_update_entry(entry, options={**entry.options, **new})
+    _LOGGER.warning("AutoDetect: saved the phase mapping of %s: %s", entry.title, new)
+    return True
+
+
+def _run_auto_detection(hass, hub_entry, auto_detect_state, smoothed_phases, site):
     """Run the CT-inversion and phase-mapping detectors for this cycle.
 
-    Returns the notifications to publish. Any phase remap it works out is
-    stored in ``auto_detect_state`` for the NEXT cycle to apply (see
-    _apply_phase_remaps) - never mid-calculation.
+    Returns the notifications to publish. A phase remap it works out for a
+    charger is saved into the charger's options (the next cycle builds on
+    them); for any other load it is stored in ``auto_detect_state`` for the
+    NEXT cycle to apply (see _apply_phase_remaps) - never mid-calculation.
     """
     # --- Auto-detection (inversion + phase mapping) ---
     # auto_detect_state is initialized by the caller before the first use.
@@ -1646,14 +1734,16 @@ def _run_auto_detection(hub_entry, auto_detect_state, smoothed_phases, site):
             smoothed_phases,
             site.loads,
             hub_entry.entry_id,
+            site=site,
         )
         for notif in pm_results:
-            # Store auto-remap for next cycle
+            # Save (a charger) or store for the next cycle (any other load)
             remap = notif.pop("auto_remap", None)
             if remap:
-                auto_detect_state.setdefault("phase_remap", {})[remap["load_id"]] = (
-                    remap
-                )
+                if not _save_phase_remap(hass, remap):
+                    auto_detect_state.setdefault("phase_remap", {})[
+                        remap["load_id"]
+                    ] = remap
                 # Reset correlation state so re-detection runs with new mapping
                 # (allows 2-phase detection to verify/correct after 1-phase remap)
                 pm_state = auto_detect_state.get("phase_map", {})
@@ -2147,6 +2237,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
 
     # --- Calculate targets ---
     calculate_all_load_targets(site)
+    _apply_phase_switching(hass, site, time.monotonic())
     sg_states = _apply_sg_ready(hass, hub_runtime, site, excess_on, time.monotonic())
 
     grid_stale = _apply_grid_stale_fallback(site, grid_stale_duration)
@@ -2163,7 +2254,7 @@ def run_hub_calculation(hass, hub_entry, load_entries=None):
     group_data = _build_group_data(site)
 
     auto_notifications = _run_auto_detection(
-        hub_entry, auto_detect_state, smoothed_phases, site
+        hass, hub_entry, auto_detect_state, smoothed_phases, site
     )
 
     hub_status, hub_warnings = _build_hub_status(

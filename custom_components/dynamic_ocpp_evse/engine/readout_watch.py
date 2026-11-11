@@ -397,17 +397,20 @@ COMMAND_MEMORY = 4
 CAR_RAMP_S = 60.0
 
 
-def track_commands(state: dict, commanded: float | None, now) -> None:
+def track_commands(state: dict, commanded: float | None, now, phases: int | None = None) -> None:
     """Record each change of the commanded limit, at ``now`` (wall clock,
     comparable with a reading's last_reported), in ``state["commands"]`` as
     ``(at, limit)``. The first limit seen has ``at`` None - in force since
-    before the watch knows. An unknown limit forgets them all."""
+    before the watch knows. An unknown limit forgets them all. A change of the
+    ``phases`` the charger was told (phase switching) is a new command too, at
+    the same limit: a reading taken before it shows the old legs."""
     commands = state.setdefault("commands", [])
     if commanded is None:
         commands.clear()
-    elif not commands or commands[-1][1] != commanded:
+    elif not commands or commands[-1][1] != commanded or state.get("command_phases") != phases:
         commands.append((now if commands else None, float(commanded)))
         del commands[:-COMMAND_MEMORY]
+    state["command_phases"] = phases
 
 
 def _limits_between(commands, start, end) -> list[float]:

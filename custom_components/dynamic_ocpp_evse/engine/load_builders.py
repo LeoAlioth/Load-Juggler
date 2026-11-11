@@ -18,8 +18,9 @@ from datetime import datetime, timezone
 from functools import partial
 
 from ..calculations import LoadContext, CircuitGroup
-from ..calculations.models import INACTIVE_STATUSES
+from ..calculations.models import is_inactive_status
 from ..calculations.pacing import pace_cap_current
+from ..calculations.phase_switch import ONE, THREE, full_mask
 from ..calculations.utils import managed_phase_draws
 from ..const import (
     thermostat_defaults, behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
@@ -84,7 +85,7 @@ from ..const import (
     CONF_VL_CURRENT_L2_ENTITY_ID,
     CONF_VL_CURRENT_L3_ENTITY_ID,
     CONF_VL_POWER_ENTITY_ID,
-    VL_MODE_HOLD,
+    EVSE_MODE_HOLD,
     VL_RT_ALLOWED_A,
     VL_RT_LEGS_IN_USE,
     VL_RT_LEGS_GREW,
@@ -101,6 +102,16 @@ from ..const import (
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
     EVSE_RT_READOUT_WATCH,
+    EVSE_RT_PHASES,
+    EVSE_RT_PHASE_SUPPORTED,
+    EVSE_RT_COMMANDED_PHASES,
+    CONF_PHASE_SWITCH_INTERVAL,
+    DEFAULT_PHASE_SWITCH_INTERVAL,
+    CONF_PHASE_SWITCH_UP_MARGIN,
+    DEFAULT_PHASE_SWITCH_UP_MARGIN,
+    PHASE_MODE_THREE,
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
     LEG_DRAWING_CURRENT,
     SETTLE_DRAW_SECONDS,
     SETTLE_DRAW_TOLERANCE,
@@ -126,7 +137,7 @@ from ..const import (
 )
 from ..calculations import sg_ready
 from ..calculations.variable_load import sized_legs as vl_sized_legs
-from ..helpers import get_entry_value, stored_legs, variable_load_amps
+from ..helpers import get_entry_value, phase_mode, stored_legs, variable_load_amps
 from ..ocpp_discovery import ocpp_connector_status_entity
 from ..registry import get_loads_for_hub, get_groups_for_hub
 from .. import units
@@ -262,7 +273,9 @@ def _watch_readout(hass, entry, load, load_rt, connector_status,
     )
     watch["normal_gap_s"] = readout_watch.normal_gap(watch)
     watch["cycle"] = {"status": connector_status, "commanded": commanded}
-    readout_watch.track_commands(watch, commanded, datetime.now(timezone.utc))
+    readout_watch.track_commands(
+        watch, commanded, datetime.now(timezone.utc), load_rt.get(EVSE_RT_COMMANDED_PHASES)
+    )
 
     if event == "left":
         _LOGGER.info(
@@ -341,7 +354,9 @@ def _await_new_reading(load, watch, status, commanded, reported_at,
     # followed: in the closed loop the limit ran from 21.7 A to the car's
     # 32 A maximum and the grid 2 kW past its allowance before a reading
     # caught up. A cut is the car's own limit coming down, and stays allowed.
-    load.max_current = min(load.max_current, float(commanded))
+    # A trim after the distribution, not a lower maximum: the room stays the
+    # charger's rather than going to the loads ranked behind it.
+    load.raise_hold = float(commanded)
 
 
 def _assume(load, watch, assumed, evidence, since):
@@ -526,6 +541,25 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
     legs = stored_legs(entry)
     phases = int(get_entry_value(entry, CONF_PHASES, None) or len(legs) or 1)
 
+    # Phase switching (calculations/phase_switch.py): a three-leg charger that
+    # reports the capability, its Phase Switching select not on Three phases. On
+    # one phase it is built as a one-phase load on L1 - its draw spread over that
+    # leg, its mask L1's site phase - with what its three legs could take as its
+    # potential. Not switchable any more (Three phases, capability gone), it is
+    # put back on three and the next profile says so.
+    switchable = (
+        phases == THREE
+        and load_rt.get(EVSE_RT_PHASE_SUPPORTED) is True
+        and phase_mode(entry, load_rt) != PHASE_MODE_THREE
+        # Switching travels in the profile's phase count: without it, none.
+        and bool(get_entry_value(entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES))
+    )
+    if not switchable and load_rt.get(EVSE_RT_PHASES) == ONE:
+        load_rt[EVSE_RT_PHASES] = THREE
+    on_one = switchable and load_rt.get(EVSE_RT_PHASES) == ONE
+    if on_one:
+        phases = ONE
+
     # Read connector status from the charger's own status sensor - resolved
     # from the registries by metric classification (and cached per entry setup),
     # never composed from the charge point id: that guess is wrong for a renamed
@@ -562,13 +596,23 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         excess_claim_current=(
             min_current
             if mode.behavior == BEHAVIOR_EXCESS
-            and connector_status not in INACTIVE_STATUSES
+            and mode.key != EVSE_MODE_HOLD.key
+            and not is_inactive_status(connector_status)
             else 0.0
         ),
         l1_phase=l1_phase,
         l2_phase=l2_phase,
         l3_phase=l3_phase,
+        phase_switchable=switchable,
+        phase_switch_interval_s=60.0 * float(
+            get_entry_value(entry, CONF_PHASE_SWITCH_INTERVAL, DEFAULT_PHASE_SWITCH_INTERVAL)
+        ),
+        phase_switch_up_margin_w=float(
+            get_entry_value(entry, CONF_PHASE_SWITCH_UP_MARGIN, DEFAULT_PHASE_SWITCH_UP_MARGIN)
+        ),
     )
+    if on_one:
+        load.potential_phases_mask = full_mask(load)
 
     # Get OCPP current draw for this load with fallback chain:
     # 1. Current Import per-phase entities (sensor.{id}_current_import_l1/l2/l3)
@@ -1126,7 +1170,7 @@ def _build_power_station_load(hass, entry, voltage, load_entity_id, priority):
         excess_claim_current=(
             min_current
             if mode.behavior == BEHAVIOR_EXCESS
-            and connector_status not in INACTIVE_STATUSES
+            and not is_inactive_status(connector_status)
             else 0.0
         ),
         draw_assumed=draw_assumed,
@@ -1481,7 +1525,7 @@ def _build_variable_load(hass, entry, voltage, load_entity_id, priority):
     # Only an explicit "off" gates: an unreadable sensor says nothing.
     if connected == "off":
         connector_status = "Available"
-    elif charging == "off" or mode.key == VL_MODE_HOLD.key:
+    elif charging == "off" or mode.key == EVSE_MODE_HOLD.key:
         connector_status = "Finishing"
     else:
         connector_status = "Charging"
@@ -1504,7 +1548,7 @@ def _build_variable_load(hass, entry, voltage, load_entity_id, priority):
         draw_assumed = raw is _UNAVAILABLE
         per_leg = (_coerce(raw, None) or 0.0) / (voltage * phases) if voltage > 0 else 0.0
         draws[:phases] = [per_leg] * phases
-    elif connector_status not in INACTIVE_STATUSES:
+    elif not is_inactive_status(connector_status):
         draws[:phases] = [load_rt.get(VL_RT_ALLOWED_A) or 0.0] * phases
     # The legs it is sized on: the legs in use (over 1 A) when per-leg current
     # sensors say so, remembered while it draws nothing (a single-phase device
@@ -1547,7 +1591,7 @@ def _build_variable_load(hass, entry, voltage, load_entity_id, priority):
         excess_claim_current=(
             min_current
             if mode.behavior == BEHAVIOR_EXCESS
-            and connector_status not in INACTIVE_STATUSES
+            and not is_inactive_status(connector_status)
             else 0.0
         ),
         draw_assumed=draw_assumed,

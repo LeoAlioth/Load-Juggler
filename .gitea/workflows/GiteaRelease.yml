@@ -207,8 +207,17 @@ jobs:
           git tag -f "$TAG_NAME"
           git push origin "$TAG_NAME" --force
 
-          # Create the release
-          BODY=$(jq -Rs '.' < /tmp/release_body.md)
+          # Create the release. Gitea keeps a release's notes in a 64 KB
+          # field and refuses a longer body with an empty error (0.5.0's notes
+          # were 68.7 KB, 2026-10-31): past 60,000 bytes the Gitea copy ends at
+          # the last whole line and points to the file. GitHub takes it whole.
+          if [ "$(wc -c < /tmp/release_body.md)" -gt 60000 ]; then
+            head -c 60000 /tmp/release_body.md | sed '$d' > /tmp/gitea_body.md
+            printf '\n\n... the rest is in RELEASE_NOTES.md.\n' >> /tmp/gitea_body.md
+          else
+            cp /tmp/release_body.md /tmp/gitea_body.md
+          fi
+          BODY=$(jq -Rs '.' < /tmp/gitea_body.md)
           RELEASE_RESPONSE=$(curl -s -X POST \
             -H "$AUTH" \
             -H "Content-Type: application/json" \

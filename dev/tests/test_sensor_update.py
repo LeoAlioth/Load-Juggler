@@ -770,6 +770,33 @@ async def test_load_sensor_availability_follows_its_own_processing(
     assert charger_sensor.available is False
 
 
+async def test_a_load_sensor_writes_only_when_more_than_last_update_changed(
+    hass,
+    mock_hub_entry,
+    charger_sensor,
+):
+    """last_update moves every cycle, so writing on every cycle made every
+    cycle a new state: at Home three idle loads at 0 A wrote ~1 kB each every
+    5-10 s, each a new attributes row in the recorder (2026-11-10)."""
+    charger_sensor.entity_id = charger_sensor.entity_id or "sensor.wallbox_available_current"
+    with patch.object(charger_sensor, "_async_apply", new_callable=AsyncMock) as apply, \
+            patch.object(charger_sensor, "async_write_ha_state") as write:
+        await charger_sensor.async_process({})
+        await charger_sensor.async_process({})
+        assert write.call_count == 1  # the second cycle moved only last_update
+
+        charger_sensor._state = 7
+        await charger_sensor.async_process({})
+        assert write.call_count == 2  # a new permit is written
+
+        # processing fails from here on: last_update stops, the load goes stale -
+        # and the unavailable state must still reach HA
+        apply.side_effect = RuntimeError("boom")
+        charger_sensor._last_update = datetime.now(timezone.utc) - timedelta(minutes=10)
+        await charger_sensor.async_process({})
+        assert write.call_count == 3 and charger_sensor.available is False
+
+
 async def test_site_cycle_adopts_readers_registered_before_the_hub(
     hass,
     mock_hub_entry,
@@ -2656,6 +2683,37 @@ async def test_charge_pause_cancelled_on_mode_change(
     assert charger_sensor._prev_distribution_mode == (
         "Shared" if distribution_too else "Priority"
     )
+
+
+@pytest.mark.parametrize("how", ["reset", "back_from_fault"])
+async def test_a_reset_or_a_charger_back_from_faulted_ends_the_charge_pause(
+    hass, mock_hub_entry, mock_charger_entry, charger_sensor, mock_call, how,
+):
+    """Reset OCPP ends a charge pause, and so does the charger coming back from
+    Faulted: the third site's go-e, reset out of a fault while Load Juggler still
+    had it paused, came back on its own default, and the pause's 0 A was sent
+    again and stopped it 20 s later (2026-11-05). The shortage still decides
+    afresh: here it is on this cycle only, so nothing re-arms."""
+    from custom_components.dynamic_ocpp_evse.const import EVSE_RT_CLEAR_PAUSE
+
+    load_rt = hass.data[DOMAIN]["loads"][mock_charger_entry.entry_id]
+    load_rt["operating_mode"] = "Solar Only"
+    charger_sensor._had_runnable_permit = True
+    charger_sensor._short_last_cycle = True
+    status = charger_sensor._connector_status_entity
+    if how == "back_from_fault":
+        hass.states.async_set(status, "Faulted")
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._pause_started_at is not None
+
+    if how == "reset":
+        load_rt[EVSE_RT_CLEAR_PAUSE] = True
+    else:
+        hass.states.async_set(status, "Charging")
+    charger_sensor._short_last_cycle = False
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._pause_started_at is None
+    assert EVSE_RT_CLEAR_PAUSE not in load_rt
 
 
 async def test_charge_pause_remaining_seconds_attribute(

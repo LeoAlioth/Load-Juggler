@@ -18,6 +18,11 @@ import voluptuous as vol
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.selector import selector
 from ..const import (
+    CONF_EVSE_DC_OFF_CURRENT,
+    EVSE_DC_OFF_MAX,
+    CONF_TANK_DC_OFF_SETPOINT,
+    DEFAULT_TANK_DC_OFF_SETPOINT,
+    TANK_DC_OFF_OPTIONS,
     CHARGE_LIMIT_UNIT_AMPS,
     CHARGE_LIMIT_UNIT_WATTS,
     CHARGE_RATE_UNIT_AMPS,
@@ -38,6 +43,12 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
+    CONF_PHASE_SWITCH_INTERVAL,
+    CONF_PHASE_SWITCH_UP_MARGIN,
+    DEFAULT_PHASE_SWITCH_UP_MARGIN,
+    DEFAULT_PHASE_SWITCH_INTERVAL,
     CONF_LOAD_PRIORITY,
     CONF_CHARGE_CONTROL_DEADBAND_W,
     CONF_CHARGE_CONTROL_INTERVAL,
@@ -230,6 +241,7 @@ from ..const.sg_ready import (
 from ..const.variable_load import (
     CONF_VL_BIAS,
     CONF_VL_CHARGING_ENTITY_ID,
+    CONF_VL_PHASE_ENTITY_ID,
     CONF_VL_CONNECTED_ENTITY_ID,
     CONF_VL_CURRENT_L1_ENTITY_ID,
     CONF_VL_CURRENT_L2_ENTITY_ID,
@@ -1054,10 +1066,49 @@ def _charger_current_schema(
                     CONF_EVSE_MAXIMUM_CHARGE_CURRENT, defaults, DEFAULT_MAX_CHARGE_CURRENT,
                     6, 80, 1, "A", required=True,
                 ),
+                _dc_off_current_field(defaults),
                 *_leg_fields(defaults, hub_phases),
+                # Only a three-leg charger can switch; the engine also needs
+                # the charger to say it can (calculations/phase_switch.py). Whether
+                # it does is the Phase Switching select (select.py), not a field.
+                *(
+                    [
+                        _num(
+                            CONF_PHASE_SWITCH_INTERVAL, defaults, DEFAULT_PHASE_SWITCH_INTERVAL,
+                            1, 120, 1, "min", required=True,
+                        ),
+                        _num(
+                            CONF_PHASE_SWITCH_UP_MARGIN, defaults, DEFAULT_PHASE_SWITCH_UP_MARGIN,
+                            0, 5000, 100, "W", required=True,
+                        ),
+                        (
+                            vol.Required(
+                                CONF_SEND_NUMBER_PHASES,
+                                default=defaults.get(CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES),
+                            ),
+                            bool,
+                        ),
+                    ]
+                    if hub_phases >= 3
+                    else []
+                ),
             ]
         )
     )
+
+
+def _dc_off_current_field(defaults: dict) -> tuple:
+    """The current a charger is held at while Dynamic Control is off: its
+    maximum unless set (shown as the maximum), clearable for "leave it as it is"
+    (helpers.normalize_dc_off_current stores the three)."""
+    stored = defaults.get(CONF_EVSE_DC_OFF_CURRENT, EVSE_DC_OFF_MAX)
+    if stored == EVSE_DC_OFF_MAX:
+        stored = defaults.get(CONF_EVSE_MAXIMUM_CHARGE_CURRENT, DEFAULT_MAX_CHARGE_CURRENT)
+    marker = (
+        vol.Optional(CONF_EVSE_DC_OFF_CURRENT, description={"suggested_value": stored})
+        if stored is not None else vol.Optional(CONF_EVSE_DC_OFF_CURRENT)
+    )
+    return marker, selector({"number": {"min": 0, "max": 80, "step": 1, "mode": "box", "unit_of_measurement": "A"}})
 
 
 def _leg_fields(defaults: dict, hub_phases: int) -> list[tuple]:
@@ -1492,6 +1543,17 @@ def _hot_water_tank_schema(defaults: dict | None = None) -> vol.Schema:
                     ),
                 ),
                 (
+                    vol.Required(
+                        CONF_TANK_DC_OFF_SETPOINT,
+                        default=defaults.get(CONF_TANK_DC_OFF_SETPOINT, DEFAULT_TANK_DC_OFF_SETPOINT),
+                    ),
+                    selector({"select": {
+                        "options": list(TANK_DC_OFF_OPTIONS),
+                        "mode": "dropdown",
+                        "translation_key": "tank_dc_off_setpoint",
+                    }}),
+                ),
+                (
                     # A water heater's own word for "off" (Vaillant: stand_by) -
                     # every integration has its own, so it is typed, not picked.
                     vol.Optional(
@@ -1711,6 +1773,7 @@ def _variable_load_schema(defaults: dict | None = None, hub_phases: int = 3) -> 
                 _num(CONF_VL_PHASE_MULTI_ABOVE, defaults, DEFAULT_VL_PHASE_MULTI_ABOVE, 0, 50000, 100, "W", required=True),
                 _num(CONF_VL_PHASE_SINGLE_BELOW, defaults, DEFAULT_VL_PHASE_SINGLE_BELOW, 0, 50000, 100, "W", required=True),
                 _num(CONF_VL_PHASE_MIN_INTERVAL, defaults, DEFAULT_VL_PHASE_MIN_INTERVAL, 0, 120, 1, "min", required=True),
+                _entity(CONF_VL_PHASE_ENTITY_ID, ["select", "input_select", "number", "input_number"]),
                 _entity(CONF_EARLY_ROOM_ENTITY_ID, ["sensor", "input_number"], ["energy", "energy_storage"]),
                 _entity(CONF_EARLY_RATE_ENTITY_ID, ["sensor", "input_number"], "power"),
                 _num(CONF_SOLAR_GRACE_PERIOD, defaults, DEFAULT_SOLAR_GRACE_PERIOD, 0, 30, 1, "min", required=True),
