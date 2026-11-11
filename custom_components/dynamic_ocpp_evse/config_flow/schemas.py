@@ -1079,7 +1079,7 @@ def _charger_current_schema(
                         ),
                         _num(
                             CONF_PHASE_SWITCH_UP_MARGIN, defaults, DEFAULT_PHASE_SWITCH_UP_MARGIN,
-                            0, 5000, 1000, "W", required=True,
+                            0, 5000, 100, "W", required=True,
                         ),
                         (
                             vol.Required(
