@@ -31,6 +31,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     BEHAVIOR_BINARY_EXCESS,
     BEHAVIOR_EXCESS,
     BEHAVIOR_SOLAR_ONLY,
+    CONF_FORECAST_EXCESS_FULL_ENTITY_ID,
     CONF_PACING_ENERGY_ENTITY_ID,
     CONF_PACING_HORIZON_ENTITY_ID,
     INPUT_STALE_TIMEOUT,
@@ -216,6 +217,39 @@ def test_dropout_holds_then_falls_back(monkeypatch):
 
 def test_unreadable_timestamp_with_nothing_held_means_no_pacing():
     assert readers._read_pacing(_hass(horizon="not a time"), _entry(), {}, now=NOW) is None
+
+
+# --- the next full charge ----------------------------------------------------
+
+def _full(state):
+    hass = SimpleNamespace(states=_States(**{"sensor.f": SimpleNamespace(entity_id="sensor.f", state=state, attributes={})}))
+    entry = SimpleNamespace(entry_id="hub", title="Hub", data={CONF_FORECAST_EXCESS_FULL_ENTITY_ID: "sensor.f"}, options={})
+    return hass, entry
+
+
+def _status_labels(hass, entry, monkeypatch):
+    monkeypatch.setattr(readers, "get_inverters_for_hub", lambda hass, entry_id: [])
+    return [label for label, _ in readers._check_entity_availability(hass, entry, [])]
+
+
+def test_a_full_charge_time_gives_the_hours_left():
+    hass, entry = _full((NOW + timedelta(hours=3)).isoformat())
+    assert readers._read_full_hours(hass, entry, {}, None, now=NOW) == pytest.approx(3.0)
+
+
+def test_unknown_full_charge_means_no_early_start_and_no_warning(monkeypatch):
+    """Load Insights' Next full charge reads unknown when its forecast never reaches a full pack
+    (2026-11-10): an answer, not a dropout - Kozolec's status had read 'Sensor unavailable' for hours."""
+    runtime = {"_full_hold": {"full": NOW}}
+    hass, entry = _full("unknown")
+    assert readers._read_full_hours(hass, entry, runtime, None, now=NOW) is None
+    assert "full" not in runtime["_full_hold"]                  # an old time is not held over it
+    assert "Next full charge sensor" not in _status_labels(hass, entry, monkeypatch)
+
+
+def test_unavailable_full_charge_still_warns(monkeypatch):
+    hass, entry = _full("unavailable")
+    assert "Next full charge sensor" in _status_labels(hass, entry, monkeypatch)
 
 
 # --- the wiring: a load's own option decides --------------------------------

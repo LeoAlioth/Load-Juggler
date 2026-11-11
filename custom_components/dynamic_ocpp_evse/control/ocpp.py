@@ -2,6 +2,8 @@ import logging
 from datetime import datetime, timedelta, timezone
 from ..const import (
     CONF_OCPP_DEVICE_ID,
+    CONF_SEND_NUMBER_PHASES,
+    DEFAULT_SEND_NUMBER_PHASES,
     CONF_OCPP_PROFILE_TIMEOUT,
     DEFAULT_OCPP_PROFILE_TIMEOUT,
     CONF_STACK_LEVEL,
@@ -17,18 +19,114 @@ from ..const import (
     DEFAULT_PHASE_VOLTAGE,
     EVSE_RT_COMMANDED_LIMIT,
     EVSE_RT_COMMANDED_RATE_UNIT,
+    EVSE_RT_COMMANDED_PHASES,
+    EVSE_RT_PHASES,
+    EVSE_RT_PHASE_PAUSE_AT,
+    EVSE_RT_PHASE_PROBE_AT,
+    EVSE_RT_PHASE_SUPPORTED,
+    OCPP_KEY_PHASE_SWITCH,
+    PHASE_SWITCH_PAUSE_MAX_S,
+    PHASE_SWITCH_PAUSE_S,
+    PHASE_SWITCH_PROBE_RETRY_S,
+    RT_PHASE_SWITCH_AT,
 )
-from ..helpers import detect_charge_rate_unit, get_entry_value
+from ..helpers import detect_charge_rate_unit, get_entry_value, stored_legs
 from . import stamp_command
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
 
 
+async def read_charger_setting(hass, devid, key):
+    """The value a charger holds for an OCPP configuration key (ocpp's
+    get_configuration), or None when it cannot be read."""
+    try:
+        got = await hass.services.async_call(
+            "ocpp", "get_configuration", {"devid": devid, "ocpp_key": key},
+            blocking=True, return_response=True,
+        )
+    except Exception as err:  # noqa: BLE001 - a read that fails decides nothing
+        _LOGGER.debug("could not read the charger's %s: %s", key, err)
+        return None
+    return got.get("value") if isinstance(got, dict) else None
+
+
+def told_phases(load_rt, entry) -> int | None:
+    """The phase count a charger's profile carries (``numberPhases``): the
+    engine's decision for a charger that reports it can switch, None for one
+    that does not (or has not answered yet), or whose *Send the phase count*
+    option is off - its profile then carries none."""
+    if load_rt.get(EVSE_RT_PHASE_SUPPORTED) is not True or not get_entry_value(
+        entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES
+    ):
+        return None
+    return int(load_rt.get(EVSE_RT_PHASES, 3))
+
+
+def phase_pause_over(started: float, draw: float | None, now_mono: float) -> bool:
+    """Whether the pause before a phase change, begun at ``started``, has done
+    its job: PHASE_SWITCH_PAUSE_S held and the charger drawing under 1 A, or
+    PHASE_SWITCH_PAUSE_MAX_S held whatever it reports."""
+    paused = now_mono - started
+    return paused >= PHASE_SWITCH_PAUSE_MAX_S or (paused >= PHASE_SWITCH_PAUSE_S and (draw or 0.0) < 1.0)
+
+
+def phase_switch_pause(
+    load_rt, told: int | None, limit: float, draw: float | None, now_mono: float
+) -> tuple[float, int | None]:
+    """The ``(limit, numberPhases)`` to send while a phase change is due: a
+    charger that would draw is first held at 0 A on its old count for at least
+    PHASE_SWITCH_PAUSE_S and until it draws under 1 A (PHASE_SWITCH_PAUSE_MAX_S
+    at most), and only then told the new count - no switching under load (the
+    owner, 2026-11-05). A 0 A command needs no pause. Keeps its clock in
+    ``load_rt[EVSE_RT_PHASE_PAUSE_AT]``."""
+    commanded = load_rt.get(EVSE_RT_COMMANDED_PHASES, 3)
+    if told is None or told == commanded or limit <= 0:
+        load_rt.pop(EVSE_RT_PHASE_PAUSE_AT, None)
+        return limit, told
+    if phase_pause_over(load_rt.setdefault(EVSE_RT_PHASE_PAUSE_AT, now_mono), draw, now_mono):
+        load_rt.pop(EVSE_RT_PHASE_PAUSE_AT, None)
+        return limit, told
+    return 0.0, commanded
+
+
+def probe_phase_switching(sensor, now_mono: float) -> None:
+    """Ask a three-leg charger once whether it can switch between one and
+    three phases (ConnectorSwitch3to1PhaseSupported), in the background so a
+    slow charger never holds up the site cycle; asked again every
+    PHASE_SWITCH_PROBE_RETRY_S while it does not answer."""
+    load_rt = sensor._runtime()
+    if (
+        load_rt.get(EVSE_RT_PHASE_SUPPORTED) is not None
+        or now_mono < load_rt.get(EVSE_RT_PHASE_PROBE_AT, 0.0)
+        or len(stored_legs(sensor.config_entry)) != 3
+    ):
+        return
+    devid = get_entry_value(sensor.config_entry, CONF_OCPP_DEVICE_ID, None)
+    if not devid:
+        return
+    load_rt[EVSE_RT_PHASE_PROBE_AT] = now_mono + PHASE_SWITCH_PROBE_RETRY_S
+
+    async def _probe():
+        value = await read_charger_setting(sensor.hass, devid, OCPP_KEY_PHASE_SWITCH)
+        if value is None:
+            return
+        load_rt[EVSE_RT_PHASE_SUPPORTED] = str(value).strip().lower() == "true"
+        _LOGGER.info(
+            "%s: the charger %s switch between one and three phases (%s = %s)",
+            sensor._attr_name,
+            "can" if load_rt[EVSE_RT_PHASE_SUPPORTED] else "cannot",
+            OCPP_KEY_PHASE_SWITCH, value,
+        )
+
+    sensor.hass.async_create_task(_probe())
+
+
 async def send_ocpp_command(
     sensor, limit: float, hub_entry, now_mono: float,
     effective_status: str | None = None,
     hold_s: float | None = None,
+    draw: float | None = None,
 ) -> bool:
     """Send OCPP charging profile to an EVSE charger.
 
@@ -68,6 +166,30 @@ async def send_ocpp_command(
         )
         stamp_command(sensor, now_mono)
         return
+
+    # A charger that can switch is told its phase count on every profile, so
+    # one left on one phase (an option turned off, a restart) is put back.
+    # ``draw``: the charger's reported current (A, the engine's figure), which
+    # tells when the pause before a phase change has taken hold.
+    load_rt = sensor._runtime()
+    was_pausing = EVSE_RT_PHASE_PAUSE_AT in load_rt
+    paused_from = limit
+    limit, told = phase_switch_pause(
+        load_rt, told_phases(load_rt, sensor.config_entry), limit, draw, now_mono
+    )
+    if limit != paused_from:
+        if was_pausing:
+            # Its 0 A went out when the pause began, valid for all of it; sent
+            # again it would restart a go-e's charging cycle.
+            stamp_command(sensor, now_mono)
+            return False
+        _LOGGER.info(
+            "%s: paused (0 A) before switching to %d phase(s)",
+            sensor._attr_name, told_phases(load_rt, sensor.config_entry),
+        )
+        hold_s = max(hold_s or 0, PHASE_SWITCH_PAUSE_MAX_S)
+        # Compliance and the manual-change check stay quiet through the pause too.
+        load_rt[RT_PHASE_SWITCH_AT] = now_mono
 
     # ``hold_s``: a pause's 0 A stays valid that much longer (the rest of the
     # pause), so it is sent once - see entities/load.py. Returns whether the
@@ -120,7 +242,9 @@ async def send_ocpp_command(
             get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
             or DEFAULT_PHASE_VOLTAGE
         )
-        phases_for_profile = sensor._car_active_phases or sensor._phases or 1
+        phases_for_profile = (
+            1 if told == 1 else sensor._car_active_phases or sensor._phases or 1
+        )
         limit_for_charger = round(limit * voltage * phases_for_profile, 0)
         rate_unit = "W"
         sensor._last_set_power = limit_for_charger
@@ -158,9 +282,10 @@ async def send_ocpp_command(
         )
     # Key order as before: the period list closes the schedule, the schedule
     # closes the profile.
-    schedule["chargingSchedulePeriod"] = [
-        {"startPeriod": 0, "limit": limit_for_charger}
-    ]
+    period = {"startPeriod": 0, "limit": limit_for_charger}
+    if told is not None:
+        period["numberPhases"] = told
+    schedule["chargingSchedulePeriod"] = [period]
     charging_profile["chargingSchedule"] = schedule
 
     ocpp_device_id = get_entry_value(sensor.config_entry, CONF_OCPP_DEVICE_ID, None)
@@ -226,6 +351,8 @@ async def send_ocpp_command(
         )
     except Exception as e:
         _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", sensor._attr_name, e)
+        if limit != paused_from:
+            load_rt.pop(EVSE_RT_PHASE_PAUSE_AT, None)   # the pause never reached it
         return
 
     # Recorded only after the command was actually sent successfully.
@@ -234,8 +361,13 @@ async def send_ocpp_command(
     # (engine/readout_watch.py) judges the charger's reported draw against the
     # limit it actually holds, and blind mode assumes exactly this figure. The
     # unit matters only for the tolerance a W-encoded profile is given.
-    load_rt = sensor._runtime()
     load_rt[EVSE_RT_COMMANDED_LIMIT] = float(limit)
     load_rt[EVSE_RT_COMMANDED_RATE_UNIT] = rate_unit
+    if told is not None:
+        if told != load_rt.get(EVSE_RT_COMMANDED_PHASES, 3):
+            # The charger now switches, with its few seconds at 0 A.
+            load_rt[RT_PHASE_SWITCH_AT] = now_mono
+            _LOGGER.info("%s: told to charge on %d phase(s)", sensor._attr_name, told)
+        load_rt[EVSE_RT_COMMANDED_PHASES] = told
     stamp_command(sensor, now_mono)
     return True

@@ -116,6 +116,13 @@ custom_components/dynamic_ocpp_evse/
 │   │                              #   down, and control/inverter.send_inverter_soc_limit(lift=True) puts the slots at
 │   │                              #   full (hub_data["outage_precharge"]). Grid-tied + battery only; never touches
 │   │                              #   a Storm Reserve switch
+│   ├── phase_switch.py            # Phase switching (plan docs/plans/2026-11-01/phase-switching.md): ``decide`` - one phase
+│   │                              #   only when three would pause a switchable charger and one would not (at once), back to
+│   │                              #   three at min + 2 A held 5 min, no sooner than the charger's ``phase_switch_interval`` (15 min) after the last change; ``single_phase_permit``
+│   │                              #   re-runs the whole calculation on a deep copy. The engine step is hub_calculation.
+│   │                              #   _apply_phase_switching (re-runs the calculation on a change); the profile's
+│   │                              #   numberPhases and the capability read are control/ocpp.py; the settling window after a
+│   │                              #   switch (RT_PHASE_SWITCH_AT) quiets compliance and control.manual_change
 │   ├── catch_up.py                # Per-load catch-up: a Solar Only / Solar Priority load may start below the target
 │                                  #   SOC when its max power can't keep up with the pacing energy (rate >= max W,
 │                                  #   latched per load); the engine sets LoadContext.catch_up_active
@@ -144,6 +151,11 @@ custom_components/dynamic_ocpp_evse/
 │   ├── freshness.py               # Pure producer-freshness predicate behind every sensor's `available`
 │   └── mixins.py                  # LoadJugglerEntity base + device mixins + SiteFreshnessMixin /
 │                                  #   SiteCycleConsumerMixin (push readers) / SiteCycleWorkerMixin (async per-cycle actuators)
+├── frontend/                      # Dashboard cards, plain JS, served by __init__._register_card and kept a Lovelace resource
+│   │                              #   by _ensure_lovelace_resource (never add_extra_js_url - HA 2026.10's registry polyfill
+│   │                              #   forgets what those define): load-juggler-priorities-card.js - lanes by urgency tier (Effective Priority
+│   │                              #   sensor's urgency_tier), draw / allowance, the move_priority arrows, a popup of the
+│   │                              #   load's entities (spec docs/plans/2026-11-01/dashboard-cards.md)
 ├── detection_patterns.py          # Per-brand entity-naming patterns for grid CT auto-detection (GRID_CT, brand
 │                                  #   priority order, watts first) and plug power monitors
 ├── [button|number|select|sensor|switch].py  # HA platform files (thin wiring around entities/)
@@ -438,6 +450,7 @@ pytest run as everything else. The one local way to run it is the uv venv in `de
 
 - `docs/live-sites.md`: the live sites, their settings that differ from defaults, and measured behaviour (dated). Read it before interpreting live behaviour.
 - `docs/design-decisions.md`: deliberate behaviour that looks like a bug (solar modes, Solar Only from the battery above target, config flag meaning).
+- `docs/reference.md`: what the README leaves out - Variable Load, off-grid, several inverters, the battery and PV clipping forecast, every setting, services, troubleshooting. The README stays a short front page (2026-11-02): put new detail there, not in the README.
 - Charging Modes Guide: `CHARGE_MODES_GUIDE.md`
 - Distribution Modes Guide: `DISTRIBUTION_MODES_GUIDE.md`
 - Release notes: `RELEASE_NOTES.md`

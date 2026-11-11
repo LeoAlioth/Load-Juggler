@@ -566,13 +566,15 @@
                             "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava bojler. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da bojler porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja bojler) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -649,11 +651,13 @@
                         "name": "Tok polnjenja",
                         "data": {
                             "evse_minimum_charge_current": "Minimalni tok polnjenja",
-                            "evse_maximum_charge_current": "Maksimalni tok polnjenja"
+                            "evse_maximum_charge_current": "Maksimalni tok polnjenja",
+                            "dynamic_control_off_current": "Ko je dinamično upravljanje izklopljeno (neobvezno)"
                         },
                         "data_description": {
                             "evse_minimum_charge_current": "Najnižji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik - večina polnilnih postaj podpira 6 A. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
-                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje."
+                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
+                            "dynamic_control_off_current": "Tok, pri katerem ostane polnilna postaja, ko je dinamično upravljanje izklopljeno - njen največji, če ne nastavite drugega. Izpraznite polje, da polnilno postajo pustite, kot je: profil se ne pošlje, postaja obdrži zadnjega, dokler ne poteče, nato velja njena privzeta vrednost."
                         }
                     },
                     "phases": {
@@ -661,12 +665,18 @@
                         "data": {
                             "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
-                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)"
+                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
+                            "phase_switch_interval": "Najkrajši čas med menjavama faz",
+                            "phase_switch_up_margin": "Dodatna moč za vrnitev na tri faze",
+                            "send_number_phases": "Pošlji število faz v profilu polnjenja"
                         },
                         "data_description": {
                             "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
-                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna)."
+                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
+                            "phase_switch_interval": "Ko je avto priključen, se število faz v tem času spremeni največ enkrat, v katero koli smer: polnilna postaja se za preklop ustavi, vsak preklop pa obremeni njen kontaktor.",
+                            "phase_switch_up_margin": "Na eni fazi se polnilna postaja vrne na tri faze šele, ko bi ji tri dale vsaj toliko več moči, kot jo dobi zdaj (in na vsaki fazi vsaj minimalni tok), 5 minut zapored. Večja vrednost pomeni manj preklopov.",
+                            "send_number_phases": "Polnilna postaja, ki preklop podpira, v vsakem profilu polnjenja dobi število faz (numberPhases), zato se tista, ki je ostala na eni fazi, vrne na tri. Izklopljeno: profili števila faz ne nosijo, kot pred 2.1.7, in preklop faz ne deluje."
                         }
                     }
                 }
@@ -765,13 +775,15 @@
                             "climate_entity_id": "Termostat (entiteta climate)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate, ki regulira prostor. Load Juggler bere njeno temperaturo ter upravlja njeno vklopljenost in ciljno temperaturo.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -956,12 +968,14 @@
                         "data": {
                             "vl_phase_multi_above": "Svetuj večfazno nad",
                             "vl_phase_single_below": "Svetuj enofazno pod",
-                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz"
+                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz",
+                            "vl_phase_entity_id": "Entiteta faz (neobvezno)"
                         },
                         "data_description": {
                             "vl_phase_multi_above": "Senzor Phase Advice svetuje multi, ko je dovoljena moč po vseh fazah naprave nad to vrednostjo. Samo nasvet: Load Juggler nikoli ne preklopi faz naprave; to lahko naredi vaša avtomatizacija.",
                             "vl_phase_single_below": "Senzor Phase Advice svetuje single, ko je dovoljena moč pod to vrednostjo. Med pragovoma velja zadnji nasvet.",
-                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto."
+                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto.",
+                            "vl_phase_entity_id": "Nastavitev faz naprave (izbirnik ali število). Vanjo se zapiše nasvet - 1 za eno fazo, 3 za vse njene faze - ob vsaki spremembi; 0 A naprave med preklopom ne šteje za ročno spremembo. Pustite prazno, če naj se nasvet le objavlja."
                         }
                     },
                     "forecast": {
@@ -1606,13 +1620,15 @@
                             "climate_entity_id": "Termostat (entiteta climate ali water_heater)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (bojler, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava bojler. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da bojler porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja bojler) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za bojler: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko bojler ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: bojler namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -1676,11 +1692,13 @@
                         "name": "Tok polnjenja",
                         "data": {
                             "evse_minimum_charge_current": "Minimalni tok polnjenja",
-                            "evse_maximum_charge_current": "Maksimalni tok polnjenja"
+                            "evse_maximum_charge_current": "Maksimalni tok polnjenja",
+                            "dynamic_control_off_current": "Ko je dinamično upravljanje izklopljeno (neobvezno)"
                         },
                         "data_description": {
                             "evse_minimum_charge_current": "Najnižji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik - večina polnilnih postaj podpira 6 A. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
-                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje."
+                            "evse_maximum_charge_current": "Najvišji tok, ki ga vaša polnilna postaja podpira. Preverite priročnik polnilne postaje. Hkrati določa območje ustreznega drsnika in njegovo začetno vrednost; drsnik, ki ste ga že nastavili, ohrani svojo vrednost, omejeno na novo območje.",
+                            "dynamic_control_off_current": "Tok, pri katerem ostane polnilna postaja, ko je dinamično upravljanje izklopljeno - njen največji, če ne nastavite drugega. Izpraznite polje, da polnilno postajo pustite, kot je: profil se ne pošlje, postaja obdrži zadnjega, dokler ne poteče, nato velja njena privzeta vrednost."
                         }
                     },
                     "phases": {
@@ -1688,12 +1706,18 @@
                         "data": {
                             "charger_l1_phase": "L1 polnilne postaje → faza lokacije",
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
-                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)"
+                            "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
+                            "phase_switch_interval": "Najkrajši čas med menjavama faz",
+                            "phase_switch_up_margin": "Dodatna moč za vrnitev na tri faze",
+                            "send_number_phases": "Pošlji število faz v profilu polnjenja"
                         },
                         "data_description": {
                             "charger_l1_phase": "Spremenite le, če je vaša polnilna postaja priključena drugače in/ali opazite nepričakovano obnašanje pri omejitvah moči po fazah.",
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
-                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna)."
+                            "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
+                            "phase_switch_interval": "Ko je avto priključen, se število faz v tem času spremeni največ enkrat, v katero koli smer: polnilna postaja se za preklop ustavi, vsak preklop pa obremeni njen kontaktor.",
+                            "phase_switch_up_margin": "Na eni fazi se polnilna postaja vrne na tri faze šele, ko bi ji tri dale vsaj toliko več moči, kot jo dobi zdaj (in na vsaki fazi vsaj minimalni tok), 5 minut zapored. Večja vrednost pomeni manj preklopov.",
+                            "send_number_phases": "Polnilna postaja, ki preklop podpira, v vsakem profilu polnjenja dobi število faz (numberPhases), zato se tista, ki je ostala na eni fazi, vrne na tri. Izklopljeno: profili števila faz ne nosijo, kot pred 2.1.7, in preklop faz ne deluje."
                         }
                     }
                 }
@@ -1774,13 +1798,15 @@
                             "climate_entity_id": "Termostat (entiteta climate)",
                             "heating_element_power": "Moč grelnega elementa",
                             "tank_power_entity_id": "Senzor moči (neobvezno)",
-                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)"
+                            "tank_off_operation_mode": "Način delovanja za izklop (grelnik vode, neobvezno)",
+                            "dynamic_control_off_setpoint": "Ko je dinamično upravljanje izklopljeno"
                         },
                         "data_description": {
                             "climate_entity_id": "Entiteta climate ali water_heater, ki uravnava grelnik. Load Juggler bere njeno temperaturo ter krmili vklop/izklop in ciljno temperaturo. Bojler nima standardnega načina, da bi sporočil, ali greje: to izmeri njegov senzor moči; brez njega Load Juggler prebere stanje, ki ga sporoča naprava sama (to stori npr. toplotna črpalka MELCloud), sicer pa velja, da grelnik porablja moč grelnega elementa, dokler je voda hladnejša od ciljne temperature.",
                             "heating_element_power": "Nazivna moč grelnega elementa - uporabljena za dodeljevanje moči, kadar senzor moči ni nastavljen. Samo začetna vrednost: ko naprava enkrat obstaja, to številko prevzame ustrezni drsnik, zato urejanje tukaj ne premakne drsnika, ki ste ga že nastavili.",
                             "tank_power_entity_id": "Neobvezen senzor dejanske porabe elementa (na primer senzor moči pametnega releja/vtičnice, ki napaja grelnik) - uporabljen namesto fiksne moči, kadar je prisoten.",
-                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov."
+                            "tank_off_operation_mode": "Samo za grelnik vode: njegov lastni način delovanja, ki ga izklopi (na primer stand_by pri Vaillantu), kot ga navaja entiteta. Ko grelnik ne dobi moči, ga Load Juggler preklopi vanj, ko se moč vrne, pa nazaj v prejšnji način. Prazno: grelnik namesto tega ostane na najnižji ciljni temperaturi - nikoli izklopljen, kar bi pri toplotni črpalki MELCloud ugasnilo tudi ogrevanje prostorov.",
+                            "dynamic_control_off_setpoint": "Izklop dinamičnega upravljanja termostat enkrat nastavi na to temperaturo, z dovoljenim gretjem, nato ga prepusti vam. Pusti, kot je: nič se ne zapiše."
                         }
                     },
                     "site": {
@@ -1966,12 +1992,14 @@
                         "data": {
                             "vl_phase_multi_above": "Svetuj večfazno nad",
                             "vl_phase_single_below": "Svetuj enofazno pod",
-                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz"
+                            "vl_phase_min_interval": "Najkrajši čas med spremembami nasveta faz",
+                            "vl_phase_entity_id": "Entiteta faz (neobvezno)"
                         },
                         "data_description": {
                             "vl_phase_multi_above": "Senzor Phase Advice svetuje multi, ko je dovoljena moč po vseh fazah naprave nad to vrednostjo. Samo nasvet: Load Juggler nikoli ne preklopi faz naprave; to lahko naredi vaša avtomatizacija.",
                             "vl_phase_single_below": "Senzor Phase Advice svetuje single, ko je dovoljena moč pod to vrednostjo. Med pragovoma velja zadnji nasvet.",
-                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto."
+                            "vl_phase_min_interval": "Nasvet faz se spremeni največ tako pogosto.",
+                            "vl_phase_entity_id": "Nastavitev faz naprave (izbirnik ali število). Vanjo se zapiše nasvet - 1 za eno fazo, 3 za vse njene faze - ob vsaki spremembi; 0 A naprave med preklopom ne šteje za ročno spremembo. Pustite prazno, če naj se nasvet le objavlja."
                         }
                     },
                     "forecast": {
@@ -2009,6 +2037,20 @@
         }
     },
     "services": {
+        "move_priority": {
+            "name": "Premakni prioriteto",
+            "description": "Premakne porabnika za eno mesto navzgor (napaja se prej) ali navzdol v vrstnem redu prioritet njegovega merilnega mesta. Porabniki se znova oštevilčijo 1..N, zato se običajno spremenita le porabnika, ki zamenjata mesti; vsak spremenjeni porabnik se ponovno naloži.",
+            "fields": {
+                "entity_id": {
+                    "name": "Entiteta porabnika",
+                    "description": "Katera koli entiteta porabnika, ki ga premikate."
+                },
+                "direction": {
+                    "name": "Smer",
+                    "description": "up = eno mesto prej, down = eno mesto pozneje."
+                }
+            }
+        },
         "reset_ocpp_evse": {
             "name": "Ponastavi OCPP EVSE",
             "description": "Počisti profile polnjenja in ponastavi polnilno postajo na minimalni tok. Polnilni postaji pošlje tudi intervala poročanja (MeterValueSampleInterval in ClockAlignedDataInterval), nastavljena na njeno frekvenco posodabljanja: integracija ocpp ob vsaki povezavi polnilne postaje v ta ključa zapiše svoja intervala (Meter interval in Idle interval), zato ponastavitev znova uveljavi vrednost Load Juggler.",
@@ -2089,6 +2131,14 @@
                 "solar": "PV",
                 "battery": "Baterija",
                 "battery_control": "Upravljanje polnjenja baterije (zapisuje v razsmernik)"
+            }
+        },
+        "tank_dc_off_setpoint": {
+            "options": {
+                "normal": "Normalna temperatura",
+                "away": "Temperatura odsotnosti",
+                "boost": "Temperatura dviga",
+                "keep": "Pusti, kot je"
             }
         }
     },

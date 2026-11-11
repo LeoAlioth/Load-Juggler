@@ -55,6 +55,11 @@ from .const import (
     DEFAULT_VL_MAX,
     DEFAULT_VL_MIN,
     DEFAULT_VL_SETPOINT_UNIT,
+    CONF_PHASE_SWITCHING,
+    DEFAULT_PHASE_SWITCHING,
+    EVSE_RT_PHASE_MODE,
+    PHASE_MODE_AUTO,
+    PHASE_MODE_THREE,
 )
 from .calculations.variable_load import bounds_amps
 from .registry import get_inverters_for_hub
@@ -222,6 +227,15 @@ def stored_legs(entry: ConfigEntry) -> list[str]:
     return set_legs(
         *(get_entry_value(entry, k, d) for k, d in zip(_LEG_KEYS, _LEG_DEFAULTS))
     )
+
+
+def phase_mode(entry: ConfigEntry, load_rt: dict) -> str:
+    """The charger's Phase Switching mode: what its select published, else the
+    pre-2.1.7 checkbox (on: Auto, off: Three phases)."""
+    mode = load_rt.get(EVSE_RT_PHASE_MODE)
+    if mode is not None:
+        return mode
+    return PHASE_MODE_AUTO if get_entry_value(entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING) else PHASE_MODE_THREE
 
 
 def variable_load_amps(entry: ConfigEntry, voltage: float, legs: int | None = None) -> tuple[float, float]:

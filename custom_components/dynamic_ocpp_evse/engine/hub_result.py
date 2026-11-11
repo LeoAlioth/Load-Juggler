@@ -1055,6 +1055,9 @@ def _build_hub_result(
     # device can show where it really stands, since mode urgency can override
     # the configured priority number.
     load_rank = {c.load_id: idx + 1 for idx, c in enumerate(_sort_loads(site.loads))}
+    # The urgency tier each load was sorted by this cycle (a tank riding surplus
+    # sits in Excess) - the Priorities card's lanes.
+    load_tier = {c.load_id: c.mode_priority for c in site.loads}
 
     # Per-load actual draw - the measured current the load is really
     # pulling (sum of phase currents). For a binary load this is what the
@@ -1159,6 +1162,8 @@ def _build_hub_result(
         "load_names": {c.load_id: c.entity_id for c in site.loads},
         "load_modes": load_modes,
         "load_rank": load_rank,
+        "load_tier": load_tier,
+        "voltage": site.voltage,
         "load_draw": load_draw,
         "draw_estimated": draw_estimated,
         "load_connector_status": load_connector_status,

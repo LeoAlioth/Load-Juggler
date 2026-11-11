@@ -102,3 +102,27 @@ set_min_current:
           max: 80
           step: 0.5
           unit_of_measurement: A
+
+move_priority:
+  name: Move Priority
+  description: >-
+    Move a load one place up (served sooner) or down in its hub's priority
+    order. The loads are numbered 1..N again, so normally only the two loads
+    that swap places change; each changed load reloads.
+  fields:
+    entity_id:
+      name: Load entity
+      description: Any entity of the load to move.
+      required: true
+      selector:
+        entity:
+          integration: dynamic_ocpp_evse
+    direction:
+      name: Direction
+      description: up = one place sooner, down = one place later.
+      required: true
+      selector:
+        select:
+          options:
+            - "up"
+            - "down"

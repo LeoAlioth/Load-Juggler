@@ -39,6 +39,16 @@ _PM_DECAY_THRESHOLD = 10.0  # Total score before decay triggers
 _PM_WEIGHT_CAP = 15.0       # Max |delta_draw| for weight calc
 _PM_WEIGHT_DIVISOR = 5.0    # Denominator: weight = min(|delta|, cap) / divisor
 _PM_LINE_ACTIVE_A = 1.0     # Min current (A) to consider a load line active
+# Level evidence (2026-11-01, third site): a charger drawing on one leg while
+# nothing generates must be covered by its phase's import - a phase cannot
+# import less than our loads draw on it. Steps alone missed a steady 16 A
+# one-phase draw for an hour (one ramp, a smoothed grid, a score of ~3).
+_PM_LEVEL_MIN_DRAW_A = 4.0  # One-leg draw (A) worth judging by level
+_PM_LEVEL_TOL_A = 1.5       # Import may fall this far short of the draw (A)
+_PM_LEVEL_TOL_FRAC = 0.2    # ... or this share of it, whichever is larger
+_PM_LEVEL_HOLD_S = 60.0     # The same verdict must hold this long to count
+_PM_LEVEL_POINT_S = 20.0    # Then one point per this many seconds
+_PM_LEVEL_MAX_DT = 30.0     # Cap on one cycle's elapsed time (a stalled loop)
 
 
 # ------------------------------------------------------------------ #
@@ -126,7 +136,7 @@ def check_inversion(state: dict, smoothed_phases: list, site,
 # ------------------------------------------------------------------ #
 
 def check_phase_mapping(state: dict, smoothed_phases: list, loads: list,
-                        hub_entry_id: str) -> list[dict]:
+                        hub_entry_id: str, site=None, now=None) -> list[dict]:
     """Detect phase mapping mismatches for loads on multi-phase sites.
 
     Uses confidence-weighted scoring: stronger signals (larger delta_draw)
@@ -143,6 +153,9 @@ def check_phase_mapping(state: dict, smoothed_phases: list, loads: list,
     After both a 1-phase and 2-phase car have charged, the complete
     L1/L2/L3 → A/B/C mapping is verified.
 
+    With ``site`` given, a level check runs beside the step check: see
+    _level_phase. Its points go into the same 1-phase score.
+
     Returns a list of notification dicts (one per mismatched load).
     """
     # Need 3-phase site (otherwise nothing to mis-map)
@@ -156,15 +169,32 @@ def check_phase_mapping(state: dict, smoothed_phases: list, loads: list,
     grid_b = smoothed_phases[1] if smoothed_phases[1] is not None else 0.0
     grid_c = smoothed_phases[2] if smoothed_phases[2] is not None else 0.0
 
+    now = time.monotonic() if now is None else now
+    last = state.get("level_at")
+    state["level_at"] = now
+    dt = 0.0 if last is None else min(max(now - last, 0.0), _PM_LEVEL_MAX_DT)
+    judge_level = (site is not None and not site.is_off_grid
+                   and _nothing_generates(site))
+
     for load in loads:
         total_draw = load.l1_current + load.l2_current + load.l3_current
         is_active = load.connector_status in (
             "Charging", "SuspendedEVSE", "SuspendedEV",
         )
+        level = None
+        if judge_level and is_active:
+            others = [0.0, 0.0, 0.0]
+            for other in loads:
+                if other is not load:
+                    for i, d in enumerate(other.get_site_phase_draw()):
+                        others[i] += d
+            level = _level_phase(
+                load, [g - o for g, o in zip((grid_a, grid_b, grid_c), others)]
+            )
 
         notif = _check_draw_phase_correlation(
             pm_state, grid_a, grid_b, grid_c, total_draw,
-            load, hub_entry_id, is_active,
+            load, hub_entry_id, is_active, level=level, now=now, dt=dt,
         )
         if notif:
             notifications.append(notif)
@@ -173,6 +203,27 @@ def check_phase_mapping(state: dict, smoothed_phases: list, loads: list,
 
 
 # --- Helpers ---
+
+def _level_phase(load, residual: list) -> str | None:
+    """The one site phase whose import covers a charger's one-leg draw.
+
+    ``residual`` is each phase's grid import less our other loads' draws.
+    Called only while nothing on the site generates, so the house on each
+    phase is >= 0 and the phase the draw is on imports at least the draw.
+    None when it doesn't apply (not an EVSE, an assumed draw, not one leg,
+    too little draw) or no single phase covers it.
+    """
+    if load.device_type != "evse" or load.draw_blind:
+        return None
+    lines = [c for c in (load.l1_current, load.l2_current, load.l3_current)
+             if c > _PM_LINE_ACTIVE_A]
+    draw = load.l1_current
+    if len(lines) != 1 or draw < _PM_LEVEL_MIN_DRAW_A:
+        return None
+    need = draw - max(_PM_LEVEL_TOL_A, _PM_LEVEL_TOL_FRAC * draw)
+    covering = [p for p, r in zip("ABC", residual) if r >= need]
+    return covering[0] if len(covering) == 1 else None
+
 
 def _detect_inactive_line(load) -> str:
     """Return the load line with the lowest current ("l1", "l2", or "l3")."""
@@ -255,9 +306,17 @@ def _handle_mismatch(cs: dict, load, hub_entry_id: str, line: str,
     if best_score < _PM_REMAP_SCORE:
         return None
 
-    # a single-phase load's mapping names L1 only; L2/L3 stay as they are
-    remap = {f"{k}_phase": mapping.get(k, getattr(load, f"{k}_phase"))
-             for k in ("l1", "l2", "l3")}
+    # A single-phase load's mapping names L1 only. A leg that held the phase
+    # a line moves to takes that line's old phase, so no two legs share one
+    # (a three-leg charger switched to one phase is judged as one-phase).
+    legs = {k: getattr(load, f"{k}_phase") for k in ("l1", "l2", "l3")}
+    for k, phase in mapping.items():
+        old = legs[k]
+        for j in legs:
+            if j != k and legs[j] == phase:
+                legs[j] = old
+        legs[k] = phase
+    remap = {f"{k}_phase": v for k, v in legs.items()}
     cs["remapped"] = True
     _LOGGER.warning(
         "AutoDetect: Auto-remapping %s (score: %.1f). "
@@ -278,8 +337,10 @@ def _handle_mismatch(cs: dict, load, hub_entry_id: str, line: str,
             f"L1: {load.l1_phase} \u2192 {remap['l1_phase']}\n"
             f"L2: {load.l2_phase} \u2192 {remap['l2_phase']}\n"
             f"L3: {load.l3_phase} \u2192 {remap['l3_phase']}\n\n"
-            "To make this permanent, update the charger configuration.\n"
-            "This auto-correction resets on restart."
+            + ("The new mapping is saved in the charger's settings "
+               "(Configure)." if load.device_type == "evse" else
+               "To make this permanent, update the load configuration.\n"
+               "This auto-correction resets on restart.")
         ),
         "notification_id": (
             f"dynamic_ocpp_evse_phase_map_{hub_entry_id}_{cid}"
@@ -299,7 +360,9 @@ def _check_draw_phase_correlation(pm_state: dict,
                                   grid_a: float, grid_b: float, grid_c: float,
                                   total_draw: float,
                                   load, hub_entry_id: str,
-                                  is_active: bool) -> dict | None:
+                                  is_active: bool, level: str | None = None,
+                                  now: float = 0.0,
+                                  dt: float = 0.0) -> dict | None:
     """Detect phase mapping by correlating load draw with grid phases.
 
     Uses confidence-weighted scoring: stronger signals (larger delta_draw)
@@ -339,6 +402,19 @@ def _check_draw_phase_correlation(pm_state: dict,
     # Done: remap issued (state reset externally) or both types confirmed
     if cs["remapped"]:
         return None
+
+    # --- Level evidence: L1's phase, once the same verdict held long enough ---
+    held = cs.get("level")
+    if level is None:
+        cs.pop("level", None)
+    elif held is None or held[0] != level:
+        cs["level"] = (level, now)
+    elif now - held[1] >= _PM_LEVEL_HOLD_S:
+        cs["score"][level] += dt / _PM_LEVEL_POINT_S
+        if level != load.l1_phase:
+            # Steps may have confirmed the old mapping; the level overrules it
+            cs["confirmed_1ph"] = False
+
     if cs["confirmed_1ph"] and cs["confirmed_2ph"]:
         return None
 

@@ -19,6 +19,7 @@ from homeassistant.helpers.device_registry import async_get as async_get_device_
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
 from homeassistant.helpers.selector import selector
 from ..const import (
+    CONF_EVSE_DC_OFF_CURRENT,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
     DEVICE_TYPE_ROOM_THERMOSTAT,
@@ -90,6 +91,7 @@ from ..helpers import (
     validate_charger_settings,
 )
 from .helpers import (
+    normalize_dc_off_current,
     _BATTERY_UNIT_MAP,
     _GRID_ENTITY_KEYS,
     _PACING_ENTITY_KEYS,
@@ -1254,6 +1256,9 @@ class LoadJugglerConfigFlow(SectionedFlowMixin, config_entries.ConfigFlow, domai
             # (refused) submit left in the pending data.
             self._data.update({CONF_CHARGER_L2_PHASE: None, CONF_CHARGER_L3_PHASE: None})
             self._data.update(user_input)
+            if CONF_EVSE_DC_OFF_CURRENT not in user_input:
+                self._data[CONF_EVSE_DC_OFF_CURRENT] = None  # cleared: left as it is
+            normalize_dc_off_current(self._data)
             _fill_hidden_legs(self._data, hub_phases)
             validate_charger_settings(self._data, errors)
             if errors:

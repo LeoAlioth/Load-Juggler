@@ -7,6 +7,8 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field, replace
 
+from ..units import is_unavailable_state
+
 _LOGGER = logging.getLogger(__name__)
 
 # Valid load phase masks - the site phases a load may occupy. Any other
@@ -24,6 +26,16 @@ VALID_PHASE_MASKS = frozenset({"A", "B", "C", "AB", "AC", "BC", "ABC"})
 INACTIVE_STATUSES = frozenset(
     {"Available", "Unknown", "Unavailable", "Finishing", "Faulted"}
 )
+
+
+def is_inactive_status(status) -> bool:
+    """Is a load with this connector status drawing nothing - one of
+    INACTIVE_STATUSES, or a status sensor gone offline, which Home Assistant
+    writes in lower case ("unavailable", "unknown"; units.is_unavailable_state).
+    Spelled only as OCPP writes them, an offline charger read as ACTIVE and kept
+    its whole share: Andrej's old charger held 13.3 A of a 9.2 kW budget while
+    the second one, car plugged in, got 0.3 A and sat paused (2026-11-01)."""
+    return status in INACTIVE_STATUSES or is_unavailable_state(status)
 
 
 @dataclass
@@ -138,6 +150,13 @@ class LoadContext:
     # "household_lockstep" | "reading_predates_limit", "since": UTC
     # datetime}``. Set by the HA layer.
     draw_estimate: dict | None = None
+    # A charger awaiting the first reading since its limit was raised is not
+    # raised further this cycle (engine/load_builders._await_new_reading): its
+    # allocation is trimmed to this AFTER the distribution, so the room it is
+    # about to climb into is kept, not handed to the loads ranked behind it
+    # (lowering max_current did that: the third site's Nova, priority 2, rose
+    # 6 -> 12.5 -> 6 A with every reading of Stara's, 2026-11-05). None = no hold.
+    raise_hold: float | None = None
 
     # The current this load will draw the moment the Excess verdict starts it -
     # its rating for a binary load (a plug in Excess mode, a tank whose mode
@@ -194,6 +213,14 @@ class LoadContext:
     # the per-leg current those legs could be given (the phase advice reads it).
     potential_phases_mask: str = ""
     potential_current: float = 0
+    # A three-leg charger that may switch to one phase (it reports the
+    # capability and its option is on) - read by the engine's phase-switching
+    # step (calculations/phase_switch.py), never by the distribution.
+    phase_switchable: bool = False
+    # With a car connected, no phase change sooner than this after the last (s).
+    phase_switch_interval_s: float = 900.0
+    # Back to three only for at least this much more power than one phase (W).
+    phase_switch_up_margin_w: float = 1000.0
 
     @property
     def reports_idle(self) -> bool:
@@ -205,7 +232,7 @@ class LoadContext:
         is unreadable - and, conversely, what makes the fabricated 0 of a load
         that reports itself active something we must not publish.
         """
-        return self.connector_status in INACTIVE_STATUSES
+        return is_inactive_status(self.connector_status)
 
     def get_site_phase_draw(self) -> tuple[float, float, float]:
         """Map L1/L2/L3 current to site phases A/B/C using phase mapping."""

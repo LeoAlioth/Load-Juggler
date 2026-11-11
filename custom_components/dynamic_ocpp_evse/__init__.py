@@ -4,11 +4,13 @@ from homeassistant.config_entries import (
     SOURCE_IMPORT,
     SOURCE_INTEGRATION_DISCOVERY,
 )
-from homeassistant.exceptions import ConfigEntryNotReady
+from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.script import Script
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.storage import Store
+from homeassistant.util import dt as dt_util
 import logging
 import operator
 import voluptuous as vol
@@ -81,6 +83,7 @@ from .const import (
     ENTRY_TYPE_GROUP,
     ENTRY_TYPE_HUB,
     ENTRY_TYPE_INVERTER,
+    EVSE_RT_CLEAR_PAUSE,
     EVSE_RT_COMMANDED_LIMIT,
     MIGRATE_PLUG_SOLAR_ONLY_FLAG,
     modes_for,
@@ -97,6 +100,7 @@ from .helpers import (
     strip_unfeatured_inverter_options,
 )
 from . import units
+from .control.ocpp import read_charger_setting
 from .control.sg_ready import release_relays
 from .control.variable_load import write_fallback
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
@@ -459,9 +463,56 @@ def _charger_phase_count(entry: ConfigEntry) -> int:
     return max(1, len(stored_legs(entry)))
 
 
+CARD_URL = "/dynamic_ocpp_evse/load-juggler-priorities-card.js"
+
+
+async def _ensure_lovelace_resource(hass: HomeAssistant, url: str) -> None:
+    """Keep one Lovelace resource (a module) for ``url``, its ``?v=`` hash updated to this build's.
+
+    A resource, not frontend.add_extra_js_url: HA's frontend (2026.10) swaps in a scoped custom-element
+    registry polyfill after the extra modules have run, and forgets what they defined ("Custom element
+    doesn't exist"); resources load after it, like every HACS card (2026-11-02). A copy of Load
+    Insights' - change both."""
+    from homeassistant.components.lovelace.const import LOVELACE_DATA
+
+    data = hass.data.get(LOVELACE_DATA)
+    if data is None or data.resource_mode != "storage":
+        _LOGGER.warning("Dashboard resources are kept in YAML - add %s (type module) by hand", url)
+        return
+    resources = data.resources
+    await resources.async_get_info()  # loads the stored list before it is read
+    base = url.split("?")[0]
+    mine = [item for item in resources.async_items() if item.get("url", "").split("?")[0] == base]
+    if not mine:
+        await resources.async_create_item({"res_type": "module", "url": url})
+    elif mine[0]["url"] != url or mine[0].get("type") != "module":
+        await resources.async_update_item(mine[0]["id"], {"res_type": "module", "url": url})
+
+
+async def _register_card(hass: HomeAssistant) -> None:
+    """Serve the Priorities card and keep it a dashboard resource, so it needs no
+    resource added by hand (docs/plans/2026-11-01/dashboard-cards.md). Its URL
+    carries a hash of the file: a new build's card replaces a cached one."""
+    import hashlib
+    from pathlib import Path
+
+    from homeassistant.components.http import StaticPathConfig
+
+    if hass.http is None:  # no web server (tests)
+        return
+    path = Path(__file__).parent / "frontend" / "load-juggler-priorities-card.js"
+    digest = await hass.async_add_executor_job(lambda: hashlib.sha1(path.read_bytes()).hexdigest()[:10])
+    await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(path), False)])
+    await _ensure_lovelace_resource(hass, f"{CARD_URL}?v={digest}")
+
+
 async def async_setup(hass: HomeAssistant, config: dict):
     """Set up the Load Juggler component."""
-    
+    try:
+        await _register_card(hass)
+    except Exception:  # noqa: BLE001 - a card that will not load must not stop the integration
+        _LOGGER.exception("Load Juggler Priorities card not registered")
+
     async def handle_reset_service(call):
         """Handle the reset service call."""
         entry_id = call.data.get("entry_id")
@@ -542,6 +593,7 @@ async def async_setup(hass: HomeAssistant, config: dict):
         load_rt = hass.data.get(DOMAIN, {}).get("loads", {}).get(entry_id)
         if load_rt is not None:
             load_rt.pop(EVSE_RT_COMMANDED_LIMIT, None)
+            load_rt[EVSE_RT_CLEAR_PAUSE] = True   # a reset ends any charge pause
 
         script = Script(hass, sequence, "Reset OCPP EVSE", DOMAIN)
         await script.async_run(context=call.context)
@@ -559,7 +611,25 @@ async def async_setup(hass: HomeAssistant, config: dict):
         interval = str(int(get_entry_value(
             entry, CONF_UPDATE_FREQUENCY, DEFAULT_UPDATE_FREQUENCY
         )))
+        # A setting the charger did not take - it holds another value when read
+        # back - is remembered per charger and not sent again on an automatic
+        # reset, each of which made the ocpp integration post a "charger reported
+        # Rejected" notification (Sean's nest, ClockAlignedDataInterval,
+        # 2026-10-31). A Reset OCPP pressed by hand tries it again, so a firmware
+        # that learns it is noticed. ocpp's configure answers only whether a
+        # reboot is needed, hence the read-back.
+        # ponytail: the store outlives a removed load; drop it in async_remove_entry if that ever matters
+        store = Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.ocpp_refused")
+        refused = await store.async_load() or {}
+        by_hand = call.context.user_id is not None
+        changed = False
         for key in ("MeterValueSampleInterval", "ClockAlignedDataInterval"):
+            if key in refused and not by_hand:
+                _LOGGER.debug(
+                    "%s: not sending %s - the charger refused it on %s (Reset OCPP by hand tries again)",
+                    entry.title, key, refused[key].get("at"),
+                )
+                continue
             try:
                 response = await hass.services.async_call(
                     "ocpp",
@@ -574,15 +644,62 @@ async def async_setup(hass: HomeAssistant, config: dict):
                     entry.title, key, interval, err,
                 )
                 continue
+            reboot = isinstance(response, dict) and bool(response.get("reboot_required"))
             _LOGGER.info(
                 "%s: sent the charger %s = %s s%s",
                 entry.title, key, interval,
-                " (the charger needs a reboot to apply it)"
-                if isinstance(response, dict) and response.get("reboot_required")
-                else "",
+                " (the charger needs a reboot to apply it)" if reboot else "",
             )
+            held = None if reboot else await read_charger_setting(hass, ocpp_device_id, key)
+            if held is not None and str(held).strip() != interval:
+                refused[key] = {"value": interval, "held": str(held), "at": dt_util.utcnow().isoformat()}
+                changed = True
+                _LOGGER.warning(
+                    "%s: the charger did not take %s = %s (it holds %s) - remembered, and not sent again "
+                    "on automatic resets; Reset OCPP pressed by hand tries it again",
+                    entry.title, key, interval, held,
+                )
+            elif held is not None and key in refused:
+                del refused[key]
+                changed = True
+        if changed:
+            await store.async_save(refused)
 
     hass.services.async_register(DOMAIN, "reset_ocpp_evse", handle_reset_service)
+
+    async def handle_move_priority(call: ServiceCall):
+        """Move a load one place up (served sooner) or down its hub's configured
+        priority order - the Priorities card's arrows. Renumbers 1..N with the
+        hub priority-order page's own helper, so with numbers already 1..N only
+        the two swapped loads change (and reload)."""
+        from .config_flow.helpers import (
+            _apply_priority_order,
+            _controlled_devices,
+            _devices_by_priority,
+        )
+
+        reg = er.async_get(hass).async_get(call.data["entity_id"])
+        entry = hass.config_entries.async_get_entry(reg.config_entry_id) if reg else None
+        if entry is None or entry.domain != DOMAIN or entry.data.get(ENTRY_TYPE) != ENTRY_TYPE_LOAD:
+            raise ServiceValidationError(f"{call.data['entity_id']} is not an entity of a Load Juggler load")
+        devices = _controlled_devices(hass, entry.data.get(CONF_HUB_ENTRY_ID))
+        order = [e.entry_id for e in _devices_by_priority(devices)]
+        i = order.index(entry.entry_id)
+        j = i - 1 if call.data["direction"] == "up" else i + 1
+        if not 0 <= j < len(order):
+            return
+        order[i], order[j] = order[j], order[i]
+        _apply_priority_order(hass, devices, order)
+
+    hass.services.async_register(
+        DOMAIN,
+        "move_priority",
+        handle_move_priority,
+        schema=vol.Schema({
+            vol.Required("entity_id"): cv.entity_id,
+            vol.Required("direction"): vol.In(("up", "down")),
+        }),
+    )
 
     def _own_entity(entry_id: str, platform: str, suffix: str):
         """The entity_id of one of an entry's own entities, or None.

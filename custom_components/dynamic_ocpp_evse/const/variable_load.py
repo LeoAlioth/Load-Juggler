@@ -10,8 +10,7 @@ The pure arithmetic is calculations/variable_load.py; the writes
 control/variable_load.py.
 """
 
-from .common import EXCESS_URGENCY_TIER, BEHAVIOR_EXCESS, OperatingMode
-from .evse import OPERATING_MODES_EVSE, EVSE_MODE_STANDARD
+from .evse import EVSE_MODE_HOLD, EVSE_MODE_STANDARD, OPERATING_MODES_EVSE_HOLD
 
 CONF_VL_SETPOINT_ENTITY_ID = "vl_setpoint_entity_id"  # number / input_number; none = output only
 CONF_VL_SETPOINT_UNIT = "vl_setpoint_unit"            # "A" (per leg) or "W" (total)
@@ -28,6 +27,8 @@ CONF_VL_CHARGING_ENTITY_ID = "vl_charging_entity_id"    # binary_sensor: off = n
 CONF_VL_PHASE_MULTI_ABOVE = "vl_phase_multi_above"      # W
 CONF_VL_PHASE_SINGLE_BELOW = "vl_phase_single_below"    # W
 CONF_VL_PHASE_MIN_INTERVAL = "vl_phase_min_interval"    # minutes between advice changes
+# select / input_select / number / input_number the advice is written to (1 / 3); none = advice only
+CONF_VL_PHASE_ENTITY_ID = "vl_phase_entity_id"
 CONF_VL_FALLBACK_SETPOINT = "vl_fallback_setpoint"      # written when the entry unloads; unset = nothing
 
 VL_UNIT_AMPS = "A"
@@ -50,11 +51,8 @@ VL_RT_OUTPUTS = "vl_outputs"            # what the allowance sensors publish
 VL_RT_ADVICE = "vl_phase_advice"        # (advice, since) memory of the phase advice
 VL_RT_LAST_WRITE = "vl_last_write"      # monotonic time of the last setpoint write
 
-# The EVSE's four modes plus Hold: the setpoint goes to 0 (or the entity's own
+# The EVSE's modes, Hold included: the setpoint goes to 0 (or the entity's own
 # minimum when it cannot take 0) and the load claims nothing.
-VL_MODE_HOLD = OperatingMode(
-    key="Hold", label="Hold", priority=EXCESS_URGENCY_TIER, icon="mdi:pause-circle-outline",
-    behavior=BEHAVIOR_EXCESS,
-)
-OPERATING_MODES_VARIABLE_LOAD = [*OPERATING_MODES_EVSE, VL_MODE_HOLD]
+VL_MODE_HOLD = EVSE_MODE_HOLD
+OPERATING_MODES_VARIABLE_LOAD = OPERATING_MODES_EVSE_HOLD
 DEFAULT_OPERATING_MODE_VARIABLE_LOAD = EVSE_MODE_STANDARD

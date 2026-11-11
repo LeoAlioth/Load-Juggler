@@ -14,6 +14,8 @@ from ..const import (
     CONF_BINARY_MIN_OFF_TIME,
     CONF_CHARGE_PAUSE_DURATION,
     CONF_PAUSE_PROFILE_VALIDITY,
+    CONF_EVSE_DC_OFF_CURRENT,
+    EVSE_DC_OFF_MAX,
     CONF_CONNECTED_TO_PHASE,
     CONF_DEVICE_TYPE,
     CONF_EVSE_MAXIMUM_CHARGE_CURRENT,
@@ -47,8 +49,11 @@ from ..const import (
     EVSE_MODE_SOLAR_ONLY,
     EVSE_MODE_SOLAR_PRIORITY,
     EVSE_RT_READOUT_WATCH,
+    EVSE_RT_COMMANDED_PHASES,
+    EVSE_RT_PHASE_PAUSE_AT,
+    EVSE_RT_CLEAR_PAUSE,
     LOAD_RT_SUN_PROBE,
-    VL_MODE_HOLD,
+    EVSE_MODE_HOLD,
     VL_RT_LEGS_GREW,
     VL_RT_SIZED_COUNT,
 )
@@ -63,7 +68,7 @@ from ..control.smoothing import apply_smoothing, cut_now
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
 from ..control import stamp_command
-from ..control.ocpp import send_ocpp_command
+from ..control.ocpp import phase_pause_over, probe_phase_switching, send_ocpp_command, told_phases
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
@@ -208,7 +213,12 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         # None (not datetime.min) until the first one - a naive sentinel next to
         # the tz-aware values written later is a comparison landmine.
         self._last_update = None
+        # (available, state, attributes but last_update) as last written - see async_process
+        self._last_written = None
         self._pause_started_at = None
+        # The connector status last seen (not unavailable), so a charger back
+        # from Faulted ends a charge pause - see _async_apply.
+        self._prev_connector_status = None
         # The pause whose 0 A profile reached the charger (its _pause_started_at),
         # so the rest of that pause sends nothing - see the EVSE command below -
         # and when that profile is due a refresh (monotonic).
@@ -375,9 +385,19 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             )
         # Polling is off and there is no coordinator listener, so this is the
         # one place the entity's state reaches HA. Skipped before the entity is
-        # registered (a hub tick can precede HA adding the entity).
+        # registered (a hub tick can precede HA adding the entity). Written only
+        # when something besides last_update changed: the stamp moves every
+        # cycle, so every cycle was a new state - at Home three idle loads at 0 A
+        # wrote ~1 kB each every 5-10 s, each a new attributes row in the
+        # recorder (2026-11-10). Availability is compared too, so a load that
+        # stops being processed still turns unavailable.
         if self.hass is not None and self.entity_id:
-            self.async_write_ha_state()
+            attrs = dict(self.extra_state_attributes)
+            attrs.pop("last_update", None)
+            seen = (self.available, self._state, attrs)
+            if seen != self._last_written:
+                self._last_written = seen
+                self.async_write_ha_state()
 
     async def _async_apply(self, hub_data):
         """The body of async_process - see its docstring."""
@@ -434,6 +454,18 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode
 
+        # A reset (Reset OCPP) or a charger back from Faulted ends a charge pause:
+        # the reset cleared the pause's 0 A, a fault's reboot lost it, and re-sent
+        # it stopped the third site's go-e again 20 s after it came back (2026-11-05).
+        status_now = units.state_or_unknown(self.hass.states.get(self._connector_status_entity))
+        readable = not units.is_unavailable_state(status_now)
+        back_from_fault = readable and self._prev_connector_status == "Faulted" and status_now != "Faulted"
+        if (self._runtime().pop(EVSE_RT_CLEAR_PAUSE, False) or back_from_fault) and self._pause_started_at is not None:
+            _LOGGER.info("%s: charge pause ended by a reset", self._attr_name)
+            self._pause_started_at = None
+        if readable:
+            self._prev_connector_status = status_now
+
 
         # The site-level republish into hass.data is the hub coordinator's job
         # (one writer per cycle) - see publish_hub_data in entities/hub.py.
@@ -477,21 +509,49 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         legs_grew = device_type == DEVICE_TYPE_VARIABLE_LOAD and self._runtime().pop(
             VL_RT_LEGS_GREW, False
         )
-        if legs_grew:
+        # A charger the engine has put on another phase count than its last
+        # profile carried: the same restart, and the profile goes out now.
+        phase_due = False
+        if device_type == DEVICE_TYPE_EVSE:
+            probe_phase_switching(self, time.monotonic())
+            told = told_phases(self._runtime(), self.config_entry)
+            phase_due = told is not None and told != self._runtime().get(
+                EVSE_RT_COMMANDED_PHASES, 3
+            )
+            if phase_due and self._pause_started_at is not None:
+                # The pause was for the old phase count's shortage.
+                self._pause_started_at = None
+        if legs_grew or phase_due:
             # It now draws on more legs than it was sized on (switched back to
-            # three phases): the allowance it holds was sized for fewer legs.
+            # three phases), or on another phase count than it was last told:
+            # the allowance it holds was sized for other legs.
             # Restart the permit from the minimum - the new legs only rise
             # through the ramp - and let the cut (or the stop) go out now,
             # not at the command slot, without the one-cycle confirmation.
-            floor = self._variable_load_floor(hub_entry)
+            floor = (
+                self._variable_load_floor(hub_entry)
+                if legs_grew
+                else self._runtime().get("min_current") or get_entry_value(
+                    self.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
+                )
+            )
             self._ema_current = self._schmitt_current = self._rate_limited_current = floor
             self._schmitt_state = "rising"
             self._short_last_cycle = True
-            self._last_command_time = -float("inf")
+            # During the pause before the switch (control/ocpp.phase_switch_pause)
+            # its 0 A went out on the first cycle; the next send waits for the
+            # pause to be over, not every 2-s cycle of it.
+            pause_at = self._runtime().get(EVSE_RT_PHASE_PAUSE_AT)
+            if pause_at is None or phase_pause_over(
+                pause_at, hub_data.get("load_draw", {}).get(self.config_entry.entry_id), time.monotonic()
+            ):
+                self._last_command_time = -float("inf")
             self._last_commanded_limit = None  # not the cut straight to the new permit
             _LOGGER.info(
-                "%s draws on more legs than it was sized on - restarting its allowance at %.1f A",
-                self._attr_name, floor,
+                "%s %s - restarting its allowance at %.1f A",
+                self._attr_name,
+                "draws on more legs than it was sized on" if legs_grew else "changes its phase count",
+                floor,
             )
         if device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_VARIABLE_LOAD):
             self._available_current = apply_smoothing(
@@ -511,8 +571,8 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
         else:
             self._available_current = raw_permit
         if (
-            device_type == DEVICE_TYPE_VARIABLE_LOAD
-            and self._operating_mode == VL_MODE_HOLD.key
+            device_type in (DEVICE_TYPE_EVSE, DEVICE_TYPE_VARIABLE_LOAD)
+            and self._operating_mode == EVSE_MODE_HOLD.key
         ):
             # Hold: nothing allowed. The engine claims nothing for it, but an
             # inactive load is still offered what is left over.
@@ -835,12 +895,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             limit = math.ceil(self._available_current * 10) / 10 if self._available_current > 0 else 0.0
             self._pause_started_at = None
         elif not dynamic_control_on:
-            limit = round(float(max_charge_current), 1)
+            # The charger's *When Dynamic Control is off* current: its maximum
+            # unless set; cleared (None) sends nothing below.
+            off = get_entry_value(self.config_entry, CONF_EVSE_DC_OFF_CURRENT, EVSE_DC_OFF_MAX)
+            limit = round(float(max_charge_current if off in (EVSE_DC_OFF_MAX, None) else off), 1)
             self._pause_started_at = None
             _LOGGER.debug(
-                "Dynamic control OFF for %s - using max current %sA",
+                "Dynamic control OFF for %s - %s",
                 self._attr_name,
-                limit,
+                "left as it is" if off is None else f"held at {limit}A",
             )
         elif short:
             # A shortage the engine still sees as the command goes out: the
@@ -948,8 +1011,15 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                 await send_variable_load_command(
                     self, limit, hub_entry, now_mono,
                     (hub_data.get("load_potential") or {}).get(self.config_entry.entry_id),
+                    offered=hub_data.get("load_available", {}).get(self.config_entry.entry_id, 0.0),
                 )
         else:
+            if not dynamic_control_on and get_entry_value(
+                self.config_entry, CONF_EVSE_DC_OFF_CURRENT, EVSE_DC_OFF_MAX
+            ) is None:
+                # Left as it is: no profile - the charger keeps the last one until it runs out.
+                stamp_command(self, now_mono)
+                return
             await check_profile_compliance(self, limit, dynamic_control_on)
             # A pause's 0 A goes out once, valid for the pause profile validity
             # (default 1 h, or the rest of the pause if longer) on top of the
@@ -992,6 +1062,7 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                     self.config_entry.entry_id
                 ),
                 hold_s=hold_s,
+                draw=hub_data.get("load_draw", {}).get(self.config_entry.entry_id),
             )
             if hold_s is not None and sent:
                 self._pause_sent_for = self._pause_started_at

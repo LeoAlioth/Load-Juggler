@@ -563,6 +563,27 @@ async def test_phase_advice_on_one_leg_reads_what_all_its_legs_could_take(hass):
     assert all(a == "single" for t, a in advice if t >= first_single)
 
 
+async def test_hold_keeps_the_multi_advice_while_all_legs_have_room(hass):
+    """Issue 21: a device charging on all three legs is put on Hold. Its setpoint
+    goes to 0, but every phase still has 20 A of room, so the advice is what it
+    would resume on - multi - and stays so past the minimum time between changes
+    (5 min here), instead of dropping to the single of its 0 A."""
+    from custom_components.dynamic_ocpp_evse.const import CONF_VL_PHASE_MIN_INTERVAL
+
+    site = _site3(hass, **{CONF_VL_PHASE_MIN_INTERVAL: 5})
+    world = World3(hass, house=[5.0, 5.0, 5.0], legs_on=3, value=16.0)
+
+    def script(w, t):
+        if t >= 60:
+            site.rt["operating_mode"] = VL_MODE_HOLD.key
+
+    log = await _run3(hass, site, world, 500, script)
+    held = [r for r in log if r.t >= 70]
+    assert all(r.value == 0.0 for r in held), [(r.t, r.value) for r in held][:5]
+    advice = [(r.t, r.out.get("phase_advice")) for r in held]
+    assert advice and all(a == "multi" for _, a in advice), [x for x in advice if x[1] != "multi"][:5]
+
+
 # ── Stale grid CTs and the fallback setpoint (owner, 2026-10-21) ────────
 
 

@@ -434,6 +434,11 @@ _HUB_REPUBLISH_KEYS = frozenset(
     # per pool is a debugging structure, not a number to graph. Read by the
     # Overview page and carried into the diagnostics dump.
     "pool_detail",
+    # Read by the Effective Priority sensor for the Priorities card
+    # (frontend/load-juggler-priorities-card.js): each load's urgency tier,
+    # and the site voltage its watts are worked out with.
+    "load_tier",
+    "voltage",
 }
 
 

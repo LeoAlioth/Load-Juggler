@@ -62,6 +62,7 @@ from ..helpers import (
 )
 from ..helpers import hub_has_battery, inverter_features, strip_unfeatured_inverter_options
 from .helpers import (
+    normalize_dc_off_current,
     _BATTERY_UNIT_MAP,
     _GRID_ENTITY_KEYS,
     _PACING_ENTITY_KEYS,
@@ -656,6 +657,7 @@ class LoadJugglerOptionsFlow(SectionedFlowMixin, config_entries.OptionsFlow):
 
         def _validate(data: dict[str, Any], errors: dict[str, str]) -> None:
             _fill_hidden_legs(data, hub_phases)
+            normalize_dc_off_current(data)
             validate_charger_settings(data, errors)
 
         return await self._async_wizard_page(

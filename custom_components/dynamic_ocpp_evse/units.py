@@ -159,6 +159,13 @@ def is_unavailable(state) -> bool:
     return is_unavailable_state(getattr(state, "state", None))
 
 
+def is_unknown(state) -> bool:
+    """True when the entity is up but reads ``unknown`` - for the few inputs
+    where that is an answer rather than a dropout (Load Insights' Next full
+    charge: no full pack within the forecast). Unavailable or missing is not."""
+    return state is not None and getattr(state, "state", None) == "unknown"
+
+
 def is_unusable_number(value) -> bool:
     """True when ``value`` cannot be used as a number.
 

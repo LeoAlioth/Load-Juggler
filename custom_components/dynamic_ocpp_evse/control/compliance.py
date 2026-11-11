@@ -1,8 +1,11 @@
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from ..const import (
     DOMAIN,
+    PHASE_SWITCH_SETTLE_S,
+    RT_PHASE_SWITCH_AT,
     HARD_RESET_COOLDOWN_SECONDS,
     AUTO_RESET_COOLDOWN_SECONDS,
     AUTO_RESET_MISMATCH_SECONDS,
@@ -84,6 +87,14 @@ async def check_profile_compliance(
         if elapsed < AUTO_RESET_COOLDOWN_SECONDS:
             _clear_mismatch(sensor)
             return
+
+    # A charger switching between one and three phases sits at 0 A for a few
+    # seconds and its offered current lags: not a failure to follow the profile.
+    runtime = getattr(sensor, "_runtime", None)
+    switched_at = runtime().get(RT_PHASE_SWITCH_AT, -math.inf) if callable(runtime) else -math.inf
+    if time.monotonic() - switched_at < PHASE_SWITCH_SETTLE_S:
+        _clear_mismatch(sensor)
+        return
 
     connector_status_state = sensor.hass.states.get(sensor._connector_status_entity)
     connector_status = units.state_or_unknown(connector_status_state)
