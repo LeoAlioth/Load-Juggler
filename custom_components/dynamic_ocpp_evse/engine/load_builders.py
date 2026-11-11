@@ -107,6 +107,8 @@ from ..const import (
     EVSE_RT_COMMANDED_PHASES,
     CONF_PHASE_SWITCH_INTERVAL,
     DEFAULT_PHASE_SWITCH_INTERVAL,
+    CONF_PHASE_SWITCH_UP_MARGIN,
+    DEFAULT_PHASE_SWITCH_UP_MARGIN,
     PHASE_MODE_THREE,
     CONF_SEND_NUMBER_PHASES,
     DEFAULT_SEND_NUMBER_PHASES,
@@ -604,6 +606,9 @@ def _build_evse_load(hass, entry, voltage, load_entity_id, priority,
         phase_switchable=switchable,
         phase_switch_interval_s=60.0 * float(
             get_entry_value(entry, CONF_PHASE_SWITCH_INTERVAL, DEFAULT_PHASE_SWITCH_INTERVAL)
+        ),
+        phase_switch_up_margin_w=float(
+            get_entry_value(entry, CONF_PHASE_SWITCH_UP_MARGIN, DEFAULT_PHASE_SWITCH_UP_MARGIN)
         ),
     )
     if on_one:

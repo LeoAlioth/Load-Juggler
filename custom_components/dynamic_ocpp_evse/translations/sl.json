@@ -667,6 +667,7 @@
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
                             "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
                             "phase_switch_interval": "Najkrajši čas med menjavama faz",
+                            "phase_switch_up_margin": "Dodatna moč za vrnitev na tri faze",
                             "send_number_phases": "Pošlji število faz v profilu polnjenja"
                         },
                         "data_description": {
@@ -674,6 +675,7 @@
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
                             "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
                             "phase_switch_interval": "Ko je avto priključen, se število faz v tem času spremeni največ enkrat, v katero koli smer: polnilna postaja se za preklop ustavi, vsak preklop pa obremeni njen kontaktor.",
+                            "phase_switch_up_margin": "Na eni fazi se polnilna postaja vrne na tri faze šele, ko bi ji tri dale vsaj toliko več moči, kot jo dobi zdaj (in na vsaki fazi vsaj minimalni tok), 5 minut zapored. Večja vrednost pomeni manj preklopov.",
                             "send_number_phases": "Polnilna postaja, ki preklop podpira, v vsakem profilu polnjenja dobi število faz (numberPhases), zato se tista, ki je ostala na eni fazi, vrne na tri. Izklopljeno: profili števila faz ne nosijo, kot pred 2.1.7, in preklop faz ne deluje."
                         }
                     }
@@ -1706,6 +1708,7 @@
                             "charger_l2_phase": "L2 polnilne postaje → faza lokacije (neobvezno)",
                             "charger_l3_phase": "L3 polnilne postaje → faza lokacije (neobvezno)",
                             "phase_switch_interval": "Najkrajši čas med menjavama faz",
+                            "phase_switch_up_margin": "Dodatna moč za vrnitev na tri faze",
                             "send_number_phases": "Pošlji število faz v profilu polnjenja"
                         },
                         "data_description": {
@@ -1713,6 +1716,7 @@
                             "charger_l2_phase": "Pustite prazno, če polnilna postaja nima L2 (enofazna uporablja samo L1).",
                             "charger_l3_phase": "Pustite prazno, če polnilna postaja nima L3 (enofazna ali dvofazna).",
                             "phase_switch_interval": "Ko je avto priključen, se število faz v tem času spremeni največ enkrat, v katero koli smer: polnilna postaja se za preklop ustavi, vsak preklop pa obremeni njen kontaktor.",
+                            "phase_switch_up_margin": "Na eni fazi se polnilna postaja vrne na tri faze šele, ko bi ji tri dale vsaj toliko več moči, kot jo dobi zdaj (in na vsaki fazi vsaj minimalni tok), 5 minut zapored. Večja vrednost pomeni manj preklopov.",
                             "send_number_phases": "Polnilna postaja, ki preklop podpira, v vsakem profilu polnjenja dobi število faz (numberPhases), zato se tista, ki je ostala na eni fazi, vrne na tri. Izklopljeno: profili števila faz ne nosijo, kot pred 2.1.7, in preklop faz ne deluje."
                         }
                     }

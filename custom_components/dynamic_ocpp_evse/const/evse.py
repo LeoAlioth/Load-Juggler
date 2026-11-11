@@ -134,9 +134,14 @@ EVSE_RT_PHASE_PAUSE_AT = "phase_switch_pause_at"
 # it too - its reboot lost the pause's 0 A, and re-sending it stopped the third
 # site's go-e again 20 s after it came back.
 EVSE_RT_CLEAR_PAUSE = "clear_pause"
-# Three phases again only when all three legs could take the minimum plus this
-# (A) without a break for PHASE_SWITCH_UP_HOLD_S (the owner, 2026-11-01).
-PHASE_SWITCH_UP_MARGIN = 2.0
+# Per-charger option: three phases again only when they would give at least this
+# much more power (W) than one phase gets now, all three legs at the minimum or
+# more, without a break for PHASE_SWITCH_UP_HOLD_S. At the third site one phase
+# at 20 A (4.6 kW) against three at 6 A (4.1 kW) under a 5.4 kW cap: 1 kW kept
+# the switches where the old rule had them (the minimum plus 2 A on all three)
+# while still going back when three give clearly more (the owner, 2026-11-11).
+CONF_PHASE_SWITCH_UP_MARGIN = "phase_switch_up_margin"
+DEFAULT_PHASE_SWITCH_UP_MARGIN = 1000
 PHASE_SWITCH_UP_HOLD_S = 300
 # How often an unanswered capability read is tried again (s).
 PHASE_SWITCH_PROBE_RETRY_S = 600

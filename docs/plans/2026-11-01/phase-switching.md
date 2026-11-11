@@ -19,13 +19,18 @@ during Hold, and do not take the charger's 0 A dip during a switch for a manual 
 ## The rule (owner's answers, 2026-11-01)
 
 - **Who:** every OCPP charger with three legs that reports `ConnectorSwitch3to1PhaseSupported` = true, unless its
-  new Configure option "Phase switching" (default on) is off.
+  *Phase Switching* select says Three phases (Auto by default; One phase forces one - 2026-11-11, was a Configure
+  checkbox).
 - **When one phase:** only to avoid a pause. Three phases whenever three reach the minimum; one phase when three
   would not but one would. (Three phases at the minimum always deliver more than one at the maximum - 4.1 kW
   against 3.7 kW at 6/16 A - so "more power" and "avoid a pause" are the same rule.)
-- **Back to three:** when the load's current on all three legs (its potential, `_set_potential_current`) reaches
-  the minimum plus `PHASE_SWITCH_UP_MARGIN` (2 A) and stays there without a break for `PHASE_SWITCH_UP_HOLD_S`
-  (5 min) - the owner, 2026-11-01, so a site sitting at the edge does not bounce.
+- **Back to three (changed 2026-11-11):** when every leg could take the minimum (the potential,
+  `_set_potential_current`) and three would give at least the charger's *Extra power needed to go back to three
+  phases* (`phase_switch_up_margin`, 1000 W by default) more than one phase gets now, without a break for
+  `PHASE_SWITCH_UP_HOLD_S` (5 min). Until then: the minimum plus 2 A on all three (the owner, 2026-11-01). Why: at
+  the third site's 5.4 kW block-1 cap the old rule could never be met (8 A x 3 = 5.5 kW), so a charger on one phase
+  stayed there for the session; with one phase at 20 A (4.6 kW) three at 6-7 A gain little for a stop. Simulated on
+  50 h of block 1: 1 kW keeps today's switch count at 20 A and gains 0.1 kW into the battery at 16 A.
 - **Spacing (changed 2026-11-05):** with a car connected no change comes within the charger's *Minimum time between phase changes* (`phase_switch_interval`, 15 min by default; a fixed 10 min until 2026-11-10)
   of the last one, in either direction, the "not charging - resumes on three" rule included. The first version let
   a change to one phase go at once and let a charger that was not charging return to three at once; the go-e's own

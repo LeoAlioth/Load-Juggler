@@ -219,6 +219,8 @@ class LoadContext:
     phase_switchable: bool = False
     # With a car connected, no phase change sooner than this after the last (s).
     phase_switch_interval_s: float = 900.0
+    # Back to three only for at least this much more power than one phase (W).
+    phase_switch_up_margin_w: float = 1000.0
 
     @property
     def reports_idle(self) -> bool:

@@ -707,16 +707,16 @@ Every mode above gives a charger at least its minimum current or nothing. A thre
 ```
 three phases reach the minimum              -> three phases
 three would pause it, one reaches it         -> one phase (its L1), at once
-on one phase, all three could take min + 1 A -> three phases, at the earliest 10 min after the last change
+on one phase, three give >= 1 kW more, 5 min -> three phases, at the earliest 15 min after the last change
 ```
 
-Three phases at the minimum always give more than one phase at the maximum (6 A x 3 = 4.1 kW against 16 A x 1 = 3.7 kW at 230 V), so "more power" and "no pause" are the same rule. One phase sits on the site phase the charger's L1 is wired to; what three would get is worked out every cycle from the pools left after the loads ranked ahead of it, the same way its permit is.
+Three phases at the minimum give more than one phase at 16 A (6 A x 3 = 4.1 kW against 16 A x 1 = 3.7 kW at 230 V), so "more power" and "no pause" are the same rule. Back on one phase, three must give at least *Extra power needed to go back to three phases* (1 kW by default) more than one phase gets now: a charger allowed 20 A on one phase (4.6 kW) stays there rather than stopping to switch for a few hundred watts. One phase sits on the site phase the charger's L1 is wired to; what three would get is worked out every cycle from the pools left after the loads ranked ahead of it, the same way its permit is.
 
 ```
 20 A breaker, house 2 / 16 / 1 A on A / B / C, charger 6-16 A three-phase
 three phases: B leaves 4 A < 6 A -> it would pause
 one phase on A: 18 A free -> 16 A, 3.7 kW
-house on B drops to 2 A -> three could take 16 A >= 7 A -> back to three 10 min after the switch
+house on B drops to 2 A -> three could take 16 A each, 11 kW against 3.7 kW -> back to three 15 min after the switch
 ```
 
 No car puts it back on three phases for the next session; Dynamic Control off or a car not charging keeps the count as it is. Per charger, the *Phase Switching* select sets it: *Auto* (the default) as described, *Three phases* to never switch, *One phase* to always charge on one phase. The *Last Switch to One Phase* sensor shows when it last went to one phase (unknown: never) and how many times.

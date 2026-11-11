@@ -22,6 +22,7 @@ from custom_components.dynamic_ocpp_evse.calculations.phase_switch import (
     THREE,
     decide,
     set_phases,
+    three_phase_gain_w,
     single_phase_permit,
 )
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
@@ -72,10 +73,13 @@ def test_on_one_phase_the_potential_is_what_three_legs_could_take():
 
 
 def _decide(on=THREE, since=0.0, now=1000.0, **kw):
-    args = dict(connected=True, held=False, permit=0.0, min_current=6.0,
-                single_permit=lambda: 0.0, potential=0.0, margin=2.0,
+    """On one phase the permit defaults to 16 A (one phase at its maximum),
+    and ``gain_w`` is worked out from it and ``potential`` at 230 V."""
+    args = dict(connected=True, held=False, permit=16.0 if on == ONE else 0.0, min_current=6.0,
+                single_permit=lambda: 0.0, potential=0.0, margin_w=1000.0,
                 above_s=math.inf, hold_s=300, interval_s=600)
     args.update(kw)
+    args.setdefault("gain_w", three_phase_gain_w(args["potential"], args["permit"], 230.0))
     return decide(on, since, now, **args)
 
 
@@ -96,18 +100,31 @@ def test_three_kept_when_one_phase_does_not_reach_the_minimum_either():
     assert _decide(permit=2.0, single_permit=lambda: 4.0)[0] == THREE
 
 
-def test_back_to_three_only_after_the_interval_and_above_the_margin():
-    # under minimum + margin (6 + 2 A): stays
-    assert _decide(on=ONE, since=0.0, now=2000.0, potential=7.5)[0] == ONE
-    # enough, but within 10 minutes of the last change: stays, and says why
-    phases, _, reason = _decide(on=ONE, since=900.0, now=1000.0, potential=9.0)
+def test_back_to_three_only_after_the_interval_and_for_the_margin():
+    # one phase at 16 A (3.68 kW); three at 6.5 A give 4.49 kW, 805 W more: under 1 kW, stays
+    phases, _, reason = _decide(on=ONE, since=0.0, now=2000.0, potential=6.5)
+    assert phases == ONE and "under the 1000 W margin" in reason
+    # three at 7.0 A give 1150 W more, but within 10 minutes of the last change: stays, and says why
+    phases, _, reason = _decide(on=ONE, since=900.0, now=1000.0, potential=7.0)
     assert phases == ONE and "last change 2 min ago" in reason
     # enough and the interval is over
-    assert _decide(on=ONE, since=0.0, now=601.0, potential=9.0)[:2] == (THREE, 601.0)
+    assert _decide(on=ONE, since=0.0, now=601.0, potential=7.0)[:2] == (THREE, 601.0)
+
+
+def test_the_margin_is_power_against_what_one_phase_gets_now():
+    """The third site, 2026-11-11: one phase at 20 A (4.6 kW) against three at
+    7.6 A (5.24 kW) is 644 W more - under 1 kW, so it stays on one; one phase
+    at 16 A against the same three is 1.56 kW more, so it goes back."""
+    assert _decide(on=ONE, potential=7.6, permit=20.0)[0] == ONE
+    assert _decide(on=ONE, potential=7.6, permit=16.0)[0] == THREE
+    # the margin is the charger's option
+    assert _decide(on=ONE, potential=7.6, permit=20.0, margin_w=500.0)[0] == THREE
+    # never back to three with a leg under the minimum, whatever the power
+    assert _decide(on=ONE, potential=5.9, permit=6.0, margin_w=0.0)[0] == ONE
 
 
 def test_back_to_three_only_once_the_margin_held_five_minutes():
-    # interval long over, but above the margin only for 2 minutes: stays, says when
+    # interval long over, enough power, but held only for 2 minutes: stays, says when
     phases, _, reason = _decide(on=ONE, since=0.0, now=5000.0, potential=8.0, above_s=120.0)
     assert phases == ONE and "back to three in 3 min" in reason
     assert _decide(on=ONE, since=0.0, now=5000.0, potential=8.0, above_s=300.0)[:2] == (THREE, 5000.0)

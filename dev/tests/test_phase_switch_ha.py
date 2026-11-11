@@ -37,6 +37,7 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PHASE_SWITCH_INTERVAL,
+    CONF_PHASE_SWITCH_UP_MARGIN,
     CONF_PHASE_VOLTAGE,
     CONF_SEND_NUMBER_PHASES,
     CONF_VL_PHASE_ENTITY_ID,
@@ -141,6 +142,15 @@ async def test_back_to_three_only_after_fifteen_minutes(hass):
     back = min(r["i"] for r in trace if r["i"] > first_one and r["phases"] == 3)
     assert (back - first_one) * 2 >= 900
     assert trace[-1]["permit"] >= 6
+
+
+async def test_the_margin_back_to_three_is_the_chargers_option(hass):
+    # phase B frees at cycle 30: three would get 16 A each (11 kW against 3.7 kW on
+    # one), but a 9 kW margin keeps it on one phase for the whole run
+    trace, _ = await _run(hass, "pswm", 490, house_b=lambda i: 16.0 if i < 30 else 2.0,
+                          **{CONF_PHASE_SWITCH_UP_MARGIN: 9000})
+    first_one = min(r["i"] for r in trace if r["phases"] == 1)
+    assert all(r["phases"] == 1 for r in trace if r["i"] >= first_one)
 
 
 async def test_the_minimum_time_between_changes_is_the_chargers_option(hass):
