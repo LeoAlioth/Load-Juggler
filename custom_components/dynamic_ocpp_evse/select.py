@@ -3,8 +3,9 @@ from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.restore_state import RestoreEntity
-from .entities.mixins import HubEntityMixin, LoadEntityMixin
+from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
+from .entities.mixins import HubEntityMixin, LoadEntityMixin, SiteCycleConsumerMixin
+from .helpers import get_entry_value, phase_mode, stored_legs
 from . import consume_plug_mode_migration
 from .const import (
     behaviour_type, DEVICE_TYPE_ROOM_THERMOSTAT,
@@ -13,6 +14,9 @@ from .const import (
     DISTRIBUTION_MODE_SHARED, DISTRIBUTION_MODE_PRIORITY,
     DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED, DISTRIBUTION_MODE_SEQUENTIAL_STRICT,
     DEFAULT_DISTRIBUTION_MODE, DISTRIBUTION_MODES,
+    CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES,
+    EVSE_RT_PHASE_MODE, EVSE_RT_PHASE_SUPPORTED, PHASE_MODES,
+    PHASE_MODE_AUTO, PHASE_MODE_ONE, PHASE_MODE_THREE,
     modes_for,
 )
 
@@ -46,6 +50,13 @@ async def async_setup_entry(hass: HomeAssistant, config_entry: ConfigEntry, asyn
         entities = [
             OperatingModeSelect(hass, config_entry, name, entity_id)
         ]
+        # Phase switching travels in the profile's phase count, on a three-leg charger only.
+        if (
+            config_entry.data.get(CONF_DEVICE_TYPE, DEVICE_TYPE_EVSE) == DEVICE_TYPE_EVSE
+            and len(stored_legs(config_entry)) == 3
+            and get_entry_value(config_entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES)
+        ):
+            entities.append(PhaseSwitchingSelect(hass, config_entry, name, entity_id))
         _LOGGER.info(f"Setting up load select entities: {[entity.unique_id for entity in entities]}")
         async_add_entities(entities)
         return
@@ -115,6 +126,56 @@ class OperatingModeSelect(LoadEntityMixin, SelectEntity, RestoreEntity):
         self._attr_current_option = option
         self._publish(option)
         _LOGGER.info(f"Operating mode changed to: {option}")
+
+
+class PhaseSwitchingSelect(SiteCycleConsumerMixin, LoadEntityMixin, SelectEntity, RestoreEntity):
+    """A three-leg charger's phase switching (calculations/phase_switch.py):
+    Auto - one phase instead of a pause, Three phases - never, One phase -
+    always. Available only while the charger says it can switch
+    (ConnectorSwitch3to1PhaseSupported); the site cycle pushes that."""
+
+    _data_key = EVSE_RT_PHASE_MODE
+    _ICONS = {
+        PHASE_MODE_AUTO: "mdi:swap-horizontal",
+        PHASE_MODE_THREE: "mdi:numeric-3-circle-outline",
+        PHASE_MODE_ONE: "mdi:numeric-1-circle-outline",
+    }
+
+    def __init__(self, hass: HomeAssistant, config_entry: ConfigEntry, name: str, entity_id: str):
+        self._init_entity(hass, config_entry, f"{name} Phase Switching", f"{entity_id}_phase_switching")
+        self._attr_options = PHASE_MODES
+        # First value: the pre-2.1.7 Configure checkbox (on: Auto, off: Three phases).
+        self._attr_current_option = phase_mode(config_entry, {})
+
+    @property
+    def icon(self):
+        return self._ICONS.get(self._attr_current_option, "mdi:swap-horizontal")
+
+    @property
+    def available(self) -> bool:
+        return self._runtime().get(EVSE_RT_PHASE_SUPPORTED) is True
+
+    def _read_site_data(self) -> None:
+        """Nothing to read: the cycle only refreshes ``available``."""
+
+    @property
+    def extra_restore_state_data(self):
+        """The choice itself: the state is "unavailable" until the charger
+        answers, and a restart then must not lose it."""
+        return RestoredExtraData({"option": self._attr_current_option})
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_extra_data()
+        option = (last.as_dict() if last is not None else {}).get("option")
+        if option in self._attr_options:
+            self._attr_current_option = option
+        self._publish(self._attr_current_option)
+
+    async def async_select_option(self, option: str) -> None:
+        self._attr_current_option = option
+        self._publish(option)
+        _LOGGER.info(f"Phase switching changed to: {option}")
 
 
 class LoadJugglerDistributionModeSelect(HubEntityMixin, SelectEntity, RestoreEntity):

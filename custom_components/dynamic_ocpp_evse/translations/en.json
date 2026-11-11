@@ -666,7 +666,6 @@
                             "charger_l1_phase": "Charger L1 → site phase",
                             "charger_l2_phase": "Charger L2 → site phase (optional)",
                             "charger_l3_phase": "Charger L3 → site phase (optional)",
-                            "phase_switching": "Switch to one phase instead of pausing",
                             "phase_switch_interval": "Minimum time between phase changes",
                             "send_number_phases": "Send the phase count in charging profiles"
                         },
@@ -674,7 +673,6 @@
                             "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
                             "charger_l2_phase": "Leave empty if the charger has no L2 (a 1-phase charger uses L1 only).",
                             "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger).",
-                            "phase_switching": "When three phases cannot reach the minimum current but one can, the charger charges on its L1 instead of pausing, and goes back to three phases once all three have room (at the earliest the minimum time below after the last change). Only for a charger that says it can switch (ConnectorSwitch3to1PhaseSupported); the Phase Mask sensor shows whether it does.",
                             "phase_switch_interval": "With a car connected, the phase count changes at most once in this time, in either direction: a charger stops to switch, and each switch works its contactor.",
                             "send_number_phases": "A charger that can switch is told its phase count (numberPhases) in every charging profile, so one left on one phase is put back on three. Off: the profiles carry no phase count, as before 2.1.7, and phase switching cannot work."
                         }
@@ -1707,7 +1705,6 @@
                             "charger_l1_phase": "Charger L1 → site phase",
                             "charger_l2_phase": "Charger L2 → site phase (optional)",
                             "charger_l3_phase": "Charger L3 → site phase (optional)",
-                            "phase_switching": "Switch to one phase instead of pausing",
                             "phase_switch_interval": "Minimum time between phase changes",
                             "send_number_phases": "Send the phase count in charging profiles"
                         },
@@ -1715,7 +1712,6 @@
                             "charger_l1_phase": "Only change if your charger is wired differently and/or you see unexpected behaviour regarding per-phase power limits.",
                             "charger_l2_phase": "Leave empty if the charger has no L2 (a 1-phase charger uses L1 only).",
                             "charger_l3_phase": "Leave empty if the charger has no L3 (a 1- or 2-phase charger).",
-                            "phase_switching": "When three phases cannot reach the minimum current but one can, the charger charges on its L1 instead of pausing, and goes back to three phases once all three have room (at the earliest the minimum time below after the last change). Only for a charger that says it can switch (ConnectorSwitch3to1PhaseSupported); the Phase Mask sensor shows whether it does.",
                             "phase_switch_interval": "With a car connected, the phase count changes at most once in this time, in either direction: a charger stops to switch, and each switch works its contactor.",
                             "send_number_phases": "A charger that can switch is told its phase count (numberPhases) in every charging profile, so one left on one phase is put back on three. Off: the profiles carry no phase count, as before 2.1.7, and phase switching cannot work."
                         }

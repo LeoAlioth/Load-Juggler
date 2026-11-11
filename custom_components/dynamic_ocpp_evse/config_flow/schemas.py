@@ -43,8 +43,6 @@ from ..const import (
     CONF_CHARGER_L1_PHASE,
     CONF_CHARGER_L2_PHASE,
     CONF_CHARGER_L3_PHASE,
-    CONF_PHASE_SWITCHING,
-    DEFAULT_PHASE_SWITCHING,
     CONF_SEND_NUMBER_PHASES,
     DEFAULT_SEND_NUMBER_PHASES,
     CONF_PHASE_SWITCH_INTERVAL,
@@ -1069,16 +1067,10 @@ def _charger_current_schema(
                 _dc_off_current_field(defaults),
                 *_leg_fields(defaults, hub_phases),
                 # Only a three-leg charger can switch; the engine also needs
-                # the charger to say it can (calculations/phase_switch.py).
+                # the charger to say it can (calculations/phase_switch.py). Whether
+                # it does is the Phase Switching select (select.py), not a field.
                 *(
                     [
-                        (
-                            vol.Required(
-                                CONF_PHASE_SWITCHING,
-                                default=defaults.get(CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING),
-                            ),
-                            bool,
-                        ),
                         _num(
                             CONF_PHASE_SWITCH_INTERVAL, defaults, DEFAULT_PHASE_SWITCH_INTERVAL,
                             1, 120, 1, "min", required=True,

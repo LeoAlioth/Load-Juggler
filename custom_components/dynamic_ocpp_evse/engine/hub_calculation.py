@@ -125,6 +125,10 @@ from ..const import (
     EVSE_RT_PHASES_ABOVE_AT,
     EVSE_RT_PHASES_REASON,
     EVSE_RT_PHASES_SINCE,
+    EVSE_RT_PHASE_MODE,
+    EVSE_RT_ONE_PHASE_AT,
+    EVSE_RT_ONE_PHASE_COUNT,
+    PHASE_MODE_ONE,
     PHASE_SWITCH_UP_HOLD_S,
     PHASE_SWITCH_UP_MARGIN,
     DOMAIN,
@@ -1591,12 +1595,16 @@ def _apply_phase_switching(hass, site, now):
             hold_s=PHASE_SWITCH_UP_HOLD_S,
             interval_s=load.phase_switch_interval_s,
             resumable=load.dynamic_control and status != "Charging",
+            forced_one=rt.get(EVSE_RT_PHASE_MODE) == PHASE_MODE_ONE,
         )
         rt[EVSE_RT_PHASES_SINCE] = since
         rt[EVSE_RT_PHASES_REASON] = reason
         if phases != on:
             _LOGGER.info("%s: %d -> %d phase(s) - %s", load.entity_id, on, phases, reason)
             rt[EVSE_RT_PHASES] = phases
+            if phases == phase_switch.ONE:
+                rt[EVSE_RT_ONE_PHASE_AT] = dt_util.utcnow().isoformat()
+                rt[EVSE_RT_ONE_PHASE_COUNT] = rt.get(EVSE_RT_ONE_PHASE_COUNT, 0) + 1
             phase_switch.set_phases(load, phases)
             changed = True
     if changed:

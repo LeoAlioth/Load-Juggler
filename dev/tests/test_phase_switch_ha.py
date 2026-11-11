@@ -37,7 +37,6 @@ from custom_components.dynamic_ocpp_evse.const import (
     CONF_PHASE_B_CURRENT_ENTITY_ID,
     CONF_PHASE_C_CURRENT_ENTITY_ID,
     CONF_PHASE_SWITCH_INTERVAL,
-    CONF_PHASE_SWITCHING,
     CONF_PHASE_VOLTAGE,
     CONF_SEND_NUMBER_PHASES,
     CONF_VL_PHASE_ENTITY_ID,
@@ -49,6 +48,11 @@ from custom_components.dynamic_ocpp_evse.const import (
     EVSE_RT_PHASE_PAUSE_AT,
     EVSE_RT_PHASE_SUPPORTED,
     EVSE_RT_PHASES,
+    EVSE_RT_ONE_PHASE_AT,
+    EVSE_RT_ONE_PHASE_COUNT,
+    EVSE_RT_PHASE_MODE,
+    PHASE_MODE_ONE,
+    PHASE_MODE_THREE,
     PHASE_SWITCH_SETTLE_S,
     RT_PHASE_SWITCH_AT,
 )
@@ -95,7 +99,7 @@ def _charger(hub, **options):
     )
 
 
-async def _run(hass, name, cycles, *, supported=True, house_b=None, status=None, mode=None, **options):
+async def _run(hass, name, cycles, *, supported=True, house_b=None, status=None, mode=None, phase_mode=None, **options):
     """The charger drawing what it was told on the phases the engine put it
     on; ``house_b(i)`` / ``status(i)`` vary phase B's house and the connector."""
     hub = _hub(name)
@@ -116,7 +120,8 @@ async def _run(hass, name, cycles, *, supported=True, house_b=None, status=None,
 
     return await close_loop(
         hass, hub, entry, cycles, plant, at="2026-11-01 10:00:00+00:00",
-        load_data={EVSE_RT_PHASE_SUPPORTED: supported, **({"operating_mode": mode} if mode else {})},
+        load_data={EVSE_RT_PHASE_SUPPORTED: supported, **({"operating_mode": mode} if mode else {}),
+                   **({EVSE_RT_PHASE_MODE: phase_mode} if phase_mode else {})},
     ), entry
 
 
@@ -152,9 +157,30 @@ async def test_a_charger_that_cannot_switch_stays_on_three(hass):
     assert trace[-1]["permit"] < 6
 
 
-async def test_the_option_off_keeps_three(hass):
-    trace, _ = await _run(hass, "pswd", 20, **{CONF_PHASE_SWITCHING: False})
+async def test_three_phases_on_the_select_keeps_three(hass):
+    trace, _ = await _run(hass, "pswd", 20, phase_mode=PHASE_MODE_THREE)
     assert {r["phases"] for r in trace} == {3}
+
+
+async def test_the_old_checkbox_off_still_keeps_three_until_the_select_says_otherwise(hass):
+    """Before 2.1.7 an unticked Configure box; the select starts from it."""
+    trace, _ = await _run(hass, "pswe", 20, phase_switching=False)
+    assert {r["phases"] for r in trace} == {3}
+
+
+async def test_one_phase_on_the_select_runs_on_one_with_room_for_three(hass):
+    # phase B free: three would reach 16 A, the select still says one
+    trace, entry = await _run(hass, "pswf", 20, house_b=lambda i: 2.0, phase_mode=PHASE_MODE_ONE)
+    assert trace[-1]["phases"] == 1
+    rt = hass.data[DOMAIN]["loads"][entry.entry_id]
+    assert rt[EVSE_RT_ONE_PHASE_COUNT] == 1 and rt[EVSE_RT_ONE_PHASE_AT]
+
+
+async def test_a_switch_to_one_phase_is_counted_once(hass):
+    trace, entry = await _run(hass, "pswg", 40)
+    rt = hass.data[DOMAIN]["loads"][entry.entry_id]
+    assert trace[-1]["phases"] == 1
+    assert rt[EVSE_RT_ONE_PHASE_COUNT] == 1
 
 
 async def test_no_phase_count_sent_keeps_three(hass):
@@ -387,3 +413,21 @@ async def test_a_phase_change_pauses_first_and_three_restarts_at_the_minimum(has
     assert back[0] == 10_960.0
     # one ramp step above the minimum at most, nowhere near one phase's 16 A
     assert 6.0 <= back[1] <= 9.0
+
+
+def test_the_last_switch_to_one_phase_survives_a_restart_of_home_assistant():
+    from custom_components.dynamic_ocpp_evse.entities.load_sensors import LoadJugglerOnePhaseSensor
+
+    sensor = LoadJugglerOnePhaseSensor.__new__(LoadJugglerOnePhaseSensor)
+    sensor._runtime = lambda: {}
+    assert sensor.extra_restore_state_data is None   # never on one phase: nothing kept
+    rt = {EVSE_RT_ONE_PHASE_AT: "2026-11-11T09:00:00+00:00", EVSE_RT_ONE_PHASE_COUNT: 4}
+    sensor._runtime = lambda: rt
+    saved = sensor.extra_restore_state_data.as_dict()
+    fresh = {}
+    sensor._runtime = lambda: fresh
+    sensor._restore(saved)
+    assert fresh == rt
+    sensor._read_site_data()
+    assert sensor._attr_native_value.isoformat() == "2026-11-11T09:00:00+00:00"
+    assert sensor.extra_state_attributes == {"switches": 4}

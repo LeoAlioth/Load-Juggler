@@ -65,6 +65,7 @@ def decide(
     hold_s: float,
     interval_s: float,
     resumable: bool = False,
+    forced_one: bool = False,
 ) -> tuple[int, float, str]:
     """``(phases, since, reason)`` for a switchable load this cycle.
 
@@ -86,7 +87,17 @@ def decide(
     (2026-11-05). Without a car the count returns to three at once - nothing
     is drawing - and ``since`` is kept, so that return does not hold up the
     next session.
+
+    ``forced_one`` (the select on One phase): one phase always, also with no
+    car, so the next session starts on one; with a car on three it still waits
+    out ``interval_s``.
     """
+    if forced_one:
+        if on == ONE:
+            return ONE, since, "set to one phase"
+        if connected and now - since < interval_s:
+            return on, since, f"set to one phase - last change {math.ceil((now - since) / 60)} min ago"
+        return ONE, now, "set to one phase"
     if not connected:
         return THREE, since, "no car" if on == THREE else "no car - a new session starts on three phases"
     wait = interval_s - (now - since)

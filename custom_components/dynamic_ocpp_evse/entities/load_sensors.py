@@ -12,6 +12,7 @@ numeric measured quantity.
 """
 
 import logging
+from datetime import datetime
 from homeassistant.helpers.restore_state import RestoredExtraData, RestoreEntity
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -31,8 +32,9 @@ from ..const import (
     EVSE_RT_PHASES,
     EVSE_RT_PHASES_REASON,
     EVSE_RT_PHASE_SUPPORTED,
-    CONF_PHASE_SWITCHING,
-    DEFAULT_PHASE_SWITCHING,
+    EVSE_RT_ONE_PHASE_AT,
+    EVSE_RT_ONE_PHASE_COUNT,
+    PHASE_MODE_THREE,
     CONF_SEND_NUMBER_PHASES,
     DEFAULT_SEND_NUMBER_PHASES,
     LOAD_RT_SUN_PROBE,
@@ -40,7 +42,7 @@ from ..const import (
     VL_RT_OUTPUTS,
 )
 from ..control.status import hands_off_status, with_early_start
-from ..helpers import get_entry_value, stored_legs
+from ..helpers import get_entry_value, phase_mode, stored_legs
 from .. import units
 from .mixins import LoadEntityMixin, SiteCycleConsumerMixin
 from .readout import (
@@ -484,7 +486,7 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
         rt = self._runtime()
         supported = rt.get(EVSE_RT_PHASE_SUPPORTED)
         sends = bool(get_entry_value(self.config_entry, CONF_SEND_NUMBER_PHASES, DEFAULT_SEND_NUMBER_PHASES))
-        if not sends or not get_entry_value(self.config_entry, CONF_PHASE_SWITCHING, DEFAULT_PHASE_SWITCHING):
+        if not sends or phase_mode(self.config_entry, rt) == PHASE_MODE_THREE:
             state = "off"
         else:
             state = {True: "supported", False: "not supported"}.get(supported, "not asked yet")
@@ -499,6 +501,50 @@ class LoadJugglerPhaseMaskSensor(LoadJugglerLoadSensor):
         masks = self._domain_bucket("load_phase_masks")
         mask = masks.get(self.config_entry.entry_id)
         self._attr_native_value = mask if mask else "Idle"
+
+
+class LoadJugglerOnePhaseSensor(LoadJugglerLoadSensor, RestoreEntity):
+    """When a three-leg charger last went to one phase (unknown: never), with
+    how many times it has (``switches``). Kept over a restart of Home
+    Assistant: the runtime holds them, and this sensor restores them there."""
+
+    _attr_device_class = SensorDeviceClass.TIMESTAMP
+    _attr_icon = "mdi:numeric-1-circle-outline"
+
+    def __init__(self, hass, config_entry, hub_entry, name, entity_id):
+        super().__init__(
+            hass, config_entry, hub_entry,
+            f"{name} Last Switch to One Phase", f"{entity_id}_last_one_phase",
+        )
+        self._attr_native_value = None
+
+    @property
+    def extra_state_attributes(self):
+        return {"switches": self._runtime().get(EVSE_RT_ONE_PHASE_COUNT, 0)}
+
+    @property
+    def extra_restore_state_data(self):
+        rt = self._runtime()
+        if not rt.get(EVSE_RT_ONE_PHASE_AT):
+            return None
+        return RestoredExtraData({
+            "at": rt[EVSE_RT_ONE_PHASE_AT], "count": rt.get(EVSE_RT_ONE_PHASE_COUNT, 0),
+        })
+
+    async def async_added_to_hass(self) -> None:
+        last = await self.async_get_last_extra_data()
+        self._restore(last.as_dict() if last is not None else {})
+        await super().async_added_to_hass()
+
+    def _restore(self, saved: dict) -> None:
+        rt = self._runtime()
+        if saved.get("at") and not rt.get(EVSE_RT_ONE_PHASE_AT):
+            rt[EVSE_RT_ONE_PHASE_AT] = saved["at"]
+            rt[EVSE_RT_ONE_PHASE_COUNT] = int(saved.get("count") or 0)
+
+    def _read_site_data(self):
+        at = self._runtime().get(EVSE_RT_ONE_PHASE_AT)
+        self._attr_native_value = datetime.fromisoformat(at) if at else None
 
 
 class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):

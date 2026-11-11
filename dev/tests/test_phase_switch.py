@@ -149,6 +149,18 @@ def test_no_car_goes_back_to_three_without_holding_up_the_next_session():
     assert _decide(on=ONE, since=990.0, connected=False)[0] == THREE
 
 
+
+def test_forced_one_phase_stays_on_one_and_waits_out_the_interval():
+    # the select on One phase: three would reach 16 A, still one
+    assert _decide(on=ONE, since=5.0, permit=16.0, potential=16.0, forced_one=True)[:2] == (ONE, 5.0)
+    # from three with a car: within the interval it waits and says so, then one
+    phases, _, reason = _decide(on=THREE, since=900.0, now=1000.0, permit=16.0, forced_one=True)
+    assert phases == THREE and "set to one phase" in reason
+    assert _decide(on=THREE, since=0.0, now=1000.0, permit=16.0, forced_one=True)[:2] == (ONE, 1000.0)
+    # no car: one at once, so the next session starts on one
+    assert _decide(on=THREE, since=990.0, now=1000.0, connected=False, forced_one=True)[0] == ONE
+    assert _decide(on=ONE, since=5.0, connected=False, forced_one=True)[0] == ONE
+
 @pytest.mark.parametrize("phases, mask, potential", [(ONE, "A", "ABC"), (THREE, "ABC", "")])
 def test_set_phases(phases, mask, potential):
     _, nova = _site()

@@ -719,7 +719,7 @@ one phase on A: 18 A free -> 16 A, 3.7 kW
 house on B drops to 2 A -> three could take 16 A >= 7 A -> back to three 10 min after the switch
 ```
 
-No car puts it back on three phases for the next session; Dynamic Control off or a car not charging keeps the count as it is. Turn it off per charger with *Switch to one phase instead of pausing* on its phase mapping page.
+No car puts it back on three phases for the next session; Dynamic Control off or a car not charging keeps the count as it is. Per charger, the *Phase Switching* select sets it: *Auto* (the default) as described, *Three phases* to never switch, *One phase* to always charge on one phase. The *Last Switch to One Phase* sensor shows when it last went to one phase (unknown: never) and how many times.
 
 ---
 
