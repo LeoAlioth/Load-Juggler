@@ -68,7 +68,9 @@ from ..control.smoothing import apply_smoothing, cut_now
 from ..control.status import determine_charging_status
 from ..control.compliance import check_profile_compliance
 from ..control import stamp_command
-from ..control.ocpp import phase_pause_over, probe_phase_switching, send_ocpp_command, told_phases
+from ..control.ocpp import (
+    phase_pause_over, probe_phase_switching, send_ocpp_command, send_slot_open, told_phases,
+)
 from ..control.plug import send_plug_command
 from ..control.hot_water_tank import send_hot_water_tank_command
 from ..control.power_station import send_power_station_command
@@ -856,7 +858,17 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
                     self._attr_name, self._last_commanded_limit, cut,
                 )
                 self._available_current = cut
-        if cut is None and now_mono - self._last_command_time < command_interval:
+        if device_type == DEVICE_TYPE_EVSE:
+            # Back-off after a failed send, slow while not Charging (a cut
+            # still goes out at once).
+            slot_open = send_slot_open(
+                load_rt,
+                units.state_or_unknown(self.hass.states.get(self._connector_status_entity)),
+                self._last_command_time, command_interval, now_mono,
+            )
+        else:
+            slot_open = now_mono - self._last_command_time >= command_interval
+        if cut is None and not slot_open:
             _LOGGER.debug(
                 "Site refresh for %s (command send in %.0fs)",
                 self._attr_name,

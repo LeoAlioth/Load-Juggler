@@ -24,6 +24,10 @@ from ..const import (
     EVSE_RT_PHASE_PAUSE_AT,
     EVSE_RT_PHASE_PROBE_AT,
     EVSE_RT_PHASE_SUPPORTED,
+    EVSE_RT_SEND_BACKOFF_UNTIL,
+    EVSE_RT_GATE_STATUS,
+    IDLE_SEND_INTERVAL_S,
+    SEND_BACKOFF_S,
     OCPP_KEY_PHASE_SWITCH,
     PHASE_SWITCH_PAUSE_MAX_S,
     PHASE_SWITCH_PAUSE_S,
@@ -61,6 +65,25 @@ def told_phases(load_rt, entry) -> int | None:
     ):
         return None
     return int(load_rt.get(EVSE_RT_PHASES, 3))
+
+
+def send_slot_open(
+    load_rt, status: str | None, last_sent: float, interval: float, now_mono: float
+) -> bool:
+    """Whether an EVSE's next profile may go out. Nothing goes out inside the
+    back-off after a failed send. A connector that has stayed in a status other
+    than Charging is sent to at most every IDLE_SEND_INTERVAL_S; in the cycle
+    its status changes the normal interval applies (a car starting waits no
+    longer than before)."""
+    prev = load_rt.get(EVSE_RT_GATE_STATUS)
+    load_rt[EVSE_RT_GATE_STATUS] = status
+    if now_mono < load_rt.get(EVSE_RT_SEND_BACKOFF_UNTIL, -float("inf")):
+        return False
+    # Charging and Preparing (a car waiting for its limit) and SuspendedEVSE (the
+    # charger held at 0 A by us) are all states where a send must stay prompt.
+    if status == prev and status not in ("Charging", "Preparing", "SuspendedEVSE"):
+        interval = max(interval, IDLE_SEND_INTERVAL_S)
+    return now_mono - last_sent >= interval
 
 
 def phase_pause_over(started: float, draw: float | None, now_mono: float) -> bool:
@@ -351,6 +374,9 @@ async def send_ocpp_command(
         )
     except Exception as e:
         _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", sensor._attr_name, e)
+        # The ocpp integration gives up after 10 s and some chargers answer
+        # later: hold off so the retry never overlaps the unanswered call.
+        load_rt[EVSE_RT_SEND_BACKOFF_UNTIL] = now_mono + SEND_BACKOFF_S
         if limit != paused_from:
             load_rt.pop(EVSE_RT_PHASE_PAUSE_AT, None)   # the pause never reached it
         return

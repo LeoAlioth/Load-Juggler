@@ -143,6 +143,16 @@ EVSE_RT_CLEAR_PAUSE = "clear_pause"
 CONF_PHASE_SWITCH_UP_MARGIN = "phase_switch_up_margin"
 DEFAULT_PHASE_SWITCH_UP_MARGIN = 1000
 PHASE_SWITCH_UP_HOLD_S = 300
+# A charger answers a profile late now and then (the EVBox Elvi, 14-38 s) while
+# the ocpp integration gives up after a fixed 10 s: after a failed send nothing
+# goes out for SEND_BACKOFF_S (the late "Accepted" has landed by then, and a
+# retry never overlaps the unanswered call), and a connector that is not
+# Charging is sent to at most every IDLE_SEND_INTERVAL_S (the owner, 2026-11-19).
+# When the back-off ends (monotonic), in the load's runtime.
+EVSE_RT_SEND_BACKOFF_UNTIL = "send_backoff_until"
+EVSE_RT_GATE_STATUS = "gate_status"
+SEND_BACKOFF_S = 45
+IDLE_SEND_INTERVAL_S = 60
 # How often an unanswered capability read is tried again (s).
 PHASE_SWITCH_PROBE_RETRY_S = 600
 
