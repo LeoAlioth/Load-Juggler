@@ -287,6 +287,47 @@ async def test_the_profile_carries_the_phase_count_and_marks_the_switch(hass):
     assert "numberPhases" not in calls[-1]
 
 
+async def test_a_phase_change_moves_the_fallback_profile_and_validity_starts_in_the_past(hass):
+    """The baseline profile (id 10, one stack level down) gets the new phase
+    count ahead of the working profile, whose validFrom lies a minute back -
+    a go-e whose clock ran 1.35 s behind held no valid profile on every send
+    and fell back to three phases mid one-phase charge (2026-11-19)."""
+    from datetime import datetime, timezone
+
+    hub = _hub("pswb")
+    entry = _charger(hub, charge_rate_unit="A")
+    profiles = []
+
+    async def set_charge_rate(call):
+        profiles.append(call.data["custom_profile"])
+
+    hass.services.async_register("ocpp", "set_charge_rate", set_charge_rate)
+    hass.states.async_set(STATUS, "Charging")
+    rt = {EVSE_RT_PHASE_SUPPORTED: True, EVSE_RT_PHASES: 1}
+    sensor = _sensor(hass, entry, rt)
+
+    # the pause on the old count leaves the fallback alone ...
+    assert await send_ocpp_command(sensor, 10.0, hub, 50.0, effective_status="Charging", draw=0.0)
+    assert [p["chargingProfileId"] for p in profiles] == [11]
+    # ... the new count goes out with the fallback first
+    assert await send_ocpp_command(sensor, 10.0, hub, 120.0, effective_status="Charging", draw=0.0)
+    _, base, work = profiles
+    assert (base["chargingProfileId"], base["stackLevel"]) == (10, work["stackLevel"] - 1)
+    assert base["chargingSchedule"]["chargingSchedulePeriod"] == [
+        {"startPeriod": 0, "limit": 6.0, "numberPhases": 1}
+    ]
+    assert "validFrom" not in base
+    assert work["chargingSchedule"]["chargingSchedulePeriod"][0]["numberPhases"] == 1
+    if "validFrom" in work:
+        start = datetime.strptime(work["validFrom"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+        assert 59 <= (datetime.now(timezone.utc) - start).total_seconds() <= 62
+        assert work["chargingSchedule"]["startSchedule"] == work["validFrom"]
+
+    # the same count again: the working profile alone
+    assert await send_ocpp_command(sensor, 10.0, hub, 150.0, effective_status="Charging", draw=10.0)
+    assert len(profiles) == 4 and profiles[-1]["chargingProfileId"] == 11
+
+
 def test_the_pause_before_a_switch():
     rt = {EVSE_RT_COMMANDED_PHASES: 3}
     # nothing due, or a 0 A command anyway: no pause

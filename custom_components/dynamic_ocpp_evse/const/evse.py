@@ -153,6 +153,11 @@ EVSE_RT_SEND_BACKOFF_UNTIL = "send_backoff_until"
 EVSE_RT_GATE_STATUS = "gate_status"
 SEND_BACKOFF_S = 45
 IDLE_SEND_INTERVAL_S = 60
+# An absolute profile's validFrom lies this far in the past (s): a charger whose
+# clock runs behind ours otherwise holds a profile that is not valid yet - the
+# third site's go-e (1.35 s behind, 2026-11-19) fell back to three phases for
+# that moment on every send and stopped a one-phase charge each time.
+PROFILE_VALID_FROM_LEAD_S = 60
 # How often an unanswered capability read is tried again (s).
 PHASE_SWITCH_PROBE_RETRY_S = 600
 

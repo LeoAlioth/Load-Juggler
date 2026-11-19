@@ -930,7 +930,7 @@ async def test_a_pause_sends_its_0a_once_valid_for_the_whole_pause(
         valid_s = (
             datetime.strptime(first["validTo"], "%Y-%m-%dT%H:%M:%SZ")
             - datetime.strptime(first["validFrom"], "%Y-%m-%dT%H:%M:%SZ")
-        ).total_seconds()
+        ).total_seconds() - 60  # validFrom lies PROFILE_VALID_FROM_LEAD_S back
     else:  # relative
         valid_s = first["chargingSchedule"]["duration"]
     assert 120 + 3595 <= valid_s <= 120 + 3600, valid_s  # 1 h hold + 120 s

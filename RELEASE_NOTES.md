@@ -6,6 +6,7 @@
 
 - **A slow charger is no longer sent profiles on top of each other**: the ocpp integration gives up on a charging profile after a fixed 10 seconds, and some chargers (an EVBox Elvi) answer 14-38 seconds later - the profile is applied, but Load Juggler saw "Set charging profile failed" and sent the next one at once, up to every 15 seconds, while the first was still unanswered. After a failed send, nothing goes out to that charger for 45 seconds, long enough for the late answer to arrive.
 - **A charger that is not charging is sent to less often**: while its connector stays *Available* (no car), *SuspendedEV* (paused by the car) or *Finishing* a profile goes out at most once a minute instead of every update interval. A charger that is charging, waiting for its limit with a car plugged in, or held at 0 A by Load Juggler is not slowed, nor is a cut that makes room for another load.
+- **A charger on one phase no longer stops every 30 seconds**: each charging profile was valid from the second it was sent. A charger whose clock runs a little behind (a go-eCharger, 1.35 seconds) then held a profile that was not valid yet, fell back to its three-phase default for that moment, and stopped a one-phase charge for about 14 seconds - on every send. A profile is now valid from a minute before it is sent, and the fallback profile (one level under the working one) is given the same phase count whenever the charger is switched, so a moment without a valid profile is never a phase change. *Reset OCPP* keeps the phase count in the fallback profile too.
 
 ## 2.1.7
 

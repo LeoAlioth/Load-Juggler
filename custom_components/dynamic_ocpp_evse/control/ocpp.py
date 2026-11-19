@@ -28,6 +28,9 @@ from ..const import (
     EVSE_RT_GATE_STATUS,
     IDLE_SEND_INTERVAL_S,
     SEND_BACKOFF_S,
+    PROFILE_VALID_FROM_LEAD_S,
+    CONF_EVSE_MINIMUM_CHARGE_CURRENT,
+    DEFAULT_MIN_CHARGE_CURRENT,
     OCPP_KEY_PHASE_SWITCH,
     PHASE_SWITCH_PAUSE_MAX_S,
     PHASE_SWITCH_PAUSE_S,
@@ -65,6 +68,23 @@ def told_phases(load_rt, entry) -> int | None:
     ):
         return None
     return int(load_rt.get(EVSE_RT_PHASES, 3))
+
+
+def baseline_profile(stack_level: int, limit: float, rate_unit: str, phases: int | None = None) -> dict:
+    """The fallback profile a charger holds one stack level under the working
+    one (no validity, so it never lapses): the minimum current, and the phase
+    count the charger is on when it is told one - what it falls back to in a
+    moment without a valid working profile must not be a phase change."""
+    period = {"startPeriod": 0, "limit": limit}
+    if phases is not None:
+        period["numberPhases"] = phases
+    return {
+        "chargingProfileId": 10,
+        "stackLevel": max(1, stack_level - 1),
+        "chargingProfileKind": "Relative",
+        "chargingProfilePurpose": "TxDefaultProfile",
+        "chargingSchedule": {"chargingRateUnit": rate_unit, "chargingSchedulePeriod": [period]},
+    }
 
 
 def send_slot_open(
@@ -288,7 +308,9 @@ async def send_ocpp_command(
     schedule = {"chargingRateUnit": rate_unit}
     if absolute:
         now = datetime.now(timezone.utc)
-        valid_from = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        valid_from = (now - timedelta(seconds=PROFILE_VALID_FROM_LEAD_S)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        )
         valid_to = (now + timedelta(seconds=profile_timeout)).strftime(
             "%Y-%m-%dT%H:%M:%SZ"
         )
@@ -360,6 +382,23 @@ async def send_ocpp_command(
             _LOGGER.warning(
                 f"Failed to turn on charge_control switch {sensor._charge_control_entity}: {e}"
             )
+
+    if told is not None and told != load_rt.get(EVSE_RT_COMMANDED_PHASES, 3):
+        # The fallback profile follows the phase count, ahead of the switch.
+        floor = float(get_entry_value(
+            sensor.config_entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT
+        ))
+        if rate_unit == "W":
+            floor = round(floor * voltage * (1 if told == 1 else sensor._phases or 1), 1)
+        try:
+            await sensor.hass.services.async_call(
+                "ocpp", "set_charge_rate",
+                {"devid": ocpp_device_id,
+                 "custom_profile": baseline_profile(stack_level, floor, rate_unit, told)},
+                blocking=True,
+            )
+        except Exception as e:  # noqa: BLE001 - the switch itself still goes out
+            _LOGGER.warning("OCPP fallback profile failed for %s: %s", sensor._attr_name, e)
 
     try:
         # blocking=True so a dispatch/execution failure raises here and is

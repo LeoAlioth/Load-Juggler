@@ -100,7 +100,7 @@ from .helpers import (
     strip_unfeatured_inverter_options,
 )
 from . import units
-from .control.ocpp import read_charger_setting
+from .control.ocpp import baseline_profile, read_charger_setting, told_phases
 from .control.sg_ready import release_relays
 from .control.variable_load import write_fallback
 from .ocpp_discovery import repair_ocpp_device_id, scan_ocpp_chargers
@@ -532,6 +532,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
         # (configured, or auto-detected from its current-offered sensor's unit)
         # and the hub's voltage is there to convert with.
         limit_for_charger = get_entry_value(entry, CONF_EVSE_MINIMUM_CHARGE_CURRENT, DEFAULT_MIN_CHARGE_CURRENT)
+        # A charger told its phase count keeps it in the baseline too.
+        load_rt = hass.data.get(DOMAIN, {}).get("loads", {}).get(entry_id)
+        told = told_phases(load_rt, entry) if load_rt is not None else None
         rate_unit = "A"
         charge_rate_unit = get_entry_value(entry, CONF_CHARGE_RATE_UNIT, DEFAULT_CHARGE_RATE_UNIT)
         if charge_rate_unit == CHARGE_RATE_UNIT_AUTO:
@@ -546,12 +549,13 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 get_entry_value(hub_entry, CONF_PHASE_VOLTAGE, DEFAULT_PHASE_VOLTAGE)
                 or DEFAULT_PHASE_VOLTAGE
             )
-            limit_for_charger = round(limit_for_charger * voltage * _charger_phase_count(entry), 1)
+            limit_for_charger = round(
+                limit_for_charger * voltage * (1 if told == 1 else _charger_phase_count(entry)), 1
+            )
             rate_unit = "W"
 
-        # Stack level for reset should be 1 lower than regular operation
+        # Stack level for reset is 1 lower than regular operation (baseline_profile)
         configured_stack_level = int(get_entry_value(entry, CONF_STACK_LEVEL, DEFAULT_STACK_LEVEL))
-        reset_stack_level = max(1, configured_stack_level - 1)
 
         sequence = [
             {
@@ -570,18 +574,9 @@ async def async_setup(hass: HomeAssistant, config: dict):
                 "target": {},
                 "data": {
                     "devid": ocpp_device_id,
-                    "custom_profile": {
-                        "chargingProfileId": 10,
-                        "stackLevel": reset_stack_level,
-                        "chargingProfileKind": "Relative",
-                        "chargingProfilePurpose": "TxDefaultProfile",
-                        "chargingSchedule": {
-                            "chargingRateUnit": rate_unit,
-                            "chargingSchedulePeriod": [
-                                {"startPeriod": 0, "limit": limit_for_charger}
-                            ]
-                        }
-                    }
+                    "custom_profile": baseline_profile(
+                        configured_stack_level, limit_for_charger, rate_unit, told
+                    ),
                 }
             }
         ]
@@ -590,7 +585,6 @@ async def async_setup(hass: HomeAssistant, config: dict):
         # until a profile lands again. Unknown is the honest state for the
         # stuck-readout watch (engine/readout_watch.py), which judges nothing
         # against an unknown limit - the next accepted command re-arms it.
-        load_rt = hass.data.get(DOMAIN, {}).get("loads", {}).get(entry_id)
         if load_rt is not None:
             load_rt.pop(EVSE_RT_COMMANDED_LIMIT, None)
             load_rt[EVSE_RT_CLEAR_PAUSE] = True   # a reset ends any charge pause
