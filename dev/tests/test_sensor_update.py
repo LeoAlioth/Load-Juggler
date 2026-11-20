@@ -2673,12 +2673,16 @@ async def test_charge_pause_cancelled_on_mode_change(
     if distribution_too:
         hub_rt["distribution_mode"] = "Shared"
 
+    load_rt["phase_switch_since"] = 1e12   # a phase change "just now"
+
     # Second update: mode changed → pause cancelled, Standard gives current
     # → no new pause
     await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
     assert charger_sensor._pause_started_at is None, (
         "Pause should be cancelled when the operating or distribution mode changes"
     )
+    # ... and so is the minimum time between phase changes
+    assert "phase_switch_since" not in load_rt
     assert charger_sensor._prev_operating_mode == "Standard"
     assert charger_sensor._prev_distribution_mode == (
         "Shared" if distribution_too else "Priority"

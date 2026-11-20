@@ -2271,6 +2271,26 @@ def _distribute_power(
     return _distribute_per_phase_priority(site, physical_pool, solar_pool, excess_pool)
 
 
+# How far short of its minimum (A) the site total may be for a load that is
+# already running to keep it: the total wobbles by tenths of an amp, and a
+# three-phase charger whose 18 A of minimum sat on an 18.0-18.2 A import
+# allowance lost and won its place every other cycle, the load behind it
+# getting everything in between (the third site, 2026-11-20).
+RUNNING_LOAD_SHORT_A = 0.5
+
+
+def _keeps_its_place(load: LoadContext, physical: PhaseConstraints, mask: str) -> bool:
+    """A load that draws keeps its minimum while the SITE TOTAL is short of it
+    by no more than RUNNING_LOAD_SHORT_A. Each of its own phases must still
+    hold the minimum in full: a breaker is never overbooked, only the total -
+    in practice the import power limit, an average over minutes."""
+    if (load.l1_current + load.l2_current + load.l3_current) / len(mask) < 1.0:
+        return False
+    if any(getattr(physical, phase) < load.min_current for phase in mask):
+        return False
+    return load.min_current - physical.get_available(mask) <= RUNNING_LOAD_SHORT_A
+
+
 def _allocate_minimums(
     loads: list[LoadContext],
     site: SiteContext,
@@ -2337,7 +2357,7 @@ def _allocate_minimums(
             continue
 
         # Physical pool must have room on the wire
-        if physical.get_available(mask) < load.min_current:
+        if physical.get_available(mask) < load.min_current and not _keeps_its_place(load, physical, mask):
             allocated[load.entity_id] = 0
             footprints[load.entity_id] = 0
             continue

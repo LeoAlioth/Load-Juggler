@@ -51,6 +51,7 @@ from ..const import (
     EVSE_RT_READOUT_WATCH,
     EVSE_RT_COMMANDED_PHASES,
     EVSE_RT_PHASE_PAUSE_AT,
+    EVSE_RT_PHASES_SINCE,
     EVSE_RT_CLEAR_PAUSE,
     LOAD_RT_SUN_PROBE,
     EVSE_MODE_HOLD,
@@ -452,6 +453,10 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # instruction, and making it wait out a dwell begun under the
             # previous mode would read as the switch simply ignoring the user.
             self._binary_off_since = None
+            # ...and the minimum time between phase changes: the new mode may
+            # need the other phase count now (Shared beside a one-phase charger
+            # left the third site's second go-e paused on three, 2026-11-20).
+            self._runtime().pop(EVSE_RT_PHASES_SINCE, None)
 
         self._prev_operating_mode = self._operating_mode
         self._prev_distribution_mode = current_distribution_mode

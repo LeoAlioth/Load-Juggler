@@ -24,11 +24,16 @@ from custom_components.dynamic_ocpp_evse.calculations.phase_switch import (
     set_phases,
     three_phase_gain_w,
     single_phase_permit,
+    spared_by_one_phase,
+    paused_by_three_phases,
 )
 from custom_components.dynamic_ocpp_evse.calculations.target_calculator import (
     calculate_all_load_targets,
 )
-from custom_components.dynamic_ocpp_evse.const import DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED
+from custom_components.dynamic_ocpp_evse.const import (
+    DISTRIBUTION_MODE_SEQUENTIAL_OPTIMIZED,
+    DISTRIBUTION_MODE_SHARED,
+)
 
 
 def _site(cap_w=6900.0, house=(2.5, 10.0, 0.5)):
@@ -152,6 +157,127 @@ def test_the_chargers_own_stop_for_a_switch_does_not_switch_it_back():
     # once the interval is over both directions work again
     assert _decide(on=ONE, since=399.0, now=1000.0, potential=7.4, resumable=True)[0] == THREE
     assert _decide(on=THREE, since=399.0, now=1000.0, permit=0.0, single_permit=lambda: 16.0)[0] == ONE
+
+
+def test_a_charger_that_is_not_charging_does_not_wait_out_the_interval():
+    """The third site, 2026-11-20: Nova, paused on three phases beside Stara on
+    one, would have got 9 A on one phase under Shared but waited 15 minutes.
+    ``unspaced`` (not charging, no switch of ours under way - the caller's
+    call) lifts the interval in both directions and for the forced mode."""
+    kept = _decide(on=THREE, since=910.0, permit=0.0, single_permit=lambda: 9.0)
+    assert kept[0] == THREE and "phase count kept" in kept[2]
+    phases, since, _ = _decide(on=THREE, since=910.0, permit=0.0, single_permit=lambda: 9.0, unspaced=True)
+    assert (phases, since) == (ONE, 1000.0)
+    assert _decide(on=ONE, since=910.0, potential=7.4, resumable=True, unspaced=True)[0] == THREE
+    assert _decide(on=THREE, since=910.0, forced_one=True, unspaced=True)[0] == ONE
+    # three still fit: nothing to change
+    assert _decide(on=THREE, since=910.0, permit=8.0, unspaced=True)[:2] == (THREE, 910.0)
+
+
+def _two_chargers(cap_w, stara_phases=THREE, nova_phases=ONE, drawing=True):
+    """The third site on 2026-11-20: Stara (6-20 A) and Nova (6-16 A), both
+    switchable with their L1 on the same site phase, an idle house, Shared."""
+    stara = LoadContext(
+        load_id="stara", entity_id="charger", min_current=6, max_current=20,
+        phases=3, connector_status="Charging", phase_switchable=True, priority=1,
+    )
+    nova = LoadContext(
+        load_id="nova", entity_id="charger_nova", min_current=6, max_current=16,
+        phases=3, connector_status="SuspendedEVSE", phase_switchable=True, priority=2,
+    )
+    set_phases(stara, stara_phases)
+    set_phases(nova, nova_phases)
+    if drawing:
+        stara.l1_current = 6.0
+        if stara_phases == THREE:
+            stara.l2_current = stara.l3_current = 6.0
+    site = SiteContext(
+        voltage=230, main_breaker_rating=20,
+        consumption=PhaseValues(0.0, 0.0, 0.0), export_current=PhaseValues(0.0, 0.0, 0.0),
+        max_grid_import_power=cap_w, distribution_mode=DISTRIBUTION_MODE_SHARED,
+        loads=[stara, nova],
+    )
+    calculate_all_load_targets(site)
+    return site, stara, nova
+
+
+def test_three_phases_at_the_minimum_leave_nothing_for_the_second_charger():
+    """18:48: 4.4 kW of import allowance, Stara on three phases at 6 A takes
+    4.1 kW of it and Nova, on one phase, is paused. On one phase both run."""
+    site, stara, nova = _two_chargers(4400)
+    assert stara.available_current >= 6 and nova.available_current < 6
+    single, spared = spared_by_one_phase(site, "stara")
+    assert single >= 6 and spared == "charger_nova"
+    # the trial leaves the real site alone
+    assert stara.active_phases_mask == "ABC" and nova.available_current < 6
+
+
+def test_no_trial_when_nothing_waits():
+    site, stara, nova = _two_chargers(4400)
+    nova.connector_status = "Available"
+    assert spared_by_one_phase(site, "stara") == (0.0, None)
+
+
+def test_going_back_to_three_phases_would_pause_the_second_charger():
+    """18:46: both on one phase at about 9.5 A; Stara back on three would
+    leave Nova without its minimum."""
+    site, stara, nova = _two_chargers(4400, stara_phases=ONE)
+    assert stara.available_current >= 6 and nova.available_current >= 6
+    assert paused_by_three_phases(site, "stara") == "charger_nova"
+    # with room for both, three phases pause nobody
+    site, stara, nova = _two_chargers(9000, stara_phases=ONE)
+    assert paused_by_three_phases(site, "stara") is None
+
+
+def test_a_sharing_site_narrows_to_one_phase_for_a_waiting_load():
+    spares = lambda: (9.5, "charger_nova")
+    phases, since, reason = _decide(on=THREE, permit=6.2, spares=spares, sharing=True)
+    assert (phases, since) == (ONE, 1000.0) and "charger_nova" in reason
+    # nothing waits, or one phase would not carry this charger: three stay
+    assert _decide(on=THREE, permit=6.2, spares=lambda: (0.0, None), sharing=True)[0] == THREE
+    assert _decide(on=THREE, permit=6.2, spares=lambda: (4.0, "charger_nova"), sharing=True)[0] == THREE
+    # within the interval nothing changes
+    assert _decide(on=THREE, since=910.0, permit=6.2, spares=spares, sharing=True)[0] == THREE
+
+
+def test_under_a_priority_mode_it_narrows_only_when_three_phases_gain_little():
+    # three at 6.2 A = 4.3 kW against one at 16 A = 3.7 kW: +0.6 kW, under the margin
+    assert _decide(on=THREE, permit=6.2, spares=lambda: (16.0, "charger_nova"))[0] == ONE
+    # three at 10 A = 6.9 kW against 3.7 kW: its rank keeps it on three
+    assert _decide(on=THREE, permit=10.0, spares=lambda: (16.0, "charger_nova"))[0] == THREE
+
+
+def test_a_sharing_site_stays_on_one_phase_while_three_would_pause_another():
+    blocked = lambda: "charger_nova"
+    phases, since, reason = _decide(on=ONE, since=5.0, permit=9.9, potential=14.3,
+                                    three_pauses=blocked, sharing=True)
+    assert (phases, since) == (ONE, 5.0) and "would pause charger_nova" in reason
+    assert _decide(on=ONE, since=5.0, permit=9.9, potential=14.3, three_pauses=lambda: None, sharing=True)[0] == THREE
+    # not charging: no return to three either
+    assert _decide(on=ONE, since=5.0, potential=7.4, resumable=True, three_pauses=blocked, sharing=True)[0] == ONE
+    # a priority mode: the gain decides, as before
+    assert _decide(on=ONE, since=5.0, permit=9.9, potential=14.3, three_pauses=blocked)[0] == THREE
+
+
+def test_a_running_load_keeps_its_minimum_through_a_small_shortfall():
+    """18:48: the import allowance wobbled around Stara's 18 A of minimum
+    (three phases x 6 A) and its permit flipped between 6 A and nothing."""
+    # 4100 W: 5.94 A a leg, 0.06 A short - a running charger keeps its place
+    _, stara, _ = _two_chargers(4100)
+    assert stara.available_current >= 6
+    # one that draws nothing does not
+    _, stara, _ = _two_chargers(4100, drawing=False)
+    assert stara.available_current < 6
+    # more than half an amp short: paused
+    _, stara, _ = _two_chargers(3700)
+    assert stara.available_current < 6
+
+
+def test_a_breaker_is_never_overbooked_for_a_running_load():
+    site, stara, nova = _two_chargers(20000)
+    site.consumption = PhaseValues(14.3, 0.0, 0.0)   # 5.7 A left on A, under the minimum
+    calculate_all_load_targets(site)
+    assert stara.available_current < 6
 
 
 def test_held_keeps_the_phase_count():

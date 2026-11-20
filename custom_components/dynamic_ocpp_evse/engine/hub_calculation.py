@@ -125,6 +125,10 @@ from ..const import (
     EVSE_RT_PHASES_ABOVE_AT,
     EVSE_RT_PHASES_REASON,
     EVSE_RT_PHASES_SINCE,
+    EVSE_RT_COMMANDED_PHASES,
+    EVSE_RT_PHASE_PAUSE_AT,
+    RT_PHASE_SWITCH_AT,
+    PHASE_SWITCH_SETTLE_S,
     EVSE_RT_PHASE_MODE,
     EVSE_RT_ONE_PHASE_AT,
     EVSE_RT_ONE_PHASE_COUNT,
@@ -1599,6 +1603,20 @@ def _apply_phase_switching(hass, site, now):
             interval_s=load.phase_switch_interval_s,
             resumable=load.dynamic_control and status != "Charging",
             forced_one=rt.get(EVSE_RT_PHASE_MODE) == PHASE_MODE_ONE,
+            spares=lambda load_id=load.load_id: phase_switch.spared_by_one_phase(site, load_id),
+            three_pauses=lambda load_id=load.load_id: phase_switch.paused_by_three_phases(site, load_id),
+            sharing="shared" in (site.distribution_mode or "").lower(),
+            voltage=site.voltage,
+            # Not charging, and not because of a switch of ours: the count it
+            # was last told is the one decided, no pause before a switch runs,
+            # and the last switch has settled.
+            unspaced=(
+                load.dynamic_control
+                and status != "Charging"
+                and rt.get(EVSE_RT_COMMANDED_PHASES, phase_switch.THREE) == on
+                and EVSE_RT_PHASE_PAUSE_AT not in rt
+                and now - rt.get(RT_PHASE_SWITCH_AT, -math.inf) >= PHASE_SWITCH_SETTLE_S
+            ),
         )
         rt[EVSE_RT_PHASES_SINCE] = since
         rt[EVSE_RT_PHASES_REASON] = reason

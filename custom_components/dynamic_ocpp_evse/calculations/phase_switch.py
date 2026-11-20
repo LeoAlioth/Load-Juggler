@@ -50,6 +50,44 @@ def single_phase_permit(site: SiteContext, load_id: str) -> float:
     return load.available_current
 
 
+def _runs(load: LoadContext) -> bool:
+    """The load has a permit it can run on."""
+    return load.available_current > 0 and load.available_current >= load.min_current
+
+
+def _trial(site: SiteContext, load_id: str, phases: int) -> SiteContext:
+    """The site calculated again on a copy, with that one load on ``phases``."""
+    trial = deepcopy(site)
+    set_phases(next(c for c in trial.loads if c.load_id == load_id), phases)
+    calculate_all_load_targets(trial)
+    return trial
+
+
+def spared_by_one_phase(site: SiteContext, load_id: str) -> tuple[float, str | None]:
+    """``(own permit on one phase, a load three phases pause and one lets run)``:
+    another load with something connected that has no runnable permit now and
+    gets one when this load narrows to its L1. No such load, no trial run."""
+    waiting = [
+        c.load_id for c in site.loads
+        if c.load_id != load_id and c.connector_status != "Available" and not _runs(c)
+    ]
+    if not waiting:
+        return 0.0, None
+    trial = {c.load_id: c for c in _trial(site, load_id, ONE).loads}
+    spared = next((trial[i].entity_id for i in waiting if _runs(trial[i])), None)
+    return trial[load_id].available_current, spared
+
+
+def paused_by_three_phases(site: SiteContext, load_id: str) -> str | None:
+    """A load that runs now and would be left without a runnable permit if
+    this load went back to three phases (None: none)."""
+    running = [c.load_id for c in site.loads if c.load_id != load_id and _runs(c)]
+    if not running:
+        return None
+    trial = {c.load_id: c for c in _trial(site, load_id, THREE).loads}
+    return next((trial[i].entity_id for i in running if not _runs(trial[i])), None)
+
+
 def three_phase_gain_w(potential: float, permit: float, voltage: float) -> float:
     """What three phases at ``potential`` A each would give more than one phase
     at ``permit`` A (W)."""
@@ -80,6 +118,11 @@ def decide(
     interval_s: float,
     resumable: bool = False,
     forced_one: bool = False,
+    unspaced: bool = False,
+    spares=None,
+    three_pauses=None,
+    sharing: bool = False,
+    voltage: float = 230.0,
 ) -> tuple[int, float, str]:
     """``(phases, since, reason)`` for a switchable load this cycle.
 
@@ -106,7 +149,27 @@ def decide(
     ``forced_one`` (the select on One phase): one phase always, also with no
     car, so the next session starts on one; with a car on three it still waits
     out ``interval_s``.
+
+    ``unspaced``: the charger is not charging and no switch of ours is under
+    way or settling - ``interval_s`` does not apply, nothing is switched under
+    load (the owner, 2026-11-20: a paused charger waited 15 minutes on three
+    phases beside one it could have shared a phase with). The caller keeps the
+    switch's own stop out of it, which is what the interval was made for.
+
+    The other loads (the owner, 2026-11-20: under Shared a charger went back to
+    three phases, took the whole import allowance at its minimum and paused the
+    second charger - 4.1 kW into one car where 4.6 kW had gone into two).
+    ``spares``: a callable giving ``(own permit on one phase, a load three
+    phases pause and one phase lets run)`` (``spared_by_one_phase``); on three
+    phases the charger narrows to one for that load when the site shares
+    (``sharing``: the Shared distribution mode) or when three phases give it
+    less than ``margin_w`` more than one would - under the priority modes a
+    charger that gains more keeps what its rank gives it. ``three_pauses``: a
+    callable naming a running load three phases would pause
+    (``paused_by_three_phases``); a sharing site keeps the charger on one.
     """
+    if unspaced:
+        interval_s = 0.0
     if forced_one:
         if on == ONE:
             return ONE, since, "set to one phase"
@@ -119,11 +182,20 @@ def decide(
     if wait > 0:
         return on, since, f"phase count kept - last change {math.ceil((now - since) / 60)} min ago"
     if on == ONE and resumable and potential >= min_current:
+        if blocked := (sharing and three_pauses is not None and three_pauses()):
+            return ONE, since, f"three phases would pause {blocked} - stays on one phase"
         return THREE, now, f"not charging - resumes on three phases ({potential:.1f} A each)"
     if held:
         return on, since, "not charging - phase count kept"
     if on == THREE:
         if permit >= min_current:
+            single, other = spares() if spares is not None else (0.0, None)
+            if other and single >= min_current and (
+                sharing or three_phase_gain_w(permit, single, voltage) < margin_w
+            ):
+                return ONE, now, (
+                    f"three phases pause {other}; one phase gets {single:.1f} A and lets it run"
+                )
             return THREE, since, f"three phases get {permit:.1f} A"
         single = single_permit()
         if single >= min_current:
@@ -143,4 +215,6 @@ def decide(
             f"three phases would get {potential:.1f} A; back to three in "
             f"{math.ceil(left / 60)} min if it holds"
         )
+    if blocked := (sharing and three_pauses is not None and three_pauses()):
+        return ONE, since, f"three phases would pause {blocked} - stays on one phase"
     return THREE, now, f"three phases get {potential:.1f} A"
