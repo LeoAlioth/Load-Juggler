@@ -1001,6 +1001,30 @@ async def test_a_cold_start_does_not_arm_the_charge_pause(
     assert charger_sensor._available_current < 6.0
 
 
+async def test_a_car_that_finished_does_not_arm_the_charge_pause(
+    hass, mock_hub_entry, mock_charger_entry, charger_sensor, mock_call,
+):
+    """A permit of 0 because the car asks for nothing is not a shed. The third
+    site, 2026-11-20: a car at its charge limit (Finishing) armed the pause,
+    was released ten seconds later and was held at 0 A for 3 minutes."""
+    # Solar Only with no surplus: nothing to give, whatever the car wants.
+    hass.data[DOMAIN]["loads"][mock_charger_entry.entry_id]["operating_mode"] = "Solar Only"
+    charger_sensor._had_runnable_permit = True
+    charger_sensor._short_last_cycle = True
+    hass.states.async_set("sensor.wallbox_1_status_connector", "Finishing")
+
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._available_current < 6.0
+    assert charger_sensor._pause_started_at is None
+
+    # the same shortage with a car that wants to charge does arm it
+    hass.states.async_set("sensor.wallbox_1_status_connector", "Charging")
+    charger_sensor._last_command_time = float("-inf")
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    await _run_site_cycle(hass, mock_hub_entry, charger_sensor)
+    assert charger_sensor._pause_started_at is not None
+
+
 async def test_a_permit_after_a_cold_start_is_not_withheld(
     hass,
     mock_hub_entry,

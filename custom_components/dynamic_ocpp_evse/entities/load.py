@@ -955,7 +955,17 @@ class LoadJugglerDeviceSensor(SiteFreshnessMixin, LoadEntityMixin, SensorEntity)
             # of 1.1 kW surplus after every restart, and an options change
             # reloads the entry, so it was not a rare event. Withholding a
             # permit is only meaningful once there was one to withhold.
-            if self._pause_started_at is None and self._had_runnable_permit:
+            #
+            # Nor is it one when the engine gave nothing because the car asks
+            # for nothing (it finished): that is not a shed, and the pause it
+            # armed met the car's next start. The third
+            # site's first charger (2026-11-20): its car sat at its charge
+            # limit, a pause was armed, the car was released ten seconds later,
+            # got its share and was stopped by that pause's 0 A for 3 minutes.
+            idle = hub_data.get("load_connector_status", {}).get(
+                self.config_entry.entry_id
+            ) == "Finishing"
+            if self._pause_started_at is None and self._had_runnable_permit and not idle:
                 self._pause_started_at = time.monotonic()
                 _LOGGER.debug("Charge pause started for %s", self._attr_name)
             limit = 0
