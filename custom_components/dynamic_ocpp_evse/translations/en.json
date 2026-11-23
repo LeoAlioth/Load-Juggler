@@ -113,11 +113,13 @@
                         "name": "Export limit",
                         "data": {
                             "grid_export_limit": "Grid export limit",
-                            "grid_export_limit_per_phase": "Grid export limit per phase (optional)"
+                            "grid_export_limit_per_phase": "Grid export limit per phase (optional)",
+                            "phase_billing": "Phases are billed"
                         },
                         "data_description": {
                             "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
-                            "grid_export_limit_per_phase": "Optional. A cap on what one phase may export, beside the total above - for an asymmetric inverter that can pass the total while one phase is over its own cap. Watts per phase; 0 = none. It only tells the forecast's learning that the inverter is curtailing (the total at its limit, or any phase at this one); it does not enable the forecast or move the Excess trigger."
+                            "grid_export_limit_per_phase": "Optional. A cap on what one phase may export, beside the total above - for an asymmetric inverter that can pass the total while one phase is over its own cap. Watts per phase; 0 = none. It only tells the forecast's learning that the inverter is curtailing (the total at its limit, or any phase at this one); it does not enable the forecast or move the Excess trigger.",
+                            "phase_billing": "How your meter bills the three phases. Individually: each phase on its own, so export on one phase does not pay for import on another - a single-phase load may use only the surplus of its own phase. Sum of all phases: the meter adds the phases together, so export on one phase pays for import on another at the same moment, and Solar and Excess loads may use the surplus of all phases together (a single-phase charger can take three phases' worth of sun). Breakers, the import limit and the export limit still apply per phase either way."
                         }
                     },
                     "excess": {
@@ -1161,11 +1163,13 @@
                         "name": "Export limit",
                         "data": {
                             "grid_export_limit": "Grid export limit",
-                            "grid_export_limit_per_phase": "Grid export limit per phase (optional)"
+                            "grid_export_limit_per_phase": "Grid export limit per phase (optional)",
+                            "phase_billing": "Phases are billed"
                         },
                         "data_description": {
                             "grid_export_limit": "The site's physical or contract ceiling on grid export. Excess mode triggers once export comes within the trigger margin of this limit, and with a battery capacity and solar forecast on the battery page it enables the PV clipping forecast. 0 = no export limit: Excess never triggers on export and the forecast is off.",
-                            "grid_export_limit_per_phase": "Optional. A cap on what one phase may export, beside the total above - for an asymmetric inverter that can pass the total while one phase is over its own cap. Watts per phase; 0 = none. It only tells the forecast's learning that the inverter is curtailing (the total at its limit, or any phase at this one); it does not enable the forecast or move the Excess trigger."
+                            "grid_export_limit_per_phase": "Optional. A cap on what one phase may export, beside the total above - for an asymmetric inverter that can pass the total while one phase is over its own cap. Watts per phase; 0 = none. It only tells the forecast's learning that the inverter is curtailing (the total at its limit, or any phase at this one); it does not enable the forecast or move the Excess trigger.",
+                            "phase_billing": "How your meter bills the three phases. Individually: each phase on its own, so export on one phase does not pay for import on another - a single-phase load may use only the surplus of its own phase. Sum of all phases: the meter adds the phases together, so export on one phase pays for import on another at the same moment, and Solar and Excess loads may use the surplus of all phases together (a single-phase charger can take three phases' worth of sun). Breakers, the import limit and the export limit still apply per phase either way."
                         }
                     },
                     "excess": {
@@ -2139,6 +2143,12 @@
                 "away": "Away temperature",
                 "boost": "Boost temperature",
                 "keep": "Leave as it is"
+            }
+        },
+        "phase_billing": {
+            "options": {
+                "individual": "Individually - one phase imports 3 kW, two export 1 kW each: billed as 3 kW imported and 2 kW exported",
+                "summed": "Sum of all phases - one phase imports 3 kW, two export 1 kW each: billed as 1 kW imported"
             }
         }
     },

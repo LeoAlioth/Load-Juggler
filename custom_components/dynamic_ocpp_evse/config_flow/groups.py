@@ -73,7 +73,7 @@ _HUB = [
     ("grid", ("phase_a_current_entity_id", "phase_b_current_entity_id", "phase_c_current_entity_id", "invert_phases"), False),
     ("limits", ("main_breaker_rating", "phase_voltage", "enable_max_import_power", "max_import_power_entity_id"), False),
     ("generator", ("grid_input_is_generator", "generator_rating"), False),
-    ("export", ("grid_export_limit", "grid_export_limit_per_phase"), False),
+    ("export", ("grid_export_limit", "grid_export_limit_per_phase", "phase_billing"), False),
     ("excess", ("excess_trigger_margin", "excess_hysteresis"), False),
     ("timing", ("site_update_frequency", "auto_detect_phase_mapping", "solar_grace_period"), False),
     ("battery", ("battery_soc_hysteresis", "battery_soc_freeze_floor"), False),

@@ -1138,6 +1138,23 @@ def _calculate_solar_surplus(
         discharge_potential = min(discharge_potential, inverter_headroom)
 
     def build(battery_adjustment_total: float) -> PhaseConstraints:
+        if _phases_netted(site):
+            # The meter sums the phases: the surplus is the site's NET flow
+            # (an importing phase cancels an exporting one) and any phase may
+            # take it - the load's phase imports what the others export, billed
+            # as nothing. Breakers bound each phase through the physical pool.
+            net = sum(f for f in _reconstruct_signed_per_phase(site, 0.0) if f is not None)
+            total = max(0.0, net + battery_adjustment_total)
+            legs = [
+                total if cons is not None else 0.0
+                for cons in (site.consumption.a, site.consumption.b, site.consumption.c)
+            ]
+            constraints = PhaseConstraints.from_pool(*legs, total)
+            if site.inverter_max_power:
+                household = sum(_get_household_per_phase(site))
+                constraints.ABC = min(constraints.ABC, max(0, site.inverter_max_power / site.voltage - household))
+                constraints = constraints.normalize()
+            return constraints
         # Off-grid a symmetric inverter pools as well - see _build_inverter_constraints.
         per_phase = None
         if not (site.inverter_supports_asymmetric or site.is_off_grid):
@@ -1288,6 +1305,14 @@ def _reconstruct_placement(site: SiteContext, *, net: bool = False):
     else:
         export = sum(max(0.0, v) for v in signed if v is not None)
     return export * site.voltage, battery_restored
+
+
+def _phases_netted(site: SiteContext) -> bool:
+    """The grid-tied site's meter sums the phases for billing (hub option
+    *Phases are billed*, GitHub issue 23): surplus is the site's net total and
+    any phase may take it. Off-grid already pools, and an asymmetric inverter
+    already places its output on any leg."""
+    return site.phases_summed_for_billing and not site.is_off_grid
 
 
 def _reconstruct_signed_per_phase(site: SiteContext, restored_per_phase: float):
@@ -1730,9 +1755,11 @@ def _calculate_excess_available(site: SiteContext) -> PhaseConstraints:
         else 0.0
     )
 
-    if site.inverter_supports_asymmetric or site.is_off_grid:
+    if site.inverter_supports_asymmetric or site.is_off_grid or _phases_netted(site):
         # The inverter can put its output on any leg, so the site total is the
-        # only bound and a single-phase load may reach all of it. Same shape as
+        # only bound and a single-phase load may reach all of it. A meter that
+        # sums the phases makes that true for billing whatever the inverter
+        # does: the load's phase imports what the others export. Same shape as
         # the gross asymmetric pool; ``netting`` only changes how it is read.
         #
         # OFF-GRID joins this branch, and must: the symmetric arm below bounds
@@ -1942,6 +1969,10 @@ def _excess_phase_is_importing(load: LoadContext, site: SiteContext) -> bool:
     # The forecast verdict's top-up is the battery's charge handed to the loads:
     # it is part of what each phase would export without that charge.
     flows = _reconstruct_signed_per_phase(site, -_forecast_topup_per_phase(site))
+    if _phases_netted(site):
+        # The meter sums the phases: a phase that buys is paid for by the
+        # others' export, so only the site as a whole can be buying.
+        return sum(f for f in flows if f is not None) < 0
     return any(
         letter in mask and flow is not None and flow < 0
         for letter, flow in zip("ABC", flows)
@@ -2458,10 +2489,10 @@ def _excess_ahead(
     """
     if not any(claims.values()):
         return None
-    if site.inverter_supports_asymmetric:
-        # One shared total - the inverter can put its output on any leg, so
-        # every claim comes off that total and what is left spreads over this
-        # load's own legs.
+    if site.inverter_supports_asymmetric or _phases_netted(site):
+        # One shared total - the inverter can put its output on any leg (or the
+        # meter sums the phases), so every claim comes off that total and what
+        # is left spreads over this load's own legs.
         return (excess_start.ABC - sum(claims.values())) / len(mask)
     remaining = PhaseConstraints.from_per_phase(
         excess_start.A - claims["A"],

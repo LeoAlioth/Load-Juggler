@@ -72,6 +72,9 @@ from ..const import (
     CONF_GRID_EXPORT_LIMIT,
     CONF_GRID_EXPORT_LIMIT_PER_PHASE,
     CONF_GRID_INPUT_IS_GENERATOR,
+    CONF_PHASE_BILLING,
+    DEFAULT_PHASE_BILLING,
+    PHASE_BILLING_OPTIONS,
     CONF_HEATING_ELEMENT_POWER,
     CONF_INVERTER_MAX_POWER,
     CONF_INVERTER_MAX_POWER_ENTITY_ID,
@@ -457,6 +460,23 @@ def _build_hub_grid_schema(hass, defaults: dict | None = None) -> list[tuple]:
         # Optional second ceiling, per phase: only the curtailment test reads it.
         _num(
             CONF_GRID_EXPORT_LIMIT_PER_PHASE, defaults, DEFAULT_GRID_EXPORT_LIMIT_PER_PHASE, 0, 20000, 100, "W",
+        ),
+        # GitHub issue 23: a meter that sums the phases lets a single-phase load
+        # take the surplus of all three.
+        (
+            vol.Required(
+                CONF_PHASE_BILLING,
+                default=defaults.get(CONF_PHASE_BILLING, DEFAULT_PHASE_BILLING),
+            ),
+            selector(
+                {
+                    "select": {
+                        "options": PHASE_BILLING_OPTIONS,
+                        "mode": "dropdown",
+                        "translation_key": CONF_PHASE_BILLING,
+                    }
+                }
+            ),
         ),
         _num(
             CONF_EXCESS_TRIGGER_MARGIN, defaults, DEFAULT_EXCESS_TRIGGER_MARGIN,
@@ -918,6 +938,7 @@ HUB_CONNECTION_KEYS = (
 HUB_EXPORT_KEYS = (
     CONF_GRID_EXPORT_LIMIT,
     CONF_GRID_EXPORT_LIMIT_PER_PHASE,
+    CONF_PHASE_BILLING,
     CONF_EXCESS_TRIGGER_MARGIN,
     CONF_EXCESS_HYSTERESIS,
 )

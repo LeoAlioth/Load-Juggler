@@ -109,6 +109,7 @@ The charge *rate* is the register every hybrid exposes, and slowing the fill lea
 | Phase voltage | Voltage per phase (V) | 230V |
 | Max import power entity | Template sensor for grid import limit (W) | - |
 | Grid export limit | Physical/contract export ceiling - Excess triggers at limit − margin, and it enables the PV clipping forecast (0 = unlimited, both off) | 0 |
+| Phases are billed | *Individually* (each phase metered on its own - a single-phase Solar or Excess load uses only its own phase's surplus) or *Sum of all phases* (the meter nets the phases - Solar and Excess loads use the site's net surplus on any phase; an importing phase counts against the others). Breakers, the import limit and the export limit stay per phase either way (GitHub issue 23) | Individually |
 | Grid export limit per phase | Optional cap (W) on what one phase may export. The forecast's learning counts the inverter as curtailing when the total is at its limit OR any phase is at this one (an asymmetric inverter can breach one phase while the total passes). It does not enable the forecast or move the Excess trigger (0 = none) | 0 |
 | Excess trigger margin | How far below the export limit Excess mode engages (W) | 500W |
 | Invert phases | Flip CT polarity if installed backwards | Off |

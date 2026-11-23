@@ -2,6 +2,10 @@
 
 ## 2.1.8
 
+### New Features
+
+- **Phases are billed: individually or as their sum** (GitHub issue 23): a new hub setting on the export page. Where the meter adds the three phases together for billing - export on one phase pays for import on another at the same moment - choose *Sum of all phases*: Solar Only, Solar Priority and Excess loads then use the site's net surplus, so a single-phase charger on a three-phase site can take all three phases' worth of sun instead of only its own phase's share. An importing phase counts against the others. Breakers, the import power limit and the export limit still apply per phase. *Individually* (the default) keeps the behaviour of every earlier version.
+
 ### Bug Fixes
 
 - **A slow charger is no longer sent profiles on top of each other**: the ocpp integration gives up on a charging profile after a fixed 10 seconds, and some chargers (an EVBox Elvi) answer 14-38 seconds later - the profile is applied, but Load Juggler saw "Set charging profile failed" and sent the next one at once, up to every 15 seconds, while the first was still unanswered. After a failed send, nothing goes out to that charger for 45 seconds, long enough for the late answer to arrive.

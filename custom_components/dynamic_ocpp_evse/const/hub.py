@@ -10,6 +10,15 @@ CONF_INVERT_PHASES = "invert_phases"
 # (JUG-13): the site is off-grid, the generator is one more supply capped at its own
 # per-phase rating, and nothing can be exported to it.
 CONF_GRID_INPUT_IS_GENERATOR = "grid_input_is_generator"
+# How the meter bills the phases (GitHub issue 23). Summed: an importing phase is paid
+# for by the export on the others, so the solar and Excess surplus is the site's NET
+# total and any phase may take it. Breakers, the import limit and the export limit
+# stay per phase either way.
+CONF_PHASE_BILLING = "phase_billing"
+PHASE_BILLING_INDIVIDUAL = "individual"
+PHASE_BILLING_SUMMED = "summed"
+PHASE_BILLING_OPTIONS = [PHASE_BILLING_INDIVIDUAL, PHASE_BILLING_SUMMED]
+DEFAULT_PHASE_BILLING = PHASE_BILLING_INDIVIDUAL
 CONF_GENERATOR_RATING = "generator_rating"
 CONF_MAX_IMPORT_POWER_ENTITY_ID = "max_import_power_entity_id"
 CONF_ENABLE_MAX_IMPORT_POWER = "enable_max_import_power"  # Checkbox: create slider for max import power

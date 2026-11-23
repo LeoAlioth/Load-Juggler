@@ -393,6 +393,7 @@ class SiteContext:
     pool_snapshot: dict = field(default_factory=dict)
     distribution_mode: str = "priority"  # "priority", "shared", "strict", "optimized"
     is_off_grid: bool = False  # True when no grid CT sensors are configured
+    phases_summed_for_billing: bool = False  # The meter nets the phases: surplus is the site total (issue 23)
     # Per phase (A, B, C): an inverter feeds it but no grid CT reads it, on a site
     # whose other phases do have CTs (a 3-phase inverter on a 1-phase grid
     # connection). Its grid reading is a synthetic 0 A, so it has no grid
