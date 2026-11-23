@@ -119,7 +119,7 @@
                         "data_description": {
                             "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
                             "grid_export_limit_per_phase": "Neobvezno. Omejitev izvoza za posamezno fazo, poleg skupne omejitve zgoraj - za asimetrični razsmernik, ki lahko ostane znotraj skupne omejitve, čeprav ena faza preseže svojo. Vati na fazo; 0 = brez. Napovedi le sporoči, da razsmernik omejuje proizvodnjo (skupni izvoz na meji ali katera koli faza na tej); ne vklopi napovedi in ne premakne sprožilca Excess.",
-                            "phase_billing": "Kako števec obračuna tri faze. Vsaka posebej: izvoz na eni fazi ne pokrije uvoza na drugi, zato enofazno breme lahko uporabi le presežek svoje faze. Vsota vseh faz: števec faze sešteje, zato izvoz na eni fazi v istem trenutku pokrije uvoz na drugi, bremena v načinih Solar in Excess pa lahko uporabijo presežek vseh faz skupaj (enofazna polnilnica dobi sonce vseh treh faz). Varovalke, omejitev uvoza in omejitev izvoza v obeh primerih veljajo po fazah."
+                            "phase_billing": "Kako števec obračuna tri faze. Vsaka posebej: oddaja na eni fazi ne pokrije prevzema na drugi, zato enofazno breme lahko uporabi le presežek svoje faze. Vsota vseh faz: števec faze sešteje, zato oddaja na eni fazi v istem trenutku pokrije prevzem na drugi, bremena v načinih Solar in Excess pa lahko uporabijo presežek vseh faz skupaj (enofazna polnilnica dobi sonce vseh treh faz). Varovalke, omejitev uvoza in omejitev izvoza v obeh primerih veljajo po fazah."
                         }
                     },
                     "excess": {
@@ -1169,7 +1169,7 @@
                         "data_description": {
                             "grid_export_limit": "Strojna ali pogodbena omejitev izvoza v omrežje. Način Excess se sproži, ko se izvoz približa tej meji na manj kot odmik sprožilca; skupaj s kapaciteto baterije in sončno napovedjo (na strani baterije) omogoči napoved rezanja PV proizvodnje. 0 = brez omejitve: Excess se na izvoz nikoli ne sproži, napoved je izklopljena.",
                             "grid_export_limit_per_phase": "Neobvezno. Omejitev izvoza za posamezno fazo, poleg skupne omejitve zgoraj - za asimetrični razsmernik, ki lahko ostane znotraj skupne omejitve, čeprav ena faza preseže svojo. Vati na fazo; 0 = brez. Napovedi le sporoči, da razsmernik omejuje proizvodnjo (skupni izvoz na meji ali katera koli faza na tej); ne vklopi napovedi in ne premakne sprožilca Excess.",
-                            "phase_billing": "Kako števec obračuna tri faze. Vsaka posebej: izvoz na eni fazi ne pokrije uvoza na drugi, zato enofazno breme lahko uporabi le presežek svoje faze. Vsota vseh faz: števec faze sešteje, zato izvoz na eni fazi v istem trenutku pokrije uvoz na drugi, bremena v načinih Solar in Excess pa lahko uporabijo presežek vseh faz skupaj (enofazna polnilnica dobi sonce vseh treh faz). Varovalke, omejitev uvoza in omejitev izvoza v obeh primerih veljajo po fazah."
+                            "phase_billing": "Kako števec obračuna tri faze. Vsaka posebej: oddaja na eni fazi ne pokrije prevzema na drugi, zato enofazno breme lahko uporabi le presežek svoje faze. Vsota vseh faz: števec faze sešteje, zato oddaja na eni fazi v istem trenutku pokrije prevzem na drugi, bremena v načinih Solar in Excess pa lahko uporabijo presežek vseh faz skupaj (enofazna polnilnica dobi sonce vseh treh faz). Varovalke, omejitev uvoza in omejitev izvoza v obeh primerih veljajo po fazah."
                         }
                     },
                     "excess": {
@@ -2147,8 +2147,8 @@
         },
         "phase_billing": {
             "options": {
-                "individual": "Vsaka posebej - ena faza 3 kW uvoza, dve po 1 kW izvoza: obračunano 3 kW uvoza in 2 kW izvoza",
-                "summed": "Vsota vseh faz - ena faza 3 kW uvoza, dve po 1 kW izvoza: obračunano 1 kW uvoza"
+                "individual": "Vsaka posebej - ena faza 3 kW prevzema, dve po 1 kW oddaje: obračunano 3 kW prevzema in 2 kW oddaje",
+                "summed": "Vsota vseh faz - ena faza 3 kW prevzema, dve po 1 kW oddaje: obračunano 1 kW prevzema"
             }
         }
     },
