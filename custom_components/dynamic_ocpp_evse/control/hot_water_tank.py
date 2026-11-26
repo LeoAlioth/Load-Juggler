@@ -218,6 +218,39 @@ def judge_kept_target(rec, asked, readback, stamp, now):
     return rec, rec["kept"] if rec["seen"] >= KEPT_READBACKS else None
 
 
+# A tank that does not heat although it should: how far under its setpoint, and
+# for how long, before its status says so.
+# ponytail: one fixed margin for every tank; a heater whose own hysteresis is
+# wider than this coasts into the flag - learn the margin per tank if one does.
+NOT_HEATING_MARGIN_K = 3.0
+NOT_HEATING_S = 900.0
+
+
+def judge_not_heating(since, permitted, hvac_action, current, setpoint, now):
+    """When the tank started failing to heat, or None while it is fine.
+
+    Returns the start of a stretch (``since``, kept by the caller between
+    cycles) in which heating was permitted, the device was not heating and not
+    off, and it read NOT_HEATING_MARGIN_K or more under the setpoint Load
+    Juggler asked for. The status flags it once that has lasted NOT_HEATING_S.
+
+    Kozolec's Bee Room, 23-26 Nov 2026: the heater's Zigbee plug stopped
+    answering after a coordinator restart. The generic thermostat asked for
+    heat every 23 s, the plug's switch stayed "off" without going
+    unavailable, and the room fell from 7 to 3 C under a 7 C freeze
+    protection target for three days while the status read "Idle".
+
+    Pure function - unit-testable.
+    """
+    try:
+        short = float(setpoint) - float(current) >= NOT_HEATING_MARGIN_K
+    except (TypeError, ValueError):
+        short = False
+    if not (permitted and short and hvac_action not in ("heating", "off")):
+        return None
+    return now if since is None else since
+
+
 async def send_hot_water_tank_command(
     sensor, limit: float, hub_data: dict, now_mono: float
 ) -> None:
@@ -417,6 +450,29 @@ async def send_hot_water_tank_command(
     load_rt["tank_setpoint"] = setpoint
     load_rt["tank_setpoint_label"] = label
     load_rt["tank_heating_permitted"] = heating_permitted
+    since = judge_not_heating(
+        load_rt.get("_tank_not_heating_since"),
+        heating_permitted,
+        load_rt.get("tank_hvac_action"),
+        climate_state.attributes.get("current_temperature") if climate_state else None,
+        setpoint,
+        now_mono,
+    )
+    load_rt["_tank_not_heating_since"] = since
+    failing = since is not None and now_mono - since >= NOT_HEATING_S
+    if failing and not load_rt.get("tank_not_heating"):
+        _LOGGER.warning(
+            "Hot water tank %s: %s reads %s, %.1f °C or more under its %.0f °C "
+            "setpoint, and has not heated for %.0f min although heating is "
+            "permitted - check the heater (its switch or plug may not respond)",
+            sensor._attr_name,
+            climate_entity,
+            climate_state.attributes.get("current_temperature"),
+            NOT_HEATING_MARGIN_K,
+            setpoint,
+            NOT_HEATING_S / 60,
+        )
+    load_rt["tank_not_heating"] = failing
 
     _LOGGER.debug(
         "Hot water tank %s [%s]: setpoint=%.0f°C (%s), heating %s",

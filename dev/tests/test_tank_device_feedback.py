@@ -27,9 +27,29 @@ from custom_components.dynamic_ocpp_evse.const import (
 )
 from custom_components.dynamic_ocpp_evse.control.hot_water_tank import (
     KEPT_SETTLE_S,
+    NOT_HEATING_S,
     judge_kept_target,
+    judge_not_heating,
     send_hot_water_tank_command,
 )
+
+
+def test_a_tank_that_never_heats_under_its_setpoint_is_flagged():
+    """Kozolec's Bee Room, 23-26 Nov 2026: permitted, 3 C under a 7 C target,
+    the thermostat idle because its plug no longer answered."""
+    since = judge_not_heating(None, True, "idle", 3.0, 7.0, 0.0)
+    assert since == 0.0
+    since = judge_not_heating(since, True, "idle", 3.0, 7.0, NOT_HEATING_S)
+    assert since == 0.0  # the stretch keeps its start: flagged now
+    # any of: heating, off, denied, close to target, no reading - clears it
+    for args in (
+        (True, "heating", 3.0, 7.0),
+        (True, "off", 3.0, 7.0),
+        (False, "idle", 3.0, 7.0),
+        (True, "idle", 5.0, 7.0),
+        (True, "idle", None, 7.0),
+    ):
+        assert judge_not_heating(since, *args, NOT_HEATING_S) is None, args
 from custom_components.dynamic_ocpp_evse.engine.load_builders import (
     _build_hot_water_tank_load,
 )

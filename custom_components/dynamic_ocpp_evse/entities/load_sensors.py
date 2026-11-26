@@ -594,6 +594,10 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
             self._attr_native_value = hands_off_status(load_rt)
         elif not load_rt.get("tank_heating_permitted", True):
             self._attr_native_value = with_early_start("Waiting for Power", load_rt)
+        elif load_rt.get("tank_not_heating"):
+            # Permitted, well under its setpoint, and not heating for a while
+            # (control/hot_water_tank.judge_not_heating).
+            self._attr_native_value = "Not heating - check the heater"
         else:
             state = {
                 "heating": "Heating",
@@ -608,6 +612,7 @@ class LoadJugglerTankStatusSensor(LoadJugglerLoadSensor):
             "target_setpoint": load_rt.get("tank_setpoint"),
             "setpoint_source": load_rt.get("tank_setpoint_label"),
             "heating_permitted": load_rt.get("tank_heating_permitted"),
+            "not_heating": bool(load_rt.get("tank_not_heating")),
             "priority_elevated": load_rt.get("tank_priority_elevated", False),
         }
 
