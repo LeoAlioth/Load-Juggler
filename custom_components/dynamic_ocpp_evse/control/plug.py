@@ -20,7 +20,7 @@ from ..const import (
     PLUG_RESTART_RECOVERY_S,
 )
 from ..const import CONF_EARLY_RATE_ENTITY_ID
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, load_label
 from . import call_device, stamp_command
 
 _LOGGER = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
             and now - rt["_plug_draw_since"] >= PLUG_RESTART_RECOVERY_S
         ):
             _LOGGER.info(
-                "Smart load %s draws again - restart count reset", sensor._attr_name
+                "Smart load %s draws again - restart count reset", load_label(sensor)
             )
             _reset_restarts(rt)
         return None
@@ -129,7 +129,7 @@ def _no_draw_restart(sensor, switch_entity, limit, now):
     _LOGGER.info(
         "Smart load %s permitted and on but drawing %.0f W for %g min -"
         " power-cycling it (restart %d)",
-        sensor._attr_name,
+        load_label(sensor),
         power,
         after_min,
         count + 1,
@@ -171,7 +171,7 @@ async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
     # The settings page saves a changed switch to options, so read it there first.
     plug_switch_entity = get_entry_value(sensor.config_entry, CONF_PLUG_SWITCH_ENTITY_ID)
     if not plug_switch_entity:
-        _LOGGER.error(f"No switch entity configured for plug {sensor._attr_name}")
+        _LOGGER.error(f"No switch entity configured for plug {load_label(sensor)}")
         return
 
     restart = _no_draw_restart(sensor, plug_switch_entity, limit, now_mono)
@@ -187,12 +187,12 @@ async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
         finishing = not on and restart != _RESTART and running
         sensor._runtime()["plug_finish_status"] = "Finishing its cycle" if finishing else None
         if finishing:
-            _LOGGER.debug("Smart load %s: finishing its cycle before switching off", sensor._attr_name)
+            _LOGGER.debug("Smart load %s: finishing its cycle before switching off", load_label(sensor))
             stamp_command(sensor, now_mono)
             return
     try:
         _LOGGER.debug(
-            f"Smart load {sensor._attr_name}: turning {'ON' if on else 'OFF'} (limit={limit}A)"
+            f"Smart load {load_label(sensor)}: turning {'ON' if on else 'OFF'} (limit={limit}A)"
         )
         await call_device(
             sensor.hass,
@@ -205,7 +205,7 @@ async def send_plug_command(sensor, limit: float, now_mono: float) -> None:
         )
     except Exception as e:
         _LOGGER.warning(
-            "Smart load switch command failed for %s: %s", sensor._attr_name, e
+            "Smart load switch command failed for %s: %s", load_label(sensor), e
         )
 
     stamp_command(sensor, now_mono)

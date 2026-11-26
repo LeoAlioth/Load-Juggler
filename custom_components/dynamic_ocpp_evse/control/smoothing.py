@@ -14,7 +14,7 @@ from ..const import (
     CONF_FILTER_RAMP_TAU_S,
     CONF_FILTER_RAMP_UP_RATE,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, load_label
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ def apply_smoothing(
         if mode_changed:
             _LOGGER.debug(
                 "Mode changed for %s - smoothing reset (allocated=%.1fA)",
-                sensor._attr_name,
+                load_label(sensor),
                 raw_allocated,
             )
     else:
@@ -96,7 +96,7 @@ def apply_smoothing(
                 sensor._schmitt_current = ema
                 _LOGGER.debug(
                     "Schmitt RISING→FALLING (large) for %s at %.2fA (prev=%.2fA)",
-                    sensor._attr_name,
+                    load_label(sensor),
                     ema,
                     prev,
                 )
@@ -104,7 +104,7 @@ def apply_smoothing(
                 sensor._schmitt_state = "falling"
                 _LOGGER.debug(
                     "Schmitt RISING→FALLING (small) for %s at %.2fA (prev=%.2fA)",
-                    sensor._attr_name,
+                    load_label(sensor),
                     ema,
                     prev,
                 )
@@ -116,7 +116,7 @@ def apply_smoothing(
                 sensor._schmitt_current = ema
                 _LOGGER.debug(
                     "Schmitt FALLING→RISING for %s at %.2fA (prev=%.2fA)",
-                    sensor._attr_name,
+                    load_label(sensor),
                     ema,
                     prev,
                 )
@@ -160,7 +160,7 @@ def apply_smoothing(
             target = sensor._rate_limited_current + max_up
             _LOGGER.debug(
                 "Ramp UP for %s: %.1fA → %.1fA (schmitt=%.1fA, max +%.2fA/cycle)",
-                sensor._attr_name,
+                load_label(sensor),
                 sensor._rate_limited_current,
                 target,
                 sensor._schmitt_current,
@@ -170,7 +170,7 @@ def apply_smoothing(
             target = sensor._rate_limited_current - max_down
             _LOGGER.debug(
                 "Ramp DOWN for %s: %.1fA → %.1fA (schmitt=%.1fA, max -%.2fA/cycle)",
-                sensor._attr_name,
+                load_label(sensor),
                 sensor._rate_limited_current,
                 target,
                 sensor._schmitt_current,

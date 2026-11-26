@@ -31,7 +31,7 @@ from ..const import (
     resolve_station_charge_speed,
     resolve_station_reserve,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, load_label
 from . import call_device, stamp_command
 from .. import units
 
@@ -55,7 +55,7 @@ async def send_power_station_command(
     if not speed_entity or not reserve_entity:
         _LOGGER.error(
             "Power station %s is missing its charge-speed or reserve entity",
-            sensor._attr_name,
+            load_label(sensor),
         )
         return
 
@@ -108,7 +108,7 @@ async def send_power_station_command(
 
     _LOGGER.debug(
         "Power station %s: allocated %.0fW -> speed %s, reserve %s%% (%s)",
-        sensor._attr_name,
+        load_label(sensor),
         allocated_w,
         f"{speed:.0f}W" if speed is not None else "not charging",
         reserve,
@@ -148,7 +148,7 @@ async def send_power_station_command(
             )
     except Exception as e:
         _LOGGER.warning(
-            "Power station command failed for %s: %s", sensor._attr_name, e
+            "Power station command failed for %s: %s", load_label(sensor), e
         )
 
     stamp_command(sensor, now_mono)

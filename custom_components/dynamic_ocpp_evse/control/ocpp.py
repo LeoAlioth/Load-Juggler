@@ -37,7 +37,7 @@ from ..const import (
     PHASE_SWITCH_PROBE_RETRY_S,
     RT_PHASE_SWITCH_AT,
 )
-from ..helpers import detect_charge_rate_unit, get_entry_value, stored_legs
+from ..helpers import detect_charge_rate_unit, get_entry_value, stored_legs, load_label
 from . import stamp_command
 from .. import units
 
@@ -157,7 +157,7 @@ def probe_phase_switching(sensor, now_mono: float) -> None:
         load_rt[EVSE_RT_PHASE_SUPPORTED] = str(value).strip().lower() == "true"
         _LOGGER.info(
             "%s: the charger %s switch between one and three phases (%s = %s)",
-            sensor._attr_name,
+            load_label(sensor),
             "can" if load_rt[EVSE_RT_PHASE_SUPPORTED] else "cannot",
             OCPP_KEY_PHASE_SWITCH, value,
         )
@@ -204,7 +204,7 @@ async def send_ocpp_command(
     if effective_status in ("Finishing", "Faulted"):
         _LOGGER.debug(
             "Skipping OCPP command for %s - connector is %s",
-            sensor._attr_name,
+            load_label(sensor),
             effective_status,
         )
         stamp_command(sensor, now_mono)
@@ -228,7 +228,7 @@ async def send_ocpp_command(
             return False
         _LOGGER.info(
             "%s: paused (0 A) before switching to %d phase(s)",
-            sensor._attr_name, told_phases(load_rt, sensor.config_entry),
+            load_label(sensor), told_phases(load_rt, sensor.config_entry),
         )
         hold_s = max(hold_s or 0, PHASE_SWITCH_PAUSE_MAX_S)
         # Compliance and the manual-change check stay quiet through the pause too.
@@ -268,13 +268,13 @@ async def send_ocpp_command(
                 _LOGGER.info(
                     "OCPP-detected charge rate unit: %s for %s",
                     detected,
-                    sensor._attr_name,
+                    load_label(sensor),
                 )
             else:
                 charge_rate_unit = CHARGE_RATE_UNIT_AMPS
                 _LOGGER.warning(
                     "Could not detect charge rate unit for %s, defaulting to Amperes",
-                    sensor._attr_name,
+                    load_label(sensor),
                 )
 
     if charge_rate_unit == CHARGE_RATE_UNIT_WATTS:
@@ -336,7 +336,7 @@ async def send_ocpp_command(
     ocpp_device_id = get_entry_value(sensor.config_entry, CONF_OCPP_DEVICE_ID, None)
     if not ocpp_device_id:
         _LOGGER.error(
-            f"No OCPP device ID configured for {sensor._attr_name} - cannot send charging profile"
+            f"No OCPP device ID configured for {load_label(sensor)} - cannot send charging profile"
         )
         # Treat the failed dispatch as a spent command slot: without this the
         # site cycle (every couple of seconds) re-enters here and logs the same
@@ -345,7 +345,7 @@ async def send_ocpp_command(
         return
 
     _LOGGER.debug(
-        f"Sending set_charge_rate to device {ocpp_device_id} for {sensor._attr_name} "
+        f"Sending set_charge_rate to device {ocpp_device_id} for {load_label(sensor)} "
         f"with limit: {limit_for_charger}{rate_unit} (calculated from {limit}A)"
     )
 
@@ -398,7 +398,7 @@ async def send_ocpp_command(
                 blocking=True,
             )
         except Exception as e:  # noqa: BLE001 - the switch itself still goes out
-            _LOGGER.warning("OCPP fallback profile failed for %s: %s", sensor._attr_name, e)
+            _LOGGER.warning("OCPP fallback profile failed for %s: %s", load_label(sensor), e)
 
     try:
         # blocking=True so a dispatch/execution failure raises here and is
@@ -412,7 +412,7 @@ async def send_ocpp_command(
             blocking=True,
         )
     except Exception as e:
-        _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", sensor._attr_name, e)
+        _LOGGER.warning("OCPP set_charge_rate failed for %s: %s", load_label(sensor), e)
         # The ocpp integration gives up after 10 s and some chargers answer
         # later: hold off so the retry never overlaps the unanswered call.
         load_rt[EVSE_RT_SEND_BACKOFF_UNTIL] = now_mono + SEND_BACKOFF_S
@@ -432,7 +432,7 @@ async def send_ocpp_command(
         if told != load_rt.get(EVSE_RT_COMMANDED_PHASES, 3):
             # The charger now switches, with its few seconds at 0 A.
             load_rt[RT_PHASE_SWITCH_AT] = now_mono
-            _LOGGER.info("%s: told to charge on %d phase(s)", sensor._attr_name, told)
+            _LOGGER.info("%s: told to charge on %d phase(s)", load_label(sensor), told)
         load_rt[EVSE_RT_COMMANDED_PHASES] = told
     stamp_command(sensor, now_mono)
     return True

@@ -539,3 +539,11 @@ def strip_hub_inverter_fields(hass, hub_entry: ConfigEntry) -> None:
         data={k: v for k, v in hub_entry.data.items() if k not in HUB_INVERTER_IMPORT_FIELDS},
         options={k: v for k, v in hub_entry.options.items() if k not in HUB_INVERTER_IMPORT_FIELDS},
     )
+
+
+def load_label(sensor) -> str:
+    """The load's own name for log lines ("Bee Room Heater"), not the name of
+    the sensor that drives it ("Bee Room Heater Available Current")."""
+    entry = getattr(sensor, "config_entry", None)
+    data = getattr(entry, "data", None) or {}
+    return data.get("name") or sensor._attr_name

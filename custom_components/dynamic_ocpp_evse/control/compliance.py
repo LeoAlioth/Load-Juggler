@@ -26,7 +26,7 @@ from ..const import (
     EVSE_RT_READOUT_WATCH,
 )
 from ..engine.readout_watch import normal_gap
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, load_label
 from .. import units
 
 _LOGGER = logging.getLogger(__name__)
@@ -159,7 +159,7 @@ async def check_profile_compliance(
                     _LOGGER.debug(
                         "Using power_offered fallback for %s: %.0fW → %.1fA "
                         "(voltage=%dV, phases=%d)",
-                        sensor._attr_name,
+                        load_label(sensor),
                         power_w,
                         current_offered,
                         voltage,
@@ -213,7 +213,7 @@ async def check_profile_compliance(
         _LOGGER.debug(
             "Profile mismatch for %s: commanded=%.1fA, offered=%.1fA, diff=%.1fA "
             "(%d checks, %.0f/%.0f s)",
-            sensor._attr_name,
+            load_label(sensor),
             sensor._last_commanded_limit,
             current_offered,
             diff,
@@ -225,7 +225,7 @@ async def check_profile_compliance(
         if sensor._mismatch_count > 0:
             _LOGGER.debug(
                 "Profile compliance restored for %s (was at %d cycles, %d resets)",
-                sensor._attr_name,
+                load_label(sensor),
                 sensor._mismatch_count,
                 sensor._profile_reset_count,
             )
@@ -240,7 +240,7 @@ async def check_profile_compliance(
         if sensor._profile_reset_count >= ESCALATION_PROFILE_RESET_LIMIT:
             _LOGGER.warning(
                 "Escalating to hard reset for %s: profile reset failed %d times",
-                sensor._attr_name,
+                load_label(sensor),
                 sensor._profile_reset_count,
             )
             await perform_hard_reset(sensor)
@@ -252,7 +252,7 @@ async def check_profile_compliance(
                 "Auto-reset %d/%d for %s: charger offered %.1fA but we commanded %.1fA",
                 sensor._profile_reset_count,
                 ESCALATION_PROFILE_RESET_LIMIT,
-                sensor._attr_name,
+                load_label(sensor),
                 current_offered,
                 sensor._last_commanded_limit,
             )
@@ -265,7 +265,7 @@ async def check_profile_compliance(
                 )
             except Exception as e:
                 _LOGGER.error(
-                    "Auto-reset service call failed for %s: %s", sensor._attr_name, e
+                    "Auto-reset service call failed for %s: %s", load_label(sensor), e
                 )
 
 
@@ -277,7 +277,7 @@ async def perform_hard_reset(sensor) -> None:
     charger_id = _charger_id(sensor)
     if not charger_id:
         _LOGGER.error(
-            "Cannot hard reset %s: no OCPP charger ID configured", sensor._attr_name
+            "Cannot hard reset %s: no OCPP charger ID configured", load_label(sensor)
         )
         return
 
@@ -288,7 +288,7 @@ async def perform_hard_reset(sensor) -> None:
         _LOGGER.warning(
             "Hard reset entity %s not found for %s - falling back to profile reset",
             reset_entity_id,
-            sensor._attr_name,
+            load_label(sensor),
         )
         try:
             await sensor.hass.services.async_call(
@@ -298,11 +298,11 @@ async def perform_hard_reset(sensor) -> None:
             )
         except Exception as e:
             _LOGGER.error(
-                "Fallback profile reset failed for %s: %s", sensor._attr_name, e
+                "Fallback profile reset failed for %s: %s", load_label(sensor), e
             )
         return
 
-    _LOGGER.info("Hard OCPP reset for %s via %s", sensor._attr_name, reset_entity_id)
+    _LOGGER.info("Hard OCPP reset for %s via %s", load_label(sensor), reset_entity_id)
     # A rebooting charger may come back on its own default limit rather than
     # the one last recorded as accepted, so that record stops being a fact
     # about it until the next command lands (see the same step in the
@@ -316,4 +316,4 @@ async def perform_hard_reset(sensor) -> None:
             blocking=True,
         )
     except Exception as e:
-        _LOGGER.error("Hard reset failed for %s: %s", sensor._attr_name, e)
+        _LOGGER.error("Hard reset failed for %s: %s", load_label(sensor), e)

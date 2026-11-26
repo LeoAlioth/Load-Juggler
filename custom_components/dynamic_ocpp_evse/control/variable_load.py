@@ -38,7 +38,7 @@ from ..const import (
     VL_RT_OUTPUTS,
     VL_RT_SIZED_COUNT,
 )
-from ..helpers import get_entry_value, stored_legs, variable_load_amps
+from ..helpers import get_entry_value, stored_legs, variable_load_amps, load_label
 from . import call_device, stamp_command
 from .. import units
 
@@ -105,7 +105,7 @@ async def send_variable_load_command(
     if target:
         state = sensor.hass.states.get(target)
         if units.is_unavailable(state):
-            _LOGGER.debug("Variable load %s: setpoint %s unavailable", sensor._attr_name, target)
+            _LOGGER.debug("Variable load %s: setpoint %s unavailable", load_label(sensor), target)
         else:
             value = setpoint(
                 limit,
@@ -128,10 +128,10 @@ async def send_variable_load_command(
                     )
                     load_rt[VL_RT_LAST_WRITE] = now_mono
                 except Exception as e:
-                    _LOGGER.warning("Variable load %s: setpoint write failed: %s", sensor._attr_name, e)
+                    _LOGGER.warning("Variable load %s: setpoint write failed: %s", load_label(sensor), e)
             _LOGGER.debug(
                 "Variable load %s: %.1f A/leg -> setpoint %s (was %s)",
-                sensor._attr_name, limit, value, current,
+                load_label(sensor), limit, value, current,
             )
 
     stamp_command(sensor, now_mono)
@@ -152,7 +152,7 @@ async def _write_phase(sensor, load_rt, advice, now_mono) -> None:
     if value is None:
         _LOGGER.warning(
             "Variable load %s: phase entity %s has no option for %s phase(s)",
-            sensor._attr_name, target, 1 if advice == SINGLE else 3,
+            load_label(sensor), target, 1 if advice == SINGLE else 3,
         )
         return
     held = state.state if is_select else units.read_number(sensor.hass, target)
@@ -164,9 +164,9 @@ async def _write_phase(sensor, load_rt, advice, now_mono) -> None:
         await call_device(
             sensor.hass, load_rt, domain, service, {"entity_id": target, key: value}, "state", value,
         )
-        _LOGGER.info("Variable load %s: phase entity %s -> %s", sensor._attr_name, target, value)
+        _LOGGER.info("Variable load %s: phase entity %s -> %s", load_label(sensor), target, value)
     except Exception as e:
-        _LOGGER.warning("Variable load %s: phase write failed: %s", sensor._attr_name, e)
+        _LOGGER.warning("Variable load %s: phase write failed: %s", load_label(sensor), e)
 
 
 async def write_fallback(hass, entry, load_rt=None) -> None:

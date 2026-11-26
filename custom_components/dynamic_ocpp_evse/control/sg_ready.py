@@ -14,7 +14,7 @@ from ..const import (
     CONF_SG_RELAY_2_ENTITY_ID,
     SG_VERIFY_S,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, load_label
 from . import call_device, stamp_command
 
 _LOGGER = logging.getLogger(__name__)
@@ -82,7 +82,7 @@ async def send_sg_ready_command(sensor, status, now_mono) -> None:
     entry, rt, hass = sensor.config_entry, sensor._runtime(), sensor.hass
     entities = relay_entities(entry)
     if not all(entities):
-        _LOGGER.error("SG Ready %s: both relay switches must be configured", sensor._attr_name)
+        _LOGGER.error("SG Ready %s: both relay switches must be configured", load_label(sensor))
         return
     observed = observed_state(hass, entities)
     _verify(rt, observed, now_mono)
@@ -106,7 +106,7 @@ async def send_sg_ready_command(sensor, status, now_mono) -> None:
     if now_mono - rt.get("_sg_last_send", -float("inf")) < _MIN_RESEND_S:
         return
     rt["_sg_last_send"] = now_mono
-    _LOGGER.debug("SG Ready %s: %s -> %s", sensor._attr_name, observed, target)
+    _LOGGER.debug("SG Ready %s: %s -> %s", load_label(sensor), observed, target)
     ok = await _drive(hass, rt, entities, observed, target)
     previous = rt.get("_sg_commanded")
     # a repeated command keeps its first time: that is what the verify time runs from

@@ -38,7 +38,7 @@ from ..const import (
     TANK_MODE_SOLAR_PRIORITY,
     DEFAULT_OPERATING_MODE_HOT_WATER_TANK,
 )
-from ..helpers import get_entry_value
+from ..helpers import get_entry_value, load_label
 from . import call_device, stamp_command
 
 _LOGGER = logging.getLogger(__name__)
@@ -262,7 +262,7 @@ async def send_hot_water_tank_command(
     climate_entity = sensor.config_entry.data.get(CONF_CLIMATE_ENTITY_ID)
     if not climate_entity:
         _LOGGER.error(
-            "No climate entity configured for hot water tank %s", sensor._attr_name
+            "No climate entity configured for hot water tank %s", load_label(sensor)
         )
         return
 
@@ -403,7 +403,7 @@ async def send_hot_water_tank_command(
                     "Hot water tank %s: %s setpoint %.0f°C is outside %s's "
                     "supported range (%s–%s°C) - clamped to %.0f°C. Adjust the "
                     "setpoint slider or the thermostat's limits.",
-                    sensor._attr_name,
+                    load_label(sensor),
                     target,
                     setpoint,
                     climate_entity,
@@ -465,7 +465,7 @@ async def send_hot_water_tank_command(
             "Hot water tank %s: %s reads %s, %.1f °C or more under its %.0f °C "
             "setpoint, and has not heated for %.0f min although heating is "
             "permitted - check the heater (its switch or plug may not respond)",
-            sensor._attr_name,
+            load_label(sensor),
             climate_entity,
             climate_state.attributes.get("current_temperature"),
             NOT_HEATING_MARGIN_K,
@@ -476,7 +476,7 @@ async def send_hot_water_tank_command(
 
     _LOGGER.debug(
         "Hot water tank %s [%s]: setpoint=%.0f°C (%s), heating %s",
-        sensor._attr_name,
+        load_label(sensor),
         mode,
         setpoint,
         target,
@@ -527,7 +527,7 @@ async def send_hot_water_tank_command(
     except Exception as e:
         _LOGGER.warning(
             "Hot water tank climate command failed for %s: %s",
-            sensor._attr_name,
+            load_label(sensor),
             e,
         )
 
@@ -566,7 +566,7 @@ async def _adopt_kept_target(sensor, settings, label, asked, kept, device):
             )
 
     fields = {
-        "tank": entry.data.get(CONF_NAME) or sensor._attr_name,
+        "tank": entry.data.get(CONF_NAME) or load_label(sensor),
         "device": device,
         "asked": f"{asked:g}",
         "kept": f"{kept:g}",
